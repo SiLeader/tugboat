@@ -1,0 +1,33 @@
+[workspace]
+members = ["resources", "tugboat-runtime"]
+
+[workspace.package]
+edition = "2021"
+
+[workspace.dependencies]
+resources = { path = "./resources" }
+tugboat-runtime = { path = "./tugboat-runtime" }
+
+# command line
+clap = "4.5.17"
+
+# serde
+serde = "1.0.210"
+
+# async
+tokio = "1.40.0"
+async-trait = "0.1.82"
+
+#
+regex = "1.10.6"
+
+[package]
+name = "tugboat"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+tugboat-runtime.workspace = true
+
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
