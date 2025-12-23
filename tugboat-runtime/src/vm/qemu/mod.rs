@@ -2,35 +2,33 @@ mod error;
 mod volume_copy;
 
 use crate::vm::RunVm;
+use crate::vm::qemu::volume_copy::BootDisk;
 use async_trait::async_trait;
-use resources::manifests::core::v1::{
-    CpuSpec, MachineSpec, MemorySpec, PersistentVolumeSpec, VolumeOptions,
-};
 use resources::manifests::ObjectMeta;
+use resources::manifests::core::v1::{CpuSpec, MachineSpec, MemorySpec};
 use tokio::process::{Child, Command};
 
 #[derive(Debug, Clone)]
 struct QemuVm {
-    executable: String,
+    qemu: String,
+    qemu_img: String,
+    disk_image_location: String,
     ship_ref: ObjectMeta,
     image: String,
     machine: MachineSpec,
-    boot_disk_volume: PersistentVolumeSpec,
-    persistent_volumes: Vec<PersistentVolumeSpec>,
+    id: String,
 }
 
 #[async_trait]
 impl RunVm for QemuVm {
     async fn run_vm(&self) -> crate::Result<Child> {
-        self.copy_image_to_boot_disk().await?;
-        let child = Command::new(self.executable.as_str())
+        let img = self.create_boot_disk().await?;
+        let child = Command::new(&self.qemu)
             .args(["-enable-kvm", "-machine", "q35"])
             .qemu_args(&self.machine.cpu)
             .qemu_args(&self.machine.memory)
-            .qemu_args_with_arg(&self.boot_disk_volume, 0)
-            .qemu_args(&self.persistent_volumes)
-            .spawn()
-            .map_err(crate::Error::Io)?;
+            .qemu_args(&img)
+            .spawn()?;
         Ok(child)
     }
 }
@@ -65,30 +63,9 @@ impl QemuArgs<MemorySpec> for Command {
     }
 }
 
-impl QemuArgsWithArg<PersistentVolumeSpec, usize> for Command {
-    fn qemu_args_with_arg(&mut self, value: &PersistentVolumeSpec, index: usize) -> &mut Self {
-        match &value.options {
-            VolumeOptions::Nbd { nbd } => {
-                let arg = format!("file=nbd:{},index={index}", nbd.server);
-                self.args(["-drive", arg.as_str()])
-            }
-            VolumeOptions::Local { local } => {
-                let file = format!(
-                    "format=raw,file={},cache=writethrough,index={index}",
-                    local.file
-                );
-                self.args(["-drive", file.as_str()])
-            }
-        }
-    }
-}
-
-impl QemuArgs<Vec<PersistentVolumeSpec>> for Command {
-    fn qemu_args(&mut self, value: &Vec<PersistentVolumeSpec>) -> &mut Self {
-        let mut this = self;
-        for (index, pv) in value.iter().enumerate() {
-            this = this.qemu_args_with_arg(pv, index + 1);
-        }
-        this
+impl QemuArgs<BootDisk> for Command {
+    fn qemu_args(&mut self, value: &BootDisk) -> &mut Self {
+        let opts = format!("file={},format=qcow2,if=virtio", value.0);
+        self.arg("-drive").arg(opts)
     }
 }

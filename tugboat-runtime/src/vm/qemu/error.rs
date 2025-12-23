@@ -1,3 +1,7 @@
+use thiserror::Error;
+
+#[derive(Debug, Error)]
 pub(crate) enum QemuVmError {
-    Copy(std::io::Error),
+    #[error("Failed to copy image: {0}")]
+    Copy(#[from] std::io::Error),
 }

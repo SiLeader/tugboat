@@ -2,24 +2,26 @@
 members = ["resources", "tugboat-runtime"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 
 [workspace.dependencies]
 resources = { path = "./resources" }
 tugboat-runtime = { path = "./tugboat-runtime" }
 
 # command line
-clap = "4.5.17"
+clap = "4.5.53"
 
 # serde
-serde = "1.0.210"
+serde = "1.0.228"
 
 # async
-tokio = "1.40.0"
-async-trait = "0.1.82"
+tokio = "1.48.0"
+async-trait = "0.1.89"
 
 #
-regex = "1.10.6"
+regex = "1.12.2"
+
+thiserror = "2.0.17"
 
 [package]
 name = "tugboat"

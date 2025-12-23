@@ -1,9 +1,12 @@
 use clap::Parser;
+use thiserror::Error;
+
 mod vm;
 
+#[derive(Debug, Error)]
 pub(crate) enum Error {
-    Io(std::io::Error),
-    Copy,
+    #[error("IO Error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;

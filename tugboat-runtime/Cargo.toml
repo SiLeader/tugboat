@@ -9,3 +9,4 @@ resources.workspace = true
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 async-trait.workspace = true
+thiserror.workspace = true

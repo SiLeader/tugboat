@@ -1,25 +1,20 @@
 use crate::vm::qemu::QemuVm;
-use resources::manifests::core::v1::VolumeOptions;
 use tokio::process::Command;
 
+pub(super) struct BootDisk(pub String);
+
 impl QemuVm {
-    pub(super) async fn copy_image_to_boot_disk(&self) -> crate::Result<()> {
-        let mut proc = match &self.boot_disk_volume.options {
-            VolumeOptions::Nbd { .. } => {
-                todo!()
-            }
-            VolumeOptions::Local { local } => Command::new("qemu-img")
-                .args(["convert", "-f", "qcow2", "-O", "raw", local.file.as_str()])
-                .spawn()
-                .map_err(crate::Error::Io)?,
-        };
+    async fn fetch_image(&self) -> crate::Result<String> {
+        Ok(self.image.clone())
+    }
 
-        let status = proc.wait().await.map_err(crate::Error::Io)?;
-
-        if status.success() {
-            Ok(())
-        } else {
-            Err(crate::Error::Copy)
-        }
+    pub(super) async fn create_boot_disk(&self) -> crate::Result<BootDisk> {
+        let path = self.fetch_image().await?;
+        let disk = format!("{}/{}.qcow2", self.disk_image_location, self.id);
+        let mut child = Command::new(&self.qemu_img)
+            .args(["create", "-f", "qcow2", "-b", &path, "-F", "qcow2", &disk])
+            .spawn()?;
+        child.wait().await?;
+        Ok(BootDisk(disk))
     }
 }
