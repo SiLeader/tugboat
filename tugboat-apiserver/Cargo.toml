@@ -1,0 +1,9 @@
+[package]
+name = "tugboat-apiserver"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+actix-web.workspace = true
+utoipa = { workspace = true, features = ["actix_extras"] }
+utoipa-actix-web.workspace = true
