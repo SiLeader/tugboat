@@ -1,17 +1,17 @@
-use crate::manifests::sized::SizedString;
 use crate::manifests::ObjectMeta;
+use crate::manifests::sized::SizedString;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Machine {
+pub struct ShipClass {
     pub metadata: ObjectMeta,
-    pub spec: MachineSpec,
+    pub spec: ShipClassSpec,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MachineSpec {
+pub struct ShipClassSpec {
     pub cpu: CpuSpec,
     pub memory: MemorySpec,
 }
