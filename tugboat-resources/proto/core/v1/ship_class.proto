@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+import "meta/v1/object_meta.proto";
+import "meta/v1/type_meta.proto";
+
+package tugboat.core.v1;
+
+message ShipClass {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+  ShipClassSpec spec = 3;
+}
+
+message ShipClassSpec {
+  CpuSpec cpu = 1;
+  MemorySpec memory = 2;
+}
+
+message CpuSpec {
+  string architecture = 1;
+  uint64 cores = 2;
+  uint64 sockets = 3;
+  uint64 dies = 4;
+  uint64 threads_per_core = 5;
+}
+
+message MemorySpec {
+  string size = 1;
+}

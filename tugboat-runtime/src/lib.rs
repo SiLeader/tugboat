@@ -1,6 +1,6 @@
-use resources::manifests::core::v1::CpuSpec;
 use std::env::VarError;
 use thiserror::Error;
+use tugboat_resources::manifests::core::v1::CpuSpec;
 pub use vm::*;
 
 mod env;

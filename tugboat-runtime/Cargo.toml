@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-resources.workspace = true
+tugboat-resources.workspace = true
 
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }

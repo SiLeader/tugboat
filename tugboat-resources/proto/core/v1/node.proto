@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+import "meta/v1/type_meta.proto";
+import "meta/v1/object_meta.proto";
+
+package tugboat.core.v1;
+
+message Node {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+  NodeSpec spec = 3;
+}
+
+message NodeSpec {
+  NodeOvercommitSpec overcommit = 1;
+  repeated string ips = 2;
+  NodeResource resource = 3;
+}
+
+message NodeOvercommitSpec {
+  string ratio = 1;
+}
+
+message NodeResource {
+  uint64 cpu = 1;
+  uint64 memory = 2;
+}

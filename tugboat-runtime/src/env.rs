@@ -1,5 +1,5 @@
 use crate::RuntimeArgs;
-use resources::manifests::core::v1::CpuSpec;
+use tugboat_resources::manifests::core::v1::CpuSpec;
 
 const TUGBOAT_RUNTIME_VM_ID: &str = "TUGBOAT_RUNTIME_VM_ID";
 const TUGBOAT_RUNTIME_IMAGE: &str = "TUGBOAT_RUNTIME_IMAGE";

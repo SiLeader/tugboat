@@ -5,12 +5,12 @@ use crate::vm::RunVm;
 use crate::vm::qemu::spawner::QemuVmConfigUefi;
 use crate::vm::qemu::volume_copy::BootDisk;
 use async_trait::async_trait;
-use resources::manifests::core::v1::CpuSpec;
 pub use spawner::{QemuVmBuilder, QemuVmConfig};
 use std::fs::copy;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::debug;
+use tugboat_resources::manifests::core::v1::CpuSpec;
 
 #[derive(Debug, Clone)]
 struct QemuVm<'a> {

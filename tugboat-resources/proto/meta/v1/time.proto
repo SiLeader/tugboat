@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package tugboat.meta.v1;
+
+message Time {
+  int64 seconds = 1;
+  int32 nanos = 2;
+}

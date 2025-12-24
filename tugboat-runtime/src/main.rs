@@ -2,7 +2,7 @@ use clap::Parser;
 use serde::Deserialize;
 use std::process::exit;
 use tracing_subscriber::EnvFilter;
-use tugboat_lowlevel_runtime::{Error, QemuVmBuilder, QemuVmConfig, RuntimeArgs, execute};
+use tugboat_runtime::{Error, QemuVmBuilder, QemuVmConfig, RuntimeArgs, execute};
 
 #[derive(Parser)]
 struct Args {
@@ -31,7 +31,7 @@ async fn main() {
     handle_error(execute(spawner, args).await);
 }
 
-fn handle_error<T>(value: tugboat_lowlevel_runtime::Result<T>) -> T {
+fn handle_error<T>(value: tugboat_runtime::Result<T>) -> T {
     match value {
         Ok(value) => value,
         Err(e) => match e {
