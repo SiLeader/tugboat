@@ -6,6 +6,7 @@ resolver = "3"
 edition = "2024"
 
 [workspace.dependencies]
+tugboat-resource-store = { path = "tugboat-resource-store" }
 tugboat-resources = { path = "tugboat-resources" }
 tugboat-runtime = { path = "tugboat-runtime" }
 
@@ -24,6 +25,7 @@ prost-build = "0.14.1"
 # async
 tokio = "1.48.0"
 async-trait = "0.1.89"
+futures = "0.3.31"
 
 # misc
 regex = "1.12.2"

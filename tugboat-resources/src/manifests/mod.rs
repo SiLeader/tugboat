@@ -4,8 +4,10 @@ pub mod core {
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.core.v1.rs"));
 
-        apply_resource!(Ship, "core", "v1", "ships", "ship", false);
-        apply_resource!(ShipClass, "core", "v1", "shipclasses", "shipclass", true);
+        apply_resource!(Namespace, "core", "v1", "namespaces", "namespace", cluster);
+        apply_resource!(Node, "core", "v1", "nodes", "node", cluster);
+        apply_resource!(Ship, "core", "v1", "ships", "ship", namespaced);
+        apply_resource!(ShipClass, "core", "v1", "shipclasses", "shipclass", cluster);
     }
 }
 

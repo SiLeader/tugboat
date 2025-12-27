@@ -18,7 +18,8 @@ message NodeSpec {
 }
 
 message NodeOvercommitSpec {
-  string ratio = 1;
+  string cpu_ratio = 1;
+  string memory_ratio = 2;
 }
 
 message NodeResource {

@@ -1,36 +1,42 @@
 use crate::error::Error;
 use crate::serializer::StaticSerializable;
+use crate::watch::WatchReceiver;
 use etcd_client::Client;
 use tugboat_resources::{ObjectMetaResource, StaticResource};
 
 mod error;
 mod serializer;
+mod watch;
 
 pub struct ResourceStore {
     etcd: Client,
+    watch_mux: watch::WatchMuxAggregator,
 }
+
+const BASE_PATH: &str = "/tugboat/registry";
 
 impl ResourceStore {
     pub async fn new(endpoints: &[String]) -> Self {
         let client = Client::connect(endpoints, None)
             .await
             .expect("Connect to etcd failed");
-        Self { etcd: client }
+        Self {
+            etcd: client.clone(),
+            watch_mux: watch::WatchMuxAggregator::new(client),
+        }
     }
 
     fn create_key<T: StaticResource>(namespace: Option<String>, name: &str) -> String {
         if T::is_cluster_scoped() {
-            format!("/tugboat/registry/{}/{}/{}", T::group(), T::plural(), name)
+            format!("{BASE_PATH}/{}/{}/{}", T::group(), T::plural(), name)
         } else {
             let ns = namespace.unwrap_or("default".to_string());
-            format!(
-                "/tugboat/registry/{}/{}/{}/{}",
-                T::group(),
-                T::plural(),
-                ns,
-                name
-            )
+            format!("{BASE_PATH}/{}/{}/{}/{}", T::group(), T::plural(), ns, name)
         }
+    }
+
+    fn create_watch_key<T: StaticResource>() -> String {
+        format!("{BASE_PATH}/{}/", T::plural())
     }
 
     pub async fn put<T: StaticSerializable + ObjectMetaResource>(
@@ -63,5 +69,10 @@ impl ResourceStore {
         };
         let value = T::deserialize(kv.value())?;
         Ok(Some(value))
+    }
+
+    pub async fn watch<T: StaticSerializable>(&self) -> Result<WatchReceiver, Error> {
+        let key = Self::create_watch_key::<T>();
+        self.watch_mux.get(&key).await
     }
 }

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ShipClass
+metadata:
+  name: lightweight
+spec:
+  cpu:
+    architecture: x86_64
+    cores: 2
+  memory:
+    size: 4Gi

@@ -1,5 +1,4 @@
 use crate::manifests::meta::v1::{ObjectMeta, TypeMeta};
-use std::fs::OpenOptions;
 
 pub mod manifests;
 
@@ -23,8 +22,11 @@ pub trait ObjectMetaResource {
 impl<T: StaticResource> Resource for T {
     fn type_meta() -> TypeMeta {
         TypeMeta {
-            group: Self::group().to_string(),
-            version: Self::version().to_string(),
+            api_version: if Self::group() == "core" || Self::group().is_empty() {
+                Self::version().to_string()
+            } else {
+                format!("{}/{}", Self::group(), Self::version())
+            },
             kind: Self::kind().to_string(),
         }
     }
@@ -32,7 +34,7 @@ impl<T: StaticResource> Resource for T {
 
 #[macro_export]
 macro_rules! apply_resource {
-    ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, $cluster:literal) => {
+    ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, $cluster_scoped:literal) => {
         impl $crate::StaticResource for $ty {
             fn group() -> &'static str {
                 $group
@@ -55,7 +57,7 @@ macro_rules! apply_resource {
             }
 
             fn is_cluster_scoped() -> bool {
-                $cluster
+                $cluster_scoped
             }
         }
 
@@ -64,5 +66,13 @@ macro_rules! apply_resource {
                 &self.object_meta
             }
         }
+    };
+
+    ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, namespaced) => {
+        apply_resource!($ty, $group, $version, $plural, $singular, false);
+    };
+
+    ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, cluster) => {
+        apply_resource!($ty, $group, $version, $plural, $singular, true);
     };
 }

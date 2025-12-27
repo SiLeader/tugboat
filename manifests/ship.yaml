@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Ship
+metadata:
+  namespace: default
+  name: ship
+spec:
+  image: example.com/vm-images/ubuntu:24.04
+  shipClass: lightweight

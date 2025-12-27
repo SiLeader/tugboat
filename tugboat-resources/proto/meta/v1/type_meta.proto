@@ -3,7 +3,6 @@ syntax = "proto3";
 package tugboat.meta.v1;
 
 message TypeMeta {
-  string group = 1;
-  string version = 2;
-  string kind = 3;
+  string api_version = 1;
+  string kind = 2;
 }

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+import "meta/v1/type_meta.proto";
+import "meta/v1/object_meta.proto";
+
+package tugboat.core.v1;
+
+message Namespace {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+}

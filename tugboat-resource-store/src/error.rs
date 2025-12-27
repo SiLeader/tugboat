@@ -1,3 +1,5 @@
+use crate::watch::WatchEvent;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Unsupported type")]
@@ -8,4 +10,6 @@ pub enum Error {
     ObjectMetaMissing,
     #[error("Etcd error: {0}")]
     Etcd(#[from] etcd_client::Error),
+    #[error("Event emit error: {0}")]
+    EventEmit(#[from] tokio::sync::watch::error::SendError<Vec<WatchEvent>>),
 }
