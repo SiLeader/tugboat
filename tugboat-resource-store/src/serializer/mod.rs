@@ -2,7 +2,7 @@ mod protobuf;
 
 use crate::error::Error;
 use crate::serializer::protobuf::ProtobufSerializer;
-use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
+use tugboat_resources::manifests::core::v1::{Namespace, Node, Ship, ShipClass};
 use tugboat_resources::manifests::meta::v1::TypeMeta;
 use tugboat_resources::{Resource, StaticResource};
 
@@ -48,5 +48,7 @@ macro_rules! protobuf_serializable {
     };
 }
 
+protobuf_serializable!(Namespace);
+protobuf_serializable!(Node);
 protobuf_serializable!(Ship);
 protobuf_serializable!(ShipClass);

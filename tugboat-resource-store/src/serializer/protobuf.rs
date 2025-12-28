@@ -7,7 +7,10 @@ pub struct ProtobufSerializer;
 
 impl Serializer for ProtobufSerializer {
     fn is_supported(&self, type_meta: &TypeMeta) -> bool {
-        !type_meta.api_version.contains("/") // core
+        !type_meta
+            .api_version
+            .as_ref()
+            .is_some_and(|v| v.contains("/")) // core
     }
 
     fn serialize_protobuf<T: prost::Message>(

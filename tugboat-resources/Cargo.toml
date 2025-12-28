@@ -5,9 +5,16 @@ edition.workspace = true
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-regex.workspace = true
 
 prost.workspace = true
 
+regex = { workspace = true, optional = true }
+
+utoipa = { workspace = true, optional = true }
+
 [build-dependencies]
 prost-build.workspace = true
+
+[features]
+schema = ["utoipa"]
+validators = ["regex"]

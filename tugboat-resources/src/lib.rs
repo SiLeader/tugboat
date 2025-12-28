@@ -1,6 +1,8 @@
 use crate::manifests::meta::v1::{ObjectMeta, TypeMeta};
 
 pub mod manifests;
+#[cfg(feature = "validators")]
+pub mod validators;
 
 pub trait Resource {
     fn type_meta() -> TypeMeta;
@@ -15,19 +17,23 @@ pub trait StaticResource: Resource {
     fn is_cluster_scoped() -> bool;
 }
 
-pub trait ObjectMetaResource {
+pub trait ObjectMetaResource: Resource {
     fn object_meta(&self) -> &Option<ObjectMeta>;
+    fn object_meta_mut(&mut self) -> &mut Option<ObjectMeta>;
+    fn modify_object_meta(&mut self, f: impl FnOnce(&mut Option<ObjectMeta>)) {
+        f(self.object_meta_mut());
+    }
 }
 
 impl<T: StaticResource> Resource for T {
     fn type_meta() -> TypeMeta {
         TypeMeta {
-            api_version: if Self::group() == "core" || Self::group().is_empty() {
+            api_version: Some(if Self::group() == "core" || Self::group().is_empty() {
                 Self::version().to_string()
             } else {
                 format!("{}/{}", Self::group(), Self::version())
-            },
-            kind: Self::kind().to_string(),
+            }),
+            kind: Some(Self::kind().to_string()),
         }
     }
 }
@@ -64,6 +70,10 @@ macro_rules! apply_resource {
         impl $crate::ObjectMetaResource for $ty {
             fn object_meta(&self) -> &Option<$crate::manifests::meta::v1::ObjectMeta> {
                 &self.object_meta
+            }
+
+            fn object_meta_mut(&mut self) -> &mut Option<$crate::manifests::meta::v1::ObjectMeta> {
+                &mut self.object_meta
             }
         }
     };

@@ -1,6 +1,13 @@
 fn main() {
     prost_build::Config::default()
-        .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)]")
+        .type_attribute(
+            ".",
+            if cfg!(feature = "schema") {
+                "#[derive(::utoipa::ToSchema, ::serde::Serialize, ::serde::Deserialize)]"
+            } else {
+                "#[derive(::serde::Serialize, ::serde::Deserialize)]"
+            },
+        )
         .message_attribute(".", "#[serde(rename_all = \"camelCase\")]")
         .enum_attribute(".", "#[serde(rename_all = \"PascalCase\"")
         .field_attribute("object_meta", "#[serde(rename = \"metadata\")]")

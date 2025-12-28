@@ -3,15 +3,15 @@ use actix_web::http::StatusCode;
 use actix_web::{HttpRequest, HttpResponse, HttpResponseBuilder, Responder, ResponseError};
 use serde::Serialize;
 use std::fmt::{Display, Formatter};
-pub(crate) use success::CreateResponse;
-mod success;
+use tugboat_resources::manifests::meta::v1::{ObjectMeta, TypeMeta};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StatusResponse {
-    kind: String,
-    api_version: String,
-    metadata: serde_json::Value,
+    #[serde(flatten)]
+    type_meta: TypeMeta,
+    #[serde(rename = "metadata")]
+    object_meta: ObjectMeta,
     status: String,
     message: String,
     reason: String,
@@ -35,9 +35,11 @@ impl StatusResponse {
         details: Option<serde_json::Value>,
     ) -> Self {
         Self {
-            kind: "Status".to_string(),
-            api_version: "v1".to_string(),
-            metadata: serde_json::json!({}),
+            type_meta: TypeMeta {
+                api_version: Some("v1".to_string()),
+                kind: Some("Status".to_string()),
+            },
+            object_meta: ObjectMeta::default(),
             status: "Failure".to_string(),
             message,
             reason,
@@ -83,5 +85,11 @@ impl ResponseError for StatusResponse {
 impl Display for StatusResponse {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
+    }
+}
+
+impl From<tugboat_resource_store::error::Error> for StatusResponse {
+    fn from(value: tugboat_resource_store::error::Error) -> Self {
+        todo!()
     }
 }

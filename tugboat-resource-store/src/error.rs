@@ -6,8 +6,8 @@ pub enum Error {
     UnsupportedType,
     #[error("Protobuf serialization error: {0}")]
     ProtobufDeserialization(#[from] prost::DecodeError),
-    #[error("Object meta missing")]
-    ObjectMetaMissing,
+    #[error("Required field missing: field: '{0}'")]
+    FieldMissing(String),
     #[error("Etcd error: {0}")]
     Etcd(#[from] etcd_client::Error),
     #[error("Event emit error: {0}")]
