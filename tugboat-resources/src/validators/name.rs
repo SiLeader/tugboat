@@ -1,5 +1,5 @@
 use regex::Regex;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 
 pub struct NameValidator;
 

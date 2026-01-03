@@ -21,7 +21,7 @@ impl ResourceList {
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(items) => Ok(Self::from_raw_items(items)),
-            Err(e) => Err(StatusResponse::internal_error(
+            Err(_e) => Err(StatusResponse::internal_error(
                 "Failed to serialize data",
                 None,
             )),
@@ -59,6 +59,12 @@ impl Responder for ResourceList {
     type Body = BoxBody;
 
     fn respond_to(self, _req: &HttpRequest) -> HttpResponse<Self::Body> {
-        HttpResponse::Ok().json(self)
+        self.into()
+    }
+}
+
+impl From<ResourceList> for HttpResponse {
+    fn from(value: ResourceList) -> Self {
+        HttpResponse::Ok().json(value)
     }
 }

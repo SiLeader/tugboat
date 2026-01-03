@@ -7,7 +7,8 @@ use tugboat_resources::{ObjectMetaResource, StaticResource};
 
 pub mod error;
 pub mod serializer;
-mod watch;
+pub mod watch;
+mod watch_reflector;
 
 pub struct ResourceStore {
     etcd: Client,
@@ -28,6 +29,7 @@ impl<T: ObjectMetaResource> ContentData<T> {
             None => {
                 let _ = meta.insert(ObjectMeta {
                     generation: Some(rev),
+                    resource_version: Some(rev.to_string()),
                     ..Default::default()
                 });
             }
@@ -161,8 +163,11 @@ impl ResourceStore {
         Ok(data)
     }
 
-    pub async fn watch<T: StaticSerializable>(&self) -> Result<WatchReceiver, Error> {
+    pub async fn watch<T: StaticSerializable>(
+        &self,
+        resource_version: Option<String>,
+    ) -> Result<WatchReceiver, Error> {
         let key = Self::create_watch_key::<T>();
-        self.watch_mux.get(&key).await
+        self.watch_mux.get(&key, resource_version).await
     }
 }

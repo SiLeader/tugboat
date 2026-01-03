@@ -8,15 +8,17 @@ use tokio::sync::watch::{Receiver, Sender, channel};
 use tokio::time::sleep;
 use tracing::error;
 
+#[derive(Clone)]
 pub struct KeyValue {
     pub key: String,
     pub value: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub enum WatchEvent {
     Added(KeyValue),
     Modified(KeyValue),
-    Delete(KeyValue),
+    Deleted(KeyValue),
 }
 
 #[derive(Clone)]
@@ -33,7 +35,12 @@ impl WatchMuxAggregator {
         }
     }
 
-    pub(crate) async fn get(&self, key: &str) -> Result<WatchReceiver, crate::Error> {
+    // resource_version is not used yet.
+    pub(crate) async fn get(
+        &self,
+        key: &str,
+        _resource_version: Option<String>,
+    ) -> Result<WatchReceiver, crate::Error> {
         let mut mux = self.mux.lock().await;
         if let Some(mux) = mux.get(key).cloned() {
             return Ok(mux.receiver());
@@ -91,7 +98,7 @@ fn transform_event(event: &etcd_client::Event) -> Option<WatchEvent> {
                 WatchEvent::Modified(kv)
             }
         }
-        EventType::Delete => WatchEvent::Delete(kv),
+        EventType::Delete => WatchEvent::Deleted(kv),
     })
 }
 

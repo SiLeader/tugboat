@@ -1,19 +1,29 @@
 use crate::data::{ResourceList, StatusResponse};
-use crate::endpoints::NamespacedPathParams;
+use crate::endpoints::watch_utils::watch;
+use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
-use actix_web::get;
-use actix_web::web::{Data, Path};
+use actix_web::web::{Data, Path, Query};
+use actix_web::{HttpResponse, get};
 use tugboat_resources::manifests::core::v1::Ship;
 
 #[utoipa::path()]
 #[get("/v1/namespaces/{namespace}/ships")]
 pub(super) async fn handle_ship_list(
     path: Path<NamespacedPathParams>,
+    query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<ResourceList, StatusResponse> {
-    let ships = operator
-        .store
-        .list::<Ship>(Some(path.into_inner().namespace), None)
-        .await?;
-    ResourceList::from_serializable(ships.into_iter().map(|s| s.apply_revision()).collect())
+) -> Result<HttpResponse, StatusResponse> {
+    let query = query.into_inner();
+    if let Some(opts) = query.watch {
+        watch::<Ship>(&operator, query.resource_version, opts).await
+    } else {
+        let ships = operator
+            .store
+            .list::<Ship>(Some(path.into_inner().namespace), None)
+            .await?;
+        Ok(ResourceList::from_serializable(
+            ships.into_iter().map(|s| s.apply_revision()).collect(),
+        )?
+        .into())
+    }
 }

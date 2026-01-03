@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::fmt::{Display, Formatter};
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, TypeMeta};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, thiserror::Error)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StatusResponse {
     #[serde(flatten)]
@@ -90,6 +90,22 @@ impl Display for StatusResponse {
 
 impl From<tugboat_resource_store::error::Error> for StatusResponse {
     fn from(value: tugboat_resource_store::error::Error) -> Self {
-        todo!()
+        match value {
+            tugboat_resource_store::error::Error::UnsupportedType => {
+                StatusResponse::bad_request("Invalid resource type", None)
+            }
+            tugboat_resource_store::error::Error::ProtobufDeserialization(_) => {
+                StatusResponse::internal_error("Failed to deserialize protobuf", None)
+            }
+            tugboat_resource_store::error::Error::FieldMissing(_) => {
+                StatusResponse::bad_request("Missing required field", None)
+            }
+            tugboat_resource_store::error::Error::Etcd(_) => {
+                StatusResponse::internal_error("Etcd access error", None)
+            }
+            tugboat_resource_store::error::Error::EventEmit(_) => {
+                StatusResponse::internal_error("Event emit error", None)
+            }
+        }
     }
 }

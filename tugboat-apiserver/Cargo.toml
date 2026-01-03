@@ -7,9 +7,13 @@ edition.workspace = true
 tugboat-resource-store.workspace = true
 tugboat-resources = { workspace = true, features = ["schema", "validators"] }
 
-actix-web.workspace = true
+actix-web = { workspace = true, features = ["rustls-0_23"] }
+actix-web-lab.workspace = true
 utoipa = { workspace = true, features = ["actix_extras"] }
 utoipa-actix-web.workspace = true
+
+rustls.workspace = true
+rustls-pemfile.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -18,5 +22,15 @@ rand.workspace = true
 rand_xorshift.workspace = true
 
 tokio = { workspace = true, features = ["full"] }
+async-stream.workspace = true
 
 uuid = { workspace = true, features = ["v4"] }
+
+thiserror.workspace = true
+
+clap = { workspace = true, features = ["derive"] }
+
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+toml.workspace = true
