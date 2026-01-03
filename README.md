@@ -109,14 +109,15 @@ spec:
 - [x] tugboat-runtime
 - [x] tugboat-resources (Resource definitions)
 - [x] etcd wrapper for apiserver
-- [ ] tugboat‑apiserver (Work in progress!!)
-- [ ] tugboat‑agent
+- [x] tugboat‑apiserver
+- [ ] tugboat‑agent (Work in progress!!)
 - [ ] tugboat‑scheduler
 - [ ] CNI
 - [ ] Storage
 - [ ] Fleet
 - [ ] Secret / ConfigMap
 - [ ] Live migration
+- [ ] RBAC / ServiceAccount
 - [ ] CRD
 
 ## Contributing
