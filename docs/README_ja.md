@@ -102,6 +102,9 @@ spec:
 
 ## Roadmap
 
+- [x] tugboat-runtime
+- [x] tugboat-resources (Resource definitions)
+- [x] etcd wrapper for apiserver
 - [ ] tugboat-apiserver
 - [ ] tugboat-agent
 - [ ] tugboat-scheduler

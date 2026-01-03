@@ -6,7 +6,7 @@ use tugboat_resources::manifests::meta::v1::ObjectMeta;
 use tugboat_resources::{ObjectMetaResource, StaticResource};
 
 pub mod error;
-mod serializer;
+pub mod serializer;
 mod watch;
 
 pub struct ResourceStore {

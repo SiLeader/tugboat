@@ -14,7 +14,8 @@ pub struct KeyValue {
 }
 
 pub enum WatchEvent {
-    Update(KeyValue),
+    Added(KeyValue),
+    Modified(KeyValue),
     Delete(KeyValue),
 }
 
@@ -76,13 +77,20 @@ impl WatchMuxAggregator {
 
 fn transform_event(event: &etcd_client::Event) -> Option<WatchEvent> {
     let kv = event.kv()?;
+    let is_added = kv.version() == 1;
     let key = kv.key_str().ok()?.to_string();
     let kv = KeyValue {
         key,
         value: kv.value().to_vec(),
     };
     Some(match event.event_type() {
-        EventType::Put => WatchEvent::Update(kv),
+        EventType::Put => {
+            if is_added {
+                WatchEvent::Added(kv)
+            } else {
+                WatchEvent::Modified(kv)
+            }
+        }
         EventType::Delete => WatchEvent::Delete(kv),
     })
 }
