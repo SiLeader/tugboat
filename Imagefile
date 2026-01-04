@@ -1,4 +1,4 @@
 FROM ./ubuntu-server-24.04.qcow2
 
-ARCH amd64
+ARCH x86_64
 FORMAT qcow2

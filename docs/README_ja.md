@@ -103,10 +103,11 @@ spec:
 ## Roadmap
 
 - [x] tugboat-runtime
-- [x] tugboat-resources (Resource definitions)
-- [x] etcd wrapper for apiserver
+- [x] tugboat-resources (リソース定義)
+- [x] tugboat-resource-store (apiserver向けのetcdラッパー)
 - [x] tugboat-apiserver
 - [x] tugboat-client
+- [x] tugboat-cli build (ImagefileからVMイメージのビルド)
 - [ ] tugboat-agent (← イマココ)
 - [ ] tugboat-scheduler
 - [ ] CNI

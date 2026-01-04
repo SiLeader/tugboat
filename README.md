@@ -108,9 +108,10 @@ spec:
 
 - [x] tugboat-runtime
 - [x] tugboat-resources (Resource definitions)
-- [x] etcd wrapper for apiserver
+- [x] tugboat-resource-store (etcd wrapper for apiserver)
 - [x] tugboat‑apiserver
 - [x] tugboat-client
+- [x] tugboat-cli build (Build a VM Image from a Imagefile)
 - [ ] tugboat‑agent (Work in progress!!)
 - [ ] tugboat‑scheduler
 - [ ] CNI
