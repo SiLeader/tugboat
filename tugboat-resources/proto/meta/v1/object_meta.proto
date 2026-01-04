@@ -8,11 +8,11 @@ message ObjectMeta {
   optional string name = 1;
   optional string generate_name = 2;
   optional string namespace = 3;
-  optional string uid = 4;
-  optional string resource_version = 5;
-  repeated string finalizers = 6;
-  map<string, string> labels = 7;
-  map<string, string> annotations = 8;
-  optional Time creation_timestamp = 9;
-  optional int64 generation = 10;
+  optional string uid = 5;
+  optional string resource_version = 6;
+  optional int64 generation = 7;
+  optional Time creation_timestamp = 8;
+  map<string, string> labels = 11;
+  map<string, string> annotations = 12;
+  repeated string finalizers = 14;
 }

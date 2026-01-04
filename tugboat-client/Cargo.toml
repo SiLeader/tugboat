@@ -1,0 +1,18 @@
+[package]
+name = "tugboat-client"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+tugboat-resources.workspace = true
+
+reqwest = { version = "0.13.1", features = ["json", "stream"] }
+
+thiserror.workspace = true
+
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+futures.workspace = true
+tokio-util = { workspace = true, features = ["codec", "io"] }
+async-stream.workspace = true

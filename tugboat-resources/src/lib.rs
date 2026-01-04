@@ -17,6 +17,10 @@ pub trait StaticResource: Resource {
     fn is_cluster_scoped() -> bool;
 }
 
+pub trait ClusterScopedResource: StaticResource {}
+
+pub trait NamespacedResource: StaticResource {}
+
 pub trait ObjectMetaResource: Resource {
     fn object_meta(&self) -> &Option<ObjectMeta>;
     fn object_meta_mut(&mut self) -> &mut Option<ObjectMeta>;
@@ -80,9 +84,13 @@ macro_rules! apply_resource {
 
     ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, namespaced) => {
         apply_resource!($ty, $group, $version, $plural, $singular, false);
+
+        impl $crate::NamespacedResource for $ty {}
     };
 
     ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, cluster) => {
         apply_resource!($ty, $group, $version, $plural, $singular, true);
+
+        impl $crate::ClusterScopedResource for $ty {}
     };
 }

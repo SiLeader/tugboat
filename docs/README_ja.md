@@ -106,6 +106,7 @@ spec:
 - [x] tugboat-resources (Resource definitions)
 - [x] etcd wrapper for apiserver
 - [x] tugboat-apiserver
+- [x] tugboat-client
 - [ ] tugboat-agent (← イマココ)
 - [ ] tugboat-scheduler
 - [ ] CNI

@@ -1,5 +1,5 @@
 [workspace]
-members = ["tugboat-resources", "tugboat-apiserver", "tugboat-agent", "tugboat-runtime", "tugboat-resource-store"]
+members = ["tugboat-resources", "tugboat-apiserver", "tugboat-agent", "tugboat-runtime", "tugboat-resource-store", "tugboat-client"]
 resolver = "3"
 
 [workspace.package]
@@ -27,6 +27,7 @@ tokio = "1.48.0"
 async-trait = "0.1.89"
 futures = "0.3.31"
 async-stream = "0.3.6"
+tokio-util = "0.7.17"
 
 # tls
 rustls = "0.23.35"
