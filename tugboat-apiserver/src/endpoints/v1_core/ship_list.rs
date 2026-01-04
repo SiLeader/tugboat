@@ -1,4 +1,5 @@
 use crate::data::{ResourceList, StatusResponse};
+use crate::endpoints::selector::FilterBySelector;
 use crate::endpoints::watch_utils::watch;
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
@@ -17,12 +18,17 @@ pub(super) async fn handle_ship_list(
     if let Some(opts) = query.watch {
         watch::<Ship>(&operator, query.resource_version, opts).await
     } else {
+        let field_selector = query.to_field_selector()?;
+        let label_selector = query.to_label_selector()?;
         let ships = operator
             .store
             .list::<Ship>(Some(path.into_inner().namespace), None)
             .await?;
         Ok(ResourceList::from_serializable(
-            ships.into_iter().map(|s| s.apply_revision()).collect(),
+            ships
+                .into_iter()
+                .map(|s| s.apply_revision())
+                .filter_by_selector(field_selector, label_selector),
         )?
         .into())
     }

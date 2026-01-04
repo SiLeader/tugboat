@@ -1,14 +1,18 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use clap::Parser;
+
+mod config;
+
+#[derive(Debug, Parser)]
+struct Args {
+    #[arg(
+        long,
+        help = "Path to the tugboat-agent config file",
+        default_value = "/etc/tugboat/agent/config.toml"
+    )]
+    config: String,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub async fn run() {
+    let args = Args::parse();
+    let config = config::AgentConfig::load_or_panic(args.config);
 }

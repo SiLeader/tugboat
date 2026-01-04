@@ -25,12 +25,7 @@ pub struct ApiServer {
 }
 
 impl ApiServer {
-    pub fn new(
-        listen: String,
-        mount: String,
-        operator: ApiOperator,
-        tls: Option<TlsConfig>,
-    ) -> Self {
+    fn new(listen: String, mount: String, operator: ApiOperator, tls: Option<TlsConfig>) -> Self {
         Self {
             listen,
             mount,

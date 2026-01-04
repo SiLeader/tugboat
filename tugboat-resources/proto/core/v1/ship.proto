@@ -15,6 +15,7 @@ message Ship {
 message ShipSpec {
   string image = 1;
   string ship_class = 2;
+  optional string node_name = 3;
 }
 
 message ShipStatus {
