@@ -1,11 +1,10 @@
 use crate::{Error, TugboatClient};
 use async_stream::stream;
 use futures::{Stream, StreamExt, TryStreamExt};
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 use tokio_util::io::StreamReader;
-use tugboat_resources::StaticResource;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", content = "object", rename_all = "UPPERCASE")]

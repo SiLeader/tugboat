@@ -1,9 +1,9 @@
 mod spawner;
 mod volume_copy;
 
-use crate::vm::RunVm;
-use crate::vm::qemu::spawner::QemuVmConfigUefi;
-use crate::vm::qemu::volume_copy::BootDisk;
+use crate::start::vm::RunVm;
+use crate::start::vm::qemu::spawner::QemuVmConfigUefi;
+use crate::start::vm::qemu::volume_copy::BootDisk;
 use async_trait::async_trait;
 pub use spawner::{QemuVmBuilder, QemuVmConfig};
 use std::fs::copy;
@@ -46,10 +46,15 @@ impl<'a> QemuVm<'a> {
 impl RunVm for QemuVm<'_> {
     async fn run_vm(&self) -> crate::Result<()> {
         let img = self.create_boot_disk().await?;
+        let qmp_uds = format!(
+            "unix:{}/{}.qmp.sock",
+            self.config.disk_image_location, self.id
+        );
         let err = Command::new(&self.config.executables.qemu)
             .args(["-machine", "q35"])
             .args(["-nographic"])
             .args(["-net", "none"]) // TODO
+            .args(["-qmp", qmp_uds.as_str()])
             .args_if(self.config.kvm.enabled, &["-enable-kvm"])
             .qemu_args(&self.cpu)
             .qemu_args(&self.memory)

@@ -1,4 +1,4 @@
-use crate::RuntimeArgs;
+use crate::start::config::VmConfig;
 use async_trait::async_trait;
 pub use qemu::*;
 
@@ -11,5 +11,5 @@ pub(crate) trait RunVm {
 
 #[async_trait]
 pub trait Spawner {
-    async fn spawn(&self, args: RuntimeArgs) -> crate::Result<()>;
+    async fn spawn(&self, args: VmConfig) -> crate::Result<()>;
 }

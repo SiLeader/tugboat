@@ -1,6 +1,6 @@
-use crate::RuntimeArgs;
-use crate::vm::qemu::{QemuVm, SizeInBytes};
-use crate::vm::{RunVm, Spawner};
+use crate::start::config::VmConfig;
+use crate::start::vm::qemu::{QemuVm, SizeInBytes};
+use crate::start::vm::{RunVm, Spawner};
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
@@ -16,7 +16,7 @@ impl QemuVmBuilder {
 
 #[async_trait::async_trait]
 impl Spawner for QemuVmBuilder {
-    async fn spawn(&self, args: RuntimeArgs) -> crate::Result<()> {
+    async fn spawn(&self, args: VmConfig) -> crate::Result<()> {
         QemuVm::new(
             &self.config,
             args.image,
@@ -31,25 +31,25 @@ impl Spawner for QemuVmBuilder {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct QemuVmConfig {
-    pub(super) executables: QemuVmConfigExecutables,
-    pub(super) disk_image_location: String,
-    pub(super) kvm: QemuVmConfigKvm,
-    pub(super) uefi: Option<QemuVmConfigUefi>,
+    pub(crate) executables: QemuVmConfigExecutables,
+    pub(crate) disk_image_location: String,
+    pub(crate) kvm: QemuVmConfigKvm,
+    pub(crate) uefi: Option<QemuVmConfigUefi>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct QemuVmConfigExecutables {
-    pub(super) qemu: String,
-    pub(super) qemu_img: String,
+pub(crate) struct QemuVmConfigExecutables {
+    pub(crate) qemu: String,
+    pub(crate) qemu_img: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct QemuVmConfigKvm {
-    pub(super) enabled: bool,
+pub(crate) struct QemuVmConfigKvm {
+    pub(crate) enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct QemuVmConfigUefi {
-    pub(super) code_file: String,
-    pub(super) vars_file: String,
+pub(crate) struct QemuVmConfigUefi {
+    pub(crate) code_file: String,
+    pub(crate) vars_file: String,
 }

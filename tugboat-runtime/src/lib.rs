@@ -1,10 +1,10 @@
+use crate::start::QemuVmConfig;
+use clap::{Parser, Subcommand};
+use serde::Deserialize;
 use std::env::VarError;
 use thiserror::Error;
-use tugboat_resources::manifests::core::v1::CpuSpec;
-pub use vm::*;
 
-mod env;
-mod vm;
+mod start;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -18,17 +18,38 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Clone)]
-pub struct RuntimeArgs {
-    image: String,
-    cpu: CpuSpec,
-    memory: u64,
-    id: String,
+#[derive(Debug, Parser)]
+pub struct Args {
+    #[arg(
+        long,
+        help = "Path to the tugboat-runtime config file",
+        default_value = "/etc/tugboat/runtime/config.toml"
+    )]
+    config: String,
+
+    #[clap(subcommand)]
+    subcommand: SubCommand,
 }
 
-pub async fn execute<S>(spawner: S, args: RuntimeArgs) -> Result<()>
-where
-    S: Spawner,
-{
-    spawner.spawn(args).await
+#[derive(Debug, Subcommand)]
+enum SubCommand {
+    Run(start::StartArgs),
+}
+
+#[derive(Deserialize)]
+struct Config {
+    qemu: QemuVmConfig,
+}
+
+pub async fn run() {
+    let args = Args::parse();
+    let config = {
+        let file = std::fs::read_to_string(args.config).expect("Failed to read config file");
+        let config: Config = toml::from_str(&file).expect("Failed to parse config file as TOML");
+        config
+    };
+
+    match args.subcommand {
+        SubCommand::Run(start_args) => start::start(config.qemu, start_args).await,
+    }
 }
