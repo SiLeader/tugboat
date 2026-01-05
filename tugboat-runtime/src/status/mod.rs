@@ -12,21 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto3";
+use clap::Parser;
 
-import "meta/v1/time.proto";
+#[derive(Debug, Parser)]
+pub(crate) struct StatusArgs {}
 
-package tugboat.meta.v1;
-
-message ObjectMeta {
-  optional string name = 1;
-  optional string generate_name = 2;
-  optional string namespace = 3;
-  optional string uid = 5;
-  optional string resource_version = 6;
-  optional int64 generation = 7;
-  optional Time creation_timestamp = 8;
-  map<string, string> labels = 11;
-  map<string, string> annotations = 12;
-  repeated string finalizers = 14;
-}
+pub(crate) async fn status(args: StatusArgs) {}

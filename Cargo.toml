@@ -64,3 +64,6 @@ etcd-client = "0.17.0"
 # OCI
 oci-distribution = "0.11.0"
 sha2 = "0.10.9"
+
+# QEMU
+qapi-qmp = "0.15.0"
