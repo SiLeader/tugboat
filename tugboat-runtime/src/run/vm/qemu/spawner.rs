@@ -67,3 +67,13 @@ pub(crate) struct QemuVmConfigUefi {
     pub(crate) code_file: String,
     pub(crate) vars_file: String,
 }
+
+impl QemuVmConfig {
+    pub(crate) fn get_uds_path(&self, id: &str) -> String {
+        format!("{}/{id}.qmp.sock", self.disk_image_location)
+    }
+
+    pub(crate) fn get_uds_url(&self, id: &str) -> String {
+        format!("unix:{}", self.get_uds_path(id))
+    }
+}

@@ -67,6 +67,6 @@ pub async fn run() {
 
     match args.subcommand {
         SubCommand::Run(run_args) => run::run(config.qemu, run_args).await,
-        SubCommand::Status(status_args) => status::status(status_args).await,
+        SubCommand::Status(status_args) => status::status(config.qemu, status_args).await,
     }
 }

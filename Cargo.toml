@@ -1,5 +1,15 @@
 [workspace]
-members = ["tugboat-resources", "tugboat-apiserver", "tugboat-agent", "tugboat-runtime", "tugboat-resource-store", "tugboat-client", "tugboat-cli", "tugboat-vm-image"]
+members = [
+    "tugboat-resources",
+    "tugboat-apiserver",
+    "tugboat-agent",
+    "tugboat-runtime",
+    "tugboat-resource-store",
+    "tugboat-client",
+    "tugboat-cli",
+    "tugboat-vm-image",
+    "tugboat-vm-runtime-interface"
+]
 resolver = "3"
 
 [workspace.package]
@@ -11,6 +21,7 @@ tugboat-resources = { path = "tugboat-resources" }
 tugboat-runtime = { path = "tugboat-runtime" }
 tugboat-client = { path = "tugboat-client" }
 tugboat-vm-image = { path = "tugboat-vm-image" }
+tugboat-vm-runtime-interface = { path = "tugboat-vm-runtime-interface" }
 
 # command line
 clap = "4.5.53"
@@ -66,4 +77,4 @@ oci-distribution = "0.11.0"
 sha2 = "0.10.9"
 
 # QEMU
-qapi-qmp = "0.15.0"
+qapi = "0.15.0"

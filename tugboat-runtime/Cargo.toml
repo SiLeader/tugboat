@@ -19,6 +19,7 @@ edition.workspace = true
 
 [dependencies]
 tugboat-resources.workspace = true
+tugboat-vm-runtime-interface.workspace = true
 
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
@@ -31,4 +32,4 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
-qapi-qmp.workspace = true
+qapi = { workspace = true, features = ["qmp", "async-tokio-all"] }

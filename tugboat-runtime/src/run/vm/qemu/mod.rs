@@ -60,10 +60,7 @@ impl<'a> QemuVm<'a> {
 impl RunVm for QemuVm<'_> {
     async fn run_vm(&self) -> crate::Result<()> {
         let img = self.create_boot_disk().await?;
-        let qmp_uds = format!(
-            "unix:{}/{}.qmp.sock",
-            self.config.disk_image_location, self.id
-        );
+        let qmp_uds = self.config.get_uds_url(&self.id);
         let err = Command::new(&self.config.executables.qemu)
             .args(["-machine", "q35"])
             .args(["-nographic"])

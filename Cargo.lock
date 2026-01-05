@@ -2055,6 +2055,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "qapi"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b047adab56acc4948d4b9b58693c1f33fd13efef2d6bb5f0f66a47436ceada8"
+dependencies = [
+ "bytes",
+ "futures",
+ "log",
+ "memchr",
+ "qapi-qmp",
+ "qapi-spec",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "qapi-codegen"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3295,7 +3313,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
- "qapi-qmp",
+ "qapi",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -3304,6 +3322,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tugboat-resources",
+ "tugboat-vm-runtime-interface",
 ]
 
 [[package]]
@@ -3318,6 +3337,13 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "tugboat-vm-runtime-interface"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
