@@ -1,26 +1,16 @@
 use crate::build::error::BuildError;
 use regex::Regex;
-use serde::Serialize;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use tracing::debug;
-
-#[derive(Debug)]
-pub(super) enum Arch {
-    X86_64,
-}
-
-#[derive(Debug)]
-pub(super) enum Format {
-    Qcow2,
-}
+use tugboat_vm_image::{Arch, Format};
 
 #[derive(Debug)]
 pub(super) struct Imagefile {
     from: String,
-    arch: Arch,
-    format: Format,
+    pub arch: Arch,
+    pub format: Format,
 }
 
 static COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(#.*$|\s+$)").unwrap());
@@ -63,12 +53,6 @@ impl FromStr for Imagefile {
     }
 }
 
-#[derive(Serialize)]
-struct TugboatImageMetadata {
-    format: String,
-    arch: String,
-}
-
 impl Imagefile {
     pub(super) async fn read_disk(
         &self,
@@ -77,18 +61,5 @@ impl Imagefile {
         debug!("Reading disk image from: {}", self.from);
         let image = context.as_ref().join(self.from.as_str());
         tokio::fs::read(image).await
-    }
-
-    pub(super) fn metadata(&self) -> Result<Vec<u8>, serde_json::Error> {
-        let metadata = TugboatImageMetadata {
-            format: match self.format {
-                Format::Qcow2 => "qcow2".to_string(),
-            },
-            arch: match self.arch {
-                Arch::X86_64 => "x86_64".to_string(),
-            },
-        };
-
-        serde_json::to_vec(&metadata)
     }
 }

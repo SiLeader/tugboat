@@ -7,6 +7,7 @@ edition.workspace = true
 tugboat-resources.workspace = true
 
 reqwest = { version = "0.13.1", features = ["json", "stream"] }
+url.workspace = true
 
 thiserror.workspace = true
 

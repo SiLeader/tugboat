@@ -16,9 +16,9 @@ static SIZE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d+)(Ki|Mi|Gi|Ti|Pi|K|M|G|T|P)$").unwrap());
 
 impl SizedString {
-    pub fn as_byte_length(&self) -> Option<usize> {
+    pub fn as_byte_length(&self) -> Option<u64> {
         let captures = SIZE_REGEX.captures(self.0.as_str())?;
-        let size_number = usize::from_str(captures.get(1)?.as_str()).ok()?;
+        let size_number = u64::from_str(captures.get(1)?.as_str()).ok()?;
         let size_suffix = captures.get(2)?.as_str();
 
         let size = size_number

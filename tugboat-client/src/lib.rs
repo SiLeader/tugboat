@@ -9,6 +9,7 @@ mod watch;
 
 pub use api::*;
 pub use error::*;
+pub use watch::*;
 
 #[derive(Clone)]
 pub struct TugboatClient {

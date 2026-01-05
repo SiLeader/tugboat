@@ -1,5 +1,5 @@
 [workspace]
-members = ["tugboat-resources", "tugboat-apiserver", "tugboat-agent", "tugboat-runtime", "tugboat-resource-store", "tugboat-client", "tugboat-cli"]
+members = ["tugboat-resources", "tugboat-apiserver", "tugboat-agent", "tugboat-runtime", "tugboat-resource-store", "tugboat-client", "tugboat-cli", "tugboat-vm-image"]
 resolver = "3"
 
 [workspace.package]
@@ -10,6 +10,7 @@ tugboat-resource-store = { path = "tugboat-resource-store" }
 tugboat-resources = { path = "tugboat-resources" }
 tugboat-runtime = { path = "tugboat-runtime" }
 tugboat-client = { path = "tugboat-client" }
+tugboat-vm-image = { path = "tugboat-vm-image" }
 
 # command line
 clap = "4.5.53"
@@ -53,6 +54,9 @@ actix-web = "4.12.1"
 actix-web-lab = "0.24.3"
 utoipa = "5.4.0"
 utoipa-actix-web = "0.1.2"
+
+# HTTP client
+url = "2.5.7"
 
 # store
 etcd-client = "0.17.0"

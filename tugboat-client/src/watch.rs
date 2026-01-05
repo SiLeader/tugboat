@@ -5,6 +5,25 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 use tokio_util::io::StreamReader;
+use url::Url;
+
+#[derive(Clone, Debug, Default)]
+pub struct WatchParams {
+    pub label_selector: Option<String>,
+    pub field_selector: Option<String>,
+}
+
+impl WatchParams {
+    pub fn fields(mut self, field_selector: impl ToString) -> Self {
+        self.field_selector = Some(field_selector.to_string());
+        self
+    }
+
+    pub fn labels(mut self, label_selector: impl ToString) -> Self {
+        self.label_selector = Some(label_selector.to_string());
+        self
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(tag = "type", content = "object", rename_all = "UPPERCASE")]
@@ -18,8 +37,27 @@ impl TugboatClient {
     pub(crate) async fn watch_impl<T: DeserializeOwned>(
         &self,
         path: String,
+        params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
-        let path = format!("{}/{path}", self.base_url);
+        let path = {
+            let p = format!("{}/{path}", self.base_url);
+            let path = Url::parse_with_params(
+                &p,
+                [
+                    params
+                        .label_selector
+                        .as_ref()
+                        .map(|l| ("labelSelector".to_string(), l)),
+                    params
+                        .field_selector
+                        .as_ref()
+                        .map(|f| ("fieldSelector".to_string(), f)),
+                ]
+                .into_iter()
+                .filter_map(|v| v),
+            )?;
+            path.to_string()
+        };
 
         let res = self.client.get(path).send().await?;
         let stream = res

@@ -40,7 +40,7 @@ Tugboatはこれらの問題を解決するために生まれました。
 - QEMUを直接使用
     - libvirtを使わずQEMUを直接exec
 - agent / runtimeの責務分離
-    - Kubernetesのkubelect / runtimeと同じ思想
+    - Kubernetesのkubelet / runtimeと同じ思想
 - OCIアーティファクトとしてのVMイメージ
     - Imagefile → build → registryにpush → Shipから参照
 - CNIに対応予定
@@ -62,7 +62,7 @@ Tugboatはこれらの問題を解決するために生まれました。
 |      Node       |      Node      |
 | Container image | VM image (OCI) |
 |   Dockerfile    |   Imagefile    |
-|    kubelect     |     agent      |
+|     kubelet     |     agent      |
 
 ## Manifest examples
 

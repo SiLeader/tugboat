@@ -3155,10 +3155,18 @@ name = "tugboat-agent"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "futures",
+ "oci-distribution",
  "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
  "toml",
+ "tracing",
+ "tracing-subscriber",
  "tugboat-client",
  "tugboat-resources",
+ "tugboat-vm-image",
 ]
 
 [[package]]
@@ -3191,16 +3199,13 @@ dependencies = [
 name = "tugboat-cli"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "clap",
- "oci-distribution",
  "regex",
- "serde",
- "serde_json",
- "sha2",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "tugboat-vm-image",
 ]
 
 [[package]]
@@ -3215,6 +3220,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio-util",
  "tugboat-resources",
+ "url",
 ]
 
 [[package]]
@@ -3256,6 +3262,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tugboat-resources",
+]
+
+[[package]]
+name = "tugboat-vm-image"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "oci-distribution",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

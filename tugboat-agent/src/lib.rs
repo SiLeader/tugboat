@@ -2,6 +2,7 @@ use clap::Parser;
 
 mod config;
 mod reconciler;
+mod runtime;
 
 #[derive(Debug, Parser)]
 struct Args {

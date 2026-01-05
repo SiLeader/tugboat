@@ -17,7 +17,7 @@ struct AuthContent {
     auth: String,
 }
 
-pub(super) fn load_auth_or_anonymous(host: &str) -> RegistryAuth {
+pub(crate) fn load_auth_or_anonymous(host: &str) -> RegistryAuth {
     load_auth(host).unwrap_or(RegistryAuth::Anonymous)
 }
 

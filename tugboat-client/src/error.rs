@@ -14,6 +14,8 @@ pub enum Error {
     Deserialize(#[from] serde_json::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("URL error: {0}")]
+    Url(#[from] url::ParseError),
 }
 
 #[derive(Debug, Deserialize, thiserror::Error)]

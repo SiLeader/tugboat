@@ -1,15 +1,10 @@
+use crate::runtime::RuntimeConfig;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentConfig {
     pub runtime: RuntimeConfig,
     pub apiserver: ApiserverConfig,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RuntimeConfig {
-    pub executable: String,
-    pub config_file: String,
 }
 
 #[derive(Debug, Deserialize)]

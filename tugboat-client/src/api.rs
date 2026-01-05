@@ -1,6 +1,6 @@
 use crate::TugboatClient;
 use crate::error::Error;
-use crate::watch::WatchEvent;
+use crate::watch::{WatchEvent, WatchParams};
 use futures::Stream;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -69,7 +69,10 @@ where
         }
     }
 
-    pub async fn watch(&self) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
+    pub async fn watch(
+        &self,
+        params: &WatchParams,
+    ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
         let path = if let Some(namespace) = &self.namespace {
             format!(
                 "{}/namespaces/{namespace}/{}?watch=true",
@@ -79,6 +82,6 @@ where
         } else {
             format!("{}/{}?watch=true", T::version(), T::plural())
         };
-        self.client.watch_impl(path).await
+        self.client.watch_impl(path, params).await
     }
 }

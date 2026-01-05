@@ -1,6 +1,7 @@
 use crate::manifests::meta::v1::{ObjectMeta, TypeMeta};
 
 pub mod manifests;
+pub mod sized;
 #[cfg(feature = "validators")]
 pub mod validators;
 

@@ -66,7 +66,7 @@ Existing VM orchestration systems come with significant challenges:
 |      Node       |      Node       |
 | Container image | VM image (OCI)  |
 |   Dockerfile    |    Imagefile    |
-|    kubelect     |      agent      |
+|     kubelet     |      agent      |
 
 ## Manifest Examples
 
