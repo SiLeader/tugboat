@@ -108,8 +108,8 @@ spec:
 - [x] tugboat-apiserver
 - [x] tugboat-client
 - [x] tugboat-cli build (ImagefileからVMイメージのビルド)
-- [ ] fieldSelectorとlabelSelector (← イマココ)
-- [ ] tugboat-agent
+- [x] fieldSelectorとlabelSelector
+- [ ] tugboat-agent (← イマココ)
 - [ ] tugboat-scheduler
 - [ ] CNI
 - [ ] storage

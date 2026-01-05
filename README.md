@@ -112,7 +112,7 @@ spec:
 - [x] tugboat‑apiserver
 - [x] tugboat-client
 - [x] tugboat-cli build (Build a VM Image from a Imagefile)
-- [ ] fieldSelector and labelSelector (Work in progress!!)
+- [x] fieldSelector and labelSelector
 - [ ] tugboat‑agent (Work in progress!!)
 - [ ] tugboat‑scheduler
 - [ ] CNI
