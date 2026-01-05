@@ -19,7 +19,7 @@ struct NamespacedPathParams {
     namespace: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Copy, Clone)]
 #[serde(rename_all = "camelCase")]
 enum WatchOption {
     True, // default watch mode

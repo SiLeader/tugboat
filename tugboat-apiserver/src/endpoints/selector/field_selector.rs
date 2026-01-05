@@ -1,7 +1,7 @@
 use crate::endpoints::selector::Selector;
 use serde::Serialize;
 
-enum FieldSelector {
+pub(crate) enum FieldSelector {
     Equal(Vec<String>, String),
     NotEqual(Vec<String>, String),
 }
@@ -40,6 +40,25 @@ impl From<Selector> for FieldSelector {
     }
 }
 
+impl FieldSelector {
+    pub(crate) fn is_match(&self, value: &serde_json::Value) -> bool {
+        let (key, expected, is_equal) = match self {
+            FieldSelector::Equal(key, v) => (key, v, true),
+            FieldSelector::NotEqual(key, v) => (key, v, false),
+        };
+
+        let Some(value) = follow(&value, 0, key.as_slice()) else {
+            return false;
+        };
+
+        if is_equal {
+            value == expected || (expected.is_empty() && value.is_null())
+        } else {
+            value != expected
+        }
+    }
+}
+
 impl<I> Iterator for FieldSelectorFilter<I>
 where
     I: Iterator,
@@ -53,25 +72,8 @@ where
             let Ok(value) = serde_json::to_value(&whole_value) else {
                 continue;
             };
-            for selector in &self.field_selector {
-                let (key, expected, is_equal) = match selector {
-                    FieldSelector::Equal(key, v) => (key, v, true),
-                    FieldSelector::NotEqual(key, v) => (key, v, false),
-                };
-
-                let Some(value) = follow(&value, 0, key.as_slice()) else {
-                    continue;
-                };
-
-                if is_equal {
-                    if value == expected || (expected.is_empty() && value.is_null()) {
-                        return Some(whole_value);
-                    }
-                } else {
-                    if value != expected {
-                        return Some(whole_value);
-                    }
-                }
+            if self.field_selector.iter().all(|sel| sel.is_match(&value)) {
+                return Some(whole_value);
             }
         }
     }

@@ -1,10 +1,10 @@
-use crate::start::QemuVmConfig;
+use crate::run::QemuVmConfig;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use std::env::VarError;
 use thiserror::Error;
 
-mod start;
+mod run;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -33,7 +33,7 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 enum SubCommand {
-    Run(start::StartArgs),
+    Run(run::RunArgs),
 }
 
 #[derive(Deserialize)]
@@ -50,6 +50,6 @@ pub async fn run() {
     };
 
     match args.subcommand {
-        SubCommand::Run(start_args) => start::start(config.qemu, start_args).await,
+        SubCommand::Run(start_args) => run::run(config.qemu, start_args).await,
     }
 }

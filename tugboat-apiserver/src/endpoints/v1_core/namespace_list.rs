@@ -15,7 +15,15 @@ pub(super) async fn handle_namespace_list(
 ) -> Result<HttpResponse, StatusResponse> {
     let query = query.into_inner();
     if let Some(opts) = query.watch {
-        watch::<Namespace>(&operator, query.resource_version, opts).await
+        watch::<Namespace>(
+            &operator,
+            opts,
+            query.to_field_selector()?,
+            query.to_label_selector()?,
+            query.resource_version,
+            None,
+        )
+        .await
     } else {
         let field_selector = query.to_field_selector()?;
         let label_selector = query.to_label_selector()?;

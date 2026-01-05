@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Fleet
+metadata:
+  namespace: default
+  name: my-fleet
+spec:
+  network:
+    ipv4: 172.16.0.0/16
+  ships:
+    - name: control-plane
+      replicas: 1
+      selector:
+        matchLabels:
+          app: control-plane
+      shipTemplate:
+        metadata:
+          labels:
+            app: control-plane
+        spec:
+          image: example.com/vm-images/kubernetes:24.04-control-plane
+          shipClass: kubernetes-control-plane
+    - name: worker-compute-optimized
+      network:
+        private: true
+      replicas: 1
+      selector:
+        matchLabels:
+          app: worker-compute-optimized
+      shipTemplate:
+        metadata:
+          labels:
+            app: worker-compute-optimized
+        spec:
+          image: example.com/vm-images/kubernetes:24.04-worker
+          shipClass: compute-optimized
+    - name: worker-memory-optimized
+      network:
+        private: true
+      replicas: 1
+      selector:
+        matchLabels:
+          app: worker-memory-optimized
+      shipTemplate:
+        metadata:
+          labels:
+            app: worker-memory-optimized
+        spec:
+          image: example.com/vm-images/kubernetes:24.04-worker
+          shipClass: memory-optimized

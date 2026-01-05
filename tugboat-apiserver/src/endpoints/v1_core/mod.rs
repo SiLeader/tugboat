@@ -17,6 +17,7 @@ pub(super) fn register_v1_core(service: &mut ServiceConfig) {
         .service(namespace_read::handle_namespace_read)
         .service(ship_create::handle_ship_create)
         .service(ship_list::handle_ship_list)
+        .service(ship_list::handle_ship_list_all)
         .service(ship_read::handle_ship_read)
         .service(shipclass_create::handle_shipclass_create)
         .service(shipclass_list::handle_shipclass_list)

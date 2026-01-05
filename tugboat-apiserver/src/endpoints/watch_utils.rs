@@ -1,11 +1,14 @@
 use crate::data::StatusResponse;
 use crate::endpoints::WatchOption;
+use crate::endpoints::selector::{FieldSelector, Selector};
 use crate::operator::ApiOperator;
 use actix_web::HttpResponse;
+use actix_web_lab::__reexports::futures_util::StreamExt;
 use actix_web_lab::respond::NdJson;
 use async_stream::stream;
 use serde::Serialize;
 use tugboat_resource_store::serializer::StaticSerializable;
+use tugboat_resources::ObjectMetaResource;
 
 #[derive(Serialize)]
 #[serde(tag = "type", content = "object")]
@@ -15,15 +18,37 @@ enum WatchEvent<T> {
     DELETED(T),
 }
 
+impl<T> WatchEvent<T> {
+    fn content(&self) -> Option<&T> {
+        match self {
+            WatchEvent::ADDED(c) => Some(c),
+            WatchEvent::MODIFIED(c) => Some(c),
+            WatchEvent::DELETED(c) => Some(c),
+        }
+    }
+}
+
 pub(super) async fn watch<T>(
     operator: &ApiOperator,
-    resource_version: Option<String>,
     _options: WatchOption,
+    field_selector: Option<Vec<Selector>>,
+    label_selector: Option<Vec<Selector>>,
+    resource_version: Option<String>,
+    namespace: Option<String>,
 ) -> Result<HttpResponse, StatusResponse>
 where
-    T: 'static + StaticSerializable + Serialize,
+    T: 'static + ObjectMetaResource + StaticSerializable + Serialize,
 {
-    let watch = operator.store.watch::<T>(resource_version).await?;
+    let field_selector = field_selector.map(|fs| {
+        fs.into_iter()
+            .map(Into::into)
+            .collect::<Vec<FieldSelector>>()
+    });
+
+    let watch = operator
+        .store
+        .watch::<T>(resource_version, namespace)
+        .await?;
     let stream = stream! {
         let mut watch = watch;
         loop {
@@ -33,11 +58,47 @@ where
             let value = watch.borrow_and_update();
 
             for event in value.iter() {
-                yield WatchEvent::<T>::try_from(event.clone());
+                let event = WatchEvent::<T>::try_from(event.clone());
+                match event {
+                    Ok(event) => if check_selector(&event, &field_selector, &label_selector) {
+                        yield Ok(event);
+                    }
+                    Err(err) => yield Err(err),
+                }
             }
         }
     };
     Ok(HttpResponse::Ok().body(NdJson::new(stream).into_body_stream()))
+}
+
+fn check_selector<T>(
+    event: &WatchEvent<T>,
+    field_selector: &Option<Vec<FieldSelector>>,
+    label_selector: &Option<Vec<Selector>>,
+) -> bool
+where
+    T: ObjectMetaResource + Serialize,
+{
+    let Some(content) = event.content() else {
+        return true;
+    };
+    if let Some(field_selector) = field_selector {
+        let Ok(value) = serde_json::to_value(&content) else {
+            return false;
+        };
+        if !field_selector.iter().all(|s| s.is_match(&value)) {
+            return false;
+        }
+    }
+    if let Some(label_selector) = label_selector {
+        let Some(meta) = content.object_meta() else {
+            return false;
+        };
+        if !label_selector.iter().all(|s| s.is_label_match(meta)) {
+            return false;
+        }
+    }
+    true
 }
 
 impl<T> TryFrom<tugboat_resource_store::watch::WatchEvent> for WatchEvent<T>

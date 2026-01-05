@@ -1,5 +1,6 @@
 use crate::endpoints::selector::Selector;
 use tugboat_resources::ObjectMetaResource;
+use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
 pub(crate) struct LabelSelectorFilter<I> {
     label_selector: Vec<Selector>,
@@ -22,6 +23,25 @@ where
     }
 }
 
+impl Selector {
+    pub(crate) fn is_label_match(&self, meta: &ObjectMeta) -> bool {
+        match self {
+            Selector::Equal(key, value) => {
+                let Some(actual_value) = meta.labels.get(key) else {
+                    return false;
+                };
+                actual_value == value
+            }
+            Selector::NotEqual(key, value) => {
+                let Some(actual_value) = meta.labels.get(key) else {
+                    return false;
+                };
+                actual_value != value
+            }
+        }
+    }
+}
+
 impl<I> Iterator for LabelSelectorFilter<I>
 where
     I: Iterator,
@@ -35,25 +55,12 @@ where
             let Some(meta) = item.object_meta() else {
                 continue;
             };
-            for selector in &self.label_selector {
-                match selector {
-                    Selector::Equal(key, value) => {
-                        let Some(actual_value) = meta.labels.get(key) else {
-                            continue;
-                        };
-                        if actual_value == value {
-                            return Some(item);
-                        }
-                    }
-                    Selector::NotEqual(key, value) => {
-                        let Some(actual_value) = meta.labels.get(key) else {
-                            continue;
-                        };
-                        if actual_value != value {
-                            return Some(item);
-                        }
-                    }
-                }
+            if self
+                .label_selector
+                .iter()
+                .all(|sel| sel.is_label_match(meta))
+            {
+                return Some(item);
             }
         }
     }

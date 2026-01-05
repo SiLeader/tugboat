@@ -1,6 +1,7 @@
 use clap::Parser;
 
 mod config;
+mod reconciler;
 
 #[derive(Debug, Parser)]
 struct Args {

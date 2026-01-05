@@ -10,6 +10,7 @@ mod watch;
 pub use api::*;
 pub use error::*;
 
+#[derive(Clone)]
 pub struct TugboatClient {
     base_url: String,
     client: reqwest::Client,

@@ -4,8 +4,9 @@ use crate::watch::WatchEvent;
 use futures::Stream;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tugboat_resources::{ClusterScopedResource, NamespacedResource, StaticResource};
+use tugboat_resources::{NamespacedResource, StaticResource};
 
+#[derive(Clone)]
 pub struct Api<T> {
     client: TugboatClient,
     namespace: Option<String>,
@@ -24,7 +25,7 @@ impl<T> Api<T> {
 
 impl<T> Api<T>
 where
-    T: ClusterScopedResource,
+    T: StaticResource,
 {
     pub fn all(client: TugboatClient) -> Self {
         Self::new(client, None)

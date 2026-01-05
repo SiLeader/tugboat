@@ -1,9 +1,9 @@
 mod spawner;
 mod volume_copy;
 
-use crate::start::vm::RunVm;
-use crate::start::vm::qemu::spawner::QemuVmConfigUefi;
-use crate::start::vm::qemu::volume_copy::BootDisk;
+use crate::run::vm::RunVm;
+use crate::run::vm::qemu::spawner::QemuVmConfigUefi;
+use crate::run::vm::qemu::volume_copy::BootDisk;
 use async_trait::async_trait;
 pub use spawner::{QemuVmBuilder, QemuVmConfig};
 use std::fs::copy;

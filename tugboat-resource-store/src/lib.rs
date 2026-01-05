@@ -59,8 +59,12 @@ impl ResourceStore {
         }
     }
 
-    fn create_watch_key<T: StaticResource>() -> String {
-        format!("{BASE_PATH}/{}/", T::plural())
+    fn create_watch_key<T: StaticResource>(namespace: Option<String>) -> String {
+        if let Some(ns) = namespace {
+            format!("{BASE_PATH}/{}/{}/{ns}/", T::group(), T::plural())
+        } else {
+            format!("{BASE_PATH}/{}/{}/", T::group(), T::plural())
+        }
     }
 
     pub async fn put<T: StaticSerializable + ObjectMetaResource>(
@@ -166,8 +170,9 @@ impl ResourceStore {
     pub async fn watch<T: StaticSerializable>(
         &self,
         resource_version: Option<String>,
+        namespace: Option<String>,
     ) -> Result<WatchReceiver, Error> {
-        let key = Self::create_watch_key::<T>();
+        let key = Self::create_watch_key::<T>(namespace);
         self.watch_mux.get(&key, resource_version).await
     }
 }

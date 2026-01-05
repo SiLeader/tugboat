@@ -1,6 +1,6 @@
-use crate::start::config::VmConfig;
-use crate::start::vm::qemu::{QemuVm, SizeInBytes};
-use crate::start::vm::{RunVm, Spawner};
+use crate::run::config::VmConfig;
+use crate::run::vm::qemu::{QemuVm, SizeInBytes};
+use crate::run::vm::{RunVm, Spawner};
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]

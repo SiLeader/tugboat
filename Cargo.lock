@@ -3157,6 +3157,8 @@ dependencies = [
  "clap",
  "serde",
  "toml",
+ "tugboat-client",
+ "tugboat-resources",
 ]
 
 [[package]]
