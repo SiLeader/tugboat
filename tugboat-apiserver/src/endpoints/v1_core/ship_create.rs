@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::data::{CreateResponse, StatusResponse};
+use crate::data::{ModifyResponse, StatusResponse};
 use crate::endpoints::NamespacedPathParams;
 use crate::operator::ApiOperator;
 use crate::{create_object, extract_object_meta};
@@ -27,7 +27,7 @@ pub(super) async fn handle_ship_create(
     path: Path<NamespacedPathParams>,
     json: Json<Ship>,
     operator: Data<ApiOperator>,
-) -> Result<CreateResponse<Ship>, StatusResponse> {
+) -> Result<ModifyResponse<Ship>, StatusResponse> {
     let ship = json.into_inner();
 
     let object_meta = extract_object_meta!(ship);

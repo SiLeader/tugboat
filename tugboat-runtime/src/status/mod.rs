@@ -16,9 +16,7 @@ use crate::run::QemuVmConfig;
 use clap::Parser;
 use qapi::futures::QmpStreamTokio;
 use qapi::qmp::RunState;
-use tugboat_vm_runtime_interface::status::{
-    VmErrorReason, VmPausedReason, VmRunningStatus, VmStatus,
-};
+use tugboat_vm_runtime_interface::status::{VmStatus, VmStatusResponse};
 
 #[derive(Debug, Parser)]
 pub(crate) struct StatusArgs {
@@ -30,25 +28,25 @@ trait FromQmp<T> {
     fn from_qmp(value: T) -> Self;
 }
 
-impl FromQmp<RunState> for VmRunningStatus {
+impl FromQmp<RunState> for VmStatus {
     fn from_qmp(value: RunState) -> Self {
         match value {
-            RunState::debug => VmRunningStatus::Running,
-            RunState::inmigrate => VmRunningStatus::Paused(VmPausedReason::InMigrating),
-            RunState::internal_error => VmRunningStatus::Error(VmErrorReason::InternalError),
-            RunState::io_error => VmRunningStatus::Error(VmErrorReason::IoError),
-            RunState::paused => VmRunningStatus::Paused(VmPausedReason::Stopped),
-            RunState::postmigrate => VmRunningStatus::Paused(VmPausedReason::PostMigration),
-            RunState::prelaunch => VmRunningStatus::Prelaunch,
-            RunState::finish_migrate => VmRunningStatus::Paused(VmPausedReason::FinishMigrating),
-            RunState::restore_vm => VmRunningStatus::Paused(VmPausedReason::Restoring),
-            RunState::running => VmRunningStatus::Running,
-            RunState::save_vm => VmRunningStatus::Paused(VmPausedReason::Saving),
-            RunState::shutdown => VmRunningStatus::Shutdown,
-            RunState::suspended => VmRunningStatus::Suspended,
-            RunState::watchdog => VmRunningStatus::Paused(VmPausedReason::Watchdog),
-            RunState::guest_panicked => VmRunningStatus::Panicked,
-            RunState::colo => VmRunningStatus::Paused(VmPausedReason::Saving),
+            RunState::debug => VmStatus::Running,
+            RunState::inmigrate => VmStatus::Paused,
+            RunState::internal_error => VmStatus::Error,
+            RunState::io_error => VmStatus::Error,
+            RunState::paused => VmStatus::Paused,
+            RunState::postmigrate => VmStatus::Paused,
+            RunState::prelaunch => VmStatus::Prelaunch,
+            RunState::finish_migrate => VmStatus::Paused,
+            RunState::restore_vm => VmStatus::Paused,
+            RunState::running => VmStatus::Running,
+            RunState::save_vm => VmStatus::Paused,
+            RunState::shutdown => VmStatus::Shutdown,
+            RunState::suspended => VmStatus::Suspended,
+            RunState::watchdog => VmStatus::Paused,
+            RunState::guest_panicked => VmStatus::Panicked,
+            RunState::colo => VmStatus::Paused,
         }
     }
 }
@@ -63,8 +61,30 @@ pub(crate) async fn status(vm: QemuVmConfig, args: StatusArgs) {
         .execute(qapi::qmp::query_status {})
         .await
         .expect("Cannot execute QMP");
-    let status = VmStatus {
-        status: VmRunningStatus::from_qmp(status.status),
+
+    let status = VmStatusResponse {
+        status: VmStatus::from_qmp(status.status),
+        message: match status.status {
+            RunState::debug => "Running with a debugger",
+            RunState::inmigrate => "Waiting for an incoming migration.",
+            RunState::internal_error => {
+                "Internal error that prevents further guest execution has occurred."
+            }
+            RunState::io_error => "I/O error",
+            RunState::paused => "Paused because of 'stop' command.",
+            RunState::postmigrate => "Paused after successful 'migrate' command.",
+            RunState::prelaunch => "Prelaunch",
+            RunState::finish_migrate => "Paused to finish the migration process.",
+            RunState::restore_vm => "Restoring VM state.",
+            RunState::running => "Actively running.",
+            RunState::save_vm => "Saving VM state.",
+            RunState::shutdown => "Shutdown",
+            RunState::suspended => "Suspended (ACPI S3).",
+            RunState::watchdog => "Watchdog was triggered.",
+            RunState::guest_panicked => "Guest OS panicked.",
+            RunState::colo => "save/restore VM state under colo checkpoint.",
+        }
+        .to_string(),
     };
     serde_json::to_writer(std::io::stdout(), &status).expect("Cannot serialize status");
 }

@@ -12,15 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod status;
+
 use tokio::process::Child;
 
 pub(crate) struct Runtime {
+    namespace: String,
     id: String,
     child: Child,
 }
 
 impl Runtime {
-    pub(super) fn new(id: String, child: Child) -> Self {
-        Self { id, child }
+    pub(super) fn new(namespace: String, id: String, child: Child) -> Self {
+        Self {
+            namespace,
+            id,
+            child,
+        }
+    }
+
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub(super) fn namespace(&self) -> &str {
+        &self.namespace
     }
 }

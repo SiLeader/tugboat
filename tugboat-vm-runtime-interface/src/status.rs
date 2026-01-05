@@ -1,36 +1,18 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "status", content = "reason")]
-pub enum VmRunningStatus {
-    Paused(VmPausedReason),
+pub enum VmStatus {
+    Paused,
     Running,
     Shutdown,
     Suspended,
     Panicked,
-    Error(VmErrorReason),
+    Error,
     Prelaunch,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum VmPausedReason {
-    Stopped,
-    InMigrating,
-    FinishMigrating,
-    PostMigration,
-    Watchdog,
-    Saving,
-    Restoring,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum VmErrorReason {
-    InternalError,
-    IoError,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct VmStatus {
-    #[serde(flatten)]
-    pub status: VmRunningStatus,
+pub struct VmStatusResponse {
+    pub status: VmStatus,
+    pub message: String,
 }

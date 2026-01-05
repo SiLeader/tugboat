@@ -17,12 +17,8 @@ use crate::operator::ApiOperator;
 use actix_web::middleware::Logger;
 use actix_web::web::Data;
 use actix_web::{App, HttpResponse, HttpServer, get};
-use rustls::pki_types::CertificateDer;
-use rustls::server::WebPkiClientVerifier;
-use rustls::{RootCertStore, ServerConfig};
-use std::fs::File;
-use std::io::BufReader;
-use std::sync::Arc;
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use openssl::x509::X509;
 use utoipa_actix_web::AppExt;
 
 pub mod config;
@@ -63,52 +59,24 @@ impl ApiServer {
                 .into_app()
         });
         if let Some(tls) = self.tls {
-            let cert_file = File::open(tls.cert_file).expect("Failed to open cert file");
-            let mut cert_file = BufReader::new(cert_file);
-
-            let certs = rustls_pemfile::certs(&mut cert_file)
-                .collect::<Result<Vec<_>, _>>()
-                .expect("Failed to parse cert file")
-                .into_iter()
-                .map(CertificateDer::from)
-                .collect();
-
-            let key_file = File::open(tls.key_file).expect("Failed to open key file");
-            let mut key_file = BufReader::new(key_file);
-            let key = rustls_pemfile::private_key(&mut key_file)
-                .expect("Failed to parse key file")
-                .expect("Private key cannot be loaded");
-
-            let builder = ServerConfig::builder();
-            let builder = if let Some(client_cert_file) = tls.client_cert_file {
-                let cert_file =
-                    File::open(client_cert_file).expect("Failed to open client cert file");
-                let mut cert_file = BufReader::new(cert_file);
-
-                let certs = rustls_pemfile::certs(&mut cert_file)
-                    .collect::<Result<Vec<_>, _>>()
-                    .expect("Failed to parse client cert file")
-                    .into_iter()
-                    .map(CertificateDer::from)
-                    .collect::<Vec<_>>();
-
-                let mut store = RootCertStore::empty();
-                for cert in certs {
-                    store.add(cert).expect("Failed to add client cert to store");
+            let builder = {
+                let mut b = SslAcceptor::mozilla_modern_v5(SslMethod::tls_server())
+                    .expect("Failed to create acceptor");
+                b.set_private_key_file(tls.key_file, SslFiletype::PEM)
+                    .expect("Failed to set key file");
+                b.set_certificate_chain_file(tls.cert_file)
+                    .expect("Failed to set cert file");
+                if let Some(client_ca_file) = tls.client_cert_file {
+                    let file =
+                        std::fs::read(client_ca_file).expect("Failed to read client CA file");
+                    let x509 = X509::from_pem(file.as_slice()).unwrap();
+                    b.add_client_ca(x509.as_ref())
+                        .expect("Failed to add client CA");
                 }
-                builder.with_client_cert_verifier(
-                    WebPkiClientVerifier::builder(Arc::new(store))
-                        .build()
-                        .expect("Failed to build client cert verifier"),
-                )
-            } else {
-                builder.with_no_client_auth()
+                b
             };
-            let config = builder
-                .with_single_cert(certs, key)
-                .expect("Failed to build TLS config");
             server
-                .bind_rustls_0_23(self.listen, config)
+                .bind_openssl(self.listen, builder)
                 .expect("Failed to bind server")
                 .run()
                 .await

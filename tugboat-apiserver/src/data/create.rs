@@ -16,16 +16,18 @@ use actix_web::body::BoxBody;
 use actix_web::{HttpRequest, HttpResponse, Responder};
 use serde::Serialize;
 
-pub(crate) enum CreateResponse<T> {
+pub(crate) enum ModifyResponse<T> {
     Created(T),
+    Updated(T),
 }
 
-impl<T: Serialize> Responder for CreateResponse<T> {
+impl<T: Serialize> Responder for ModifyResponse<T> {
     type Body = BoxBody;
 
     fn respond_to(self, _req: &HttpRequest) -> HttpResponse<Self::Body> {
         match self {
-            CreateResponse::Created(body) => HttpResponse::Created().json(body),
+            ModifyResponse::Created(body) => HttpResponse::Created().json(body),
+            ModifyResponse::Updated(body) => HttpResponse::Ok().json(body),
         }
     }
 }

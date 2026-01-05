@@ -63,7 +63,7 @@ where
         if let Some(namespace) = &self.namespace {
             self.client.create_namespaced(namespace, resource).await
         } else {
-            self.client.create_cluster_wide(resource).await
+            self.client.create_cluster_scoped(resource).await
         }
     }
 
@@ -71,7 +71,7 @@ where
         if let Some(namespace) = &self.namespace {
             self.client.get_namespaced(namespace, name).await
         } else {
-            self.client.get_cluster_wide(name).await
+            self.client.get_cluster_scoped(name).await
         }
     }
 
@@ -79,7 +79,27 @@ where
         if let Some(namespace) = &self.namespace {
             self.client.list_namespaced(namespace).await
         } else {
-            self.client.list_cluster_wide().await
+            self.client.list_cluster_scoped().await
+        }
+    }
+
+    pub async fn patch_status<P: Serialize>(&self, name: &str, patch: P) -> Result<T, Error> {
+        if let Some(namespace) = &self.namespace {
+            self.client
+                .patch_status_namespaced(namespace, name, patch)
+                .await
+        } else {
+            self.client.patch_status_cluster_scoped(name, patch).await
+        }
+    }
+
+    pub async fn replace_status(&self, name: &str, data: T) -> Result<T, Error> {
+        if let Some(namespace) = &self.namespace {
+            self.client
+                .replace_status_namespaced(namespace, name, data)
+                .await
+        } else {
+            self.client.replace_status_cluster_scoped(name, data).await
         }
     }
 

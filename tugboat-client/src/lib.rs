@@ -57,7 +57,25 @@ impl TugboatClient {
         Self::parse_response_list(res).await
     }
 
-    pub(crate) async fn create_cluster_wide<T: StaticResource + Serialize + DeserializeOwned>(
+    async fn patch_impl<T: StaticResource + DeserializeOwned>(
+        &self,
+        path: String,
+        body: impl Serialize,
+    ) -> Result<T, Error> {
+        let res = self.client.patch(path).json(&body).send().await?;
+        Self::parse_response(res).await
+    }
+
+    async fn put_impl<T: StaticResource + DeserializeOwned>(
+        &self,
+        path: String,
+        body: T,
+    ) -> Result<T, Error> {
+        let res = self.client.put(path).json(&body).send().await?;
+        Self::parse_response(res).await
+    }
+
+    pub(crate) async fn create_cluster_scoped<T: StaticResource + Serialize + DeserializeOwned>(
         &self,
         resource: T,
     ) -> Result<T, Error> {
@@ -65,7 +83,7 @@ impl TugboatClient {
         self.create_impl(path, resource).await
     }
 
-    pub(crate) async fn get_cluster_wide<T: StaticResource + DeserializeOwned>(
+    pub(crate) async fn get_cluster_scoped<T: StaticResource + DeserializeOwned>(
         &self,
         name: &str,
     ) -> Result<Option<T>, Error> {
@@ -73,11 +91,45 @@ impl TugboatClient {
         self.get_impl(path).await
     }
 
-    pub(crate) async fn list_cluster_wide<T: StaticResource + DeserializeOwned>(
+    pub(crate) async fn list_cluster_scoped<T: StaticResource + DeserializeOwned>(
         &self,
     ) -> Result<Vec<T>, Error> {
         let path = format!("{}/{}/{}", self.base_url, T::version(), T::plural());
         self.list_impl(path).await
+    }
+
+    pub(crate) async fn patch_status_cluster_scoped<
+        T: StaticResource + DeserializeOwned,
+        P: Serialize,
+    >(
+        &self,
+        name: &str,
+        patch: P,
+    ) -> Result<T, Error> {
+        let path = format!(
+            "{}/{}/{}/{name}/status",
+            self.base_url,
+            T::version(),
+            T::plural()
+        );
+        self.patch_impl(path, patch).await
+    }
+
+    pub(crate) async fn replace_status_cluster_scoped<T: StaticResource + DeserializeOwned>(
+        &self,
+        name: &str,
+        data: T,
+    ) -> Result<T, Error> {
+        self.put_impl(
+            format!(
+                "{}/{}/{}/{name}/status",
+                self.base_url,
+                T::version(),
+                T::plural()
+            ),
+            data,
+        )
+        .await
     }
 
     pub(crate) async fn create_namespaced<T: StaticResource + Serialize + DeserializeOwned>(
@@ -119,5 +171,41 @@ impl TugboatClient {
             T::plural()
         );
         self.list_impl(path).await
+    }
+
+    pub(crate) async fn patch_status_namespaced<
+        T: StaticResource + DeserializeOwned,
+        P: Serialize,
+    >(
+        &self,
+        namespace: &str,
+        name: &str,
+        patch: P,
+    ) -> Result<T, Error> {
+        let path = format!(
+            "{}/{}/namespaces/{namespace}/{}/{name}/status",
+            self.base_url,
+            T::version(),
+            T::plural()
+        );
+        self.patch_impl(path, patch).await
+    }
+
+    pub(crate) async fn replace_status_namespaced<T: StaticResource + DeserializeOwned>(
+        &self,
+        namespace: &str,
+        name: &str,
+        data: T,
+    ) -> Result<T, Error> {
+        self.put_impl(
+            format!(
+                "{}/{}/namespaces/{namespace}/{}/{name}/status",
+                self.base_url,
+                T::version(),
+                T::plural()
+            ),
+            data,
+        )
+        .await
     }
 }

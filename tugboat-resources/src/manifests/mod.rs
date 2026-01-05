@@ -28,5 +28,18 @@ pub mod core {
 pub mod meta {
     pub mod v1 {
         include!(concat!(env!("OUT_DIR"), "/tugboat.meta.v1.rs"));
+
+        impl Time {
+            pub fn now() -> Self {
+                let now = std::time::SystemTime::now();
+                let duration = now
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default();
+
+                let seconds = duration.as_secs() as i64;
+                let nanos = duration.subsec_nanos() as i32;
+                Time { seconds, nanos }
+            }
+        }
     }
 }

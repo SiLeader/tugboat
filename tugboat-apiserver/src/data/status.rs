@@ -123,3 +123,12 @@ impl From<tugboat_resource_store::error::Error> for StatusResponse {
         }
     }
 }
+
+impl From<serde_json::Error> for StatusResponse {
+    fn from(value: serde_json::Error) -> Self {
+        StatusResponse::internal_error(
+            "Failed to serialize to JSON",
+            Some(serde_json::json!({"error": value.to_string()})),
+        )
+    }
+}

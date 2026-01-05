@@ -20,6 +20,8 @@ mod namespace_read;
 mod ship_create;
 mod ship_list;
 mod ship_read;
+mod ship_status_patch;
+mod ship_status_replace;
 mod shipclass_create;
 mod shipclass_list;
 mod shipclass_read;
@@ -33,6 +35,8 @@ pub(super) fn register_v1_core(service: &mut ServiceConfig) {
         .service(ship_list::handle_ship_list)
         .service(ship_list::handle_ship_list_all)
         .service(ship_read::handle_ship_read)
+        .service(ship_status_patch::handle_ship_status_patch)
+        .service(ship_status_replace::handle_ship_status_replace)
         .service(shipclass_create::handle_shipclass_create)
         .service(shipclass_list::handle_shipclass_list)
         .service(shipclass_read::handle_shipclass_read);

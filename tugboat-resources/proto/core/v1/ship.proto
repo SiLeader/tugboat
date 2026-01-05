@@ -24,6 +24,7 @@ message Ship {
   meta.v1.TypeMeta type_meta = 1;
   meta.v1.ObjectMeta object_meta = 2;
   ShipSpec spec = 3;
+  optional ShipStatus status = 4;
 }
 
 message ShipSpec {

@@ -15,11 +15,13 @@
 pub(crate) mod error;
 mod run;
 mod runtime;
+mod status;
 
 use crate::runtime::runtime::Runtime;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::process::Command;
 use tokio::sync::RwLock;
 use tugboat_vm_image::VmImageRegistry;
 
@@ -37,4 +39,10 @@ pub(crate) struct RuntimeConfig {
     pub config_file: String,
 }
 
-impl RuntimeOperator {}
+impl RuntimeConfig {
+    fn runtime_command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        command.args(&self.args);
+        command
+    }
+}

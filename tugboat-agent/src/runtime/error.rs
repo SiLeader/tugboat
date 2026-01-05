@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::process::ExitStatus;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -28,4 +29,6 @@ pub(crate) enum RuntimeError {
     RunVm,
     #[error("Invalid memory size: {0}")]
     MemorySize(String),
+    #[error("Failed to execute command: status: {0}, stdout: '{1}', stderr: '{2}'")]
+    CommandFailed(ExitStatus, String, String),
 }

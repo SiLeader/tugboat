@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::data::{CreateResponse, StatusResponse};
+use crate::data::{ModifyResponse, StatusResponse};
 use crate::operator::ApiOperator;
 use crate::{check_namespace_absent, create_object, extract_object_meta};
 use actix_web::post;
@@ -25,7 +25,7 @@ use tugboat_resources::manifests::core::v1::Namespace;
 pub(super) async fn handle_namespace_create(
     json: Json<Namespace>,
     operator: Data<ApiOperator>,
-) -> Result<CreateResponse<Namespace>, StatusResponse> {
+) -> Result<ModifyResponse<Namespace>, StatusResponse> {
     let namespace = json.into_inner();
 
     let object_meta = extract_object_meta!(namespace);

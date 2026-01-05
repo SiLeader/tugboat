@@ -33,11 +33,15 @@ struct VmConfig {
 
 impl RuntimeOperator {
     pub(crate) async fn run(&self, ship: Ship, ship_class: ShipClass) -> Result<(), RuntimeError> {
-        let Some(ship_id) = ship.object_meta.and_then(|o| o.uid) else {
+        let Some(object_meta) = ship.object_meta else {
+            return Err(RuntimeError::MissingField("v1.Ship.metadata".to_string()));
+        };
+        let Some(ship_id) = object_meta.uid else {
             return Err(RuntimeError::MissingField(
                 "v1.Ship.metadata.uid".to_string(),
             ));
         };
+        let namespace = object_meta.namespace.unwrap_or("default".to_string());
         let Some(ship_class_spec) = ship_class.spec else {
             return Err(RuntimeError::MissingField("v1.ShipClass.spec".to_string()));
         };
@@ -67,8 +71,9 @@ impl RuntimeOperator {
                 .ok_or(RuntimeError::MemorySize(memory.size))?,
         };
         let vm_config = serde_json::to_string(&vm_config)?;
-        let mut child = Command::new(&self.config.executable)
-            .args(self.config.args.as_slice())
+        let mut child = self
+            .config
+            .runtime_command()
             .args(["run", "-"])
             .stdin(Stdio::piped())
             .spawn()?;
@@ -80,7 +85,7 @@ impl RuntimeOperator {
                     Err(RuntimeError::Io(e))
                 } else {
                     let mut children = self.children.write().await;
-                    children.insert(ship_id.clone(), Runtime::new(ship_id, child));
+                    children.insert(ship_id.clone(), Runtime::new(namespace, ship_id, child));
                     Ok(())
                 }
             }

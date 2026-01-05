@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::data::{CreateResponse, StatusResponse};
+use crate::data::{ModifyResponse, StatusResponse};
 use crate::operator::ApiOperator;
 use crate::{check_namespace_absent, create_object, extract_object_meta};
 use actix_web::post;
@@ -25,7 +25,7 @@ use tugboat_resources::manifests::core::v1::ShipClass;
 pub(super) async fn handle_shipclass_create(
     json: Json<ShipClass>,
     operator: Data<ApiOperator>,
-) -> Result<CreateResponse<ShipClass>, StatusResponse> {
+) -> Result<ModifyResponse<ShipClass>, StatusResponse> {
     let shipclass = json.into_inner();
 
     let object_meta = extract_object_meta!(shipclass);

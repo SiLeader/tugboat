@@ -68,7 +68,7 @@ macro_rules! create_object {
                 obj
             };
             if let Some(data) = $operator.store.put_if_not_exists(object).await? {
-                return Ok(CreateResponse::Created(data.apply_revision()));
+                return Ok($crate::data::ModifyResponse::Created(data.apply_revision()));
             }
         }
 

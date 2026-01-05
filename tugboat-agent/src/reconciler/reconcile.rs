@@ -14,13 +14,27 @@
 
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
-use tugboat_client::WatchEvent;
-use tugboat_resources::manifests::core::v1::Ship;
+use tugboat_client::{Api, WatchEvent};
+use tugboat_resources::ObjectMetaResource;
+use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
+use tugboat_resources::manifests::meta::v1::Time;
 
 impl ShipReconciler {
     pub(super) async fn reconcile(&self, event: WatchEvent<Ship>) -> Result<(), ReconcileError> {
         match event {
             WatchEvent::Added(ship) => {
+                let Some(ship_metadata) = ship.object_meta() else {
+                    return Err(ReconcileError::FieldMissing(
+                        "v1.Ship".to_string(),
+                        "metadata".to_string(),
+                    ));
+                };
+                let Some(name) = ship_metadata.name else {
+                    return Err(ReconcileError::FieldMissing(
+                        "v1.Ship".to_string(),
+                        "metadata.name".to_string(),
+                    ));
+                };
                 let Some(ship_spec) = &ship.spec else {
                     return Err(ReconcileError::FieldMissing(
                         "v1.Ship".to_string(),
@@ -30,6 +44,17 @@ impl ShipReconciler {
                 let Some(class) = self.ship_class_api.get(&ship_spec.ship_class).await? else {
                     return Err(ReconcileError::ShipClassNotFound(ship_spec.ship_class));
                 };
+                {
+                    let namespace = ship_metadata.namespace.unwrap_or("default".to_string());
+                    let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+                    let mut status_ship = ship.clone();
+                    status_ship.append_status(ShipCondition {
+                        status: "VmCreating".to_string(),
+                        message: "Creating new Virtual Machine".to_string(),
+                        timestamp: Some(Time::now()),
+                    });
+                    api.replace_status(&name, status_ship).await?;
+                }
 
                 self.runtime_operator.run(ship, class).await?;
                 Ok(())
@@ -39,6 +64,32 @@ impl ShipReconciler {
             }
             WatchEvent::Deleted(_ship) => {
                 todo!()
+            }
+        }
+    }
+}
+
+pub(super) trait AppendStatus {
+    fn append_status(&mut self, condition: ShipCondition);
+}
+
+impl AppendStatus for ShipStatus {
+    fn append_status(&mut self, condition: ShipCondition) {
+        self.conditions.push(condition);
+    }
+}
+
+impl AppendStatus for Ship {
+    fn append_status(&mut self, condition: ShipCondition) {
+        match &mut self.status {
+            None => {
+                self.status = Some(ShipStatus {
+                    conditions: vec![condition],
+                    ..Default::default()
+                });
+            }
+            Some(status) => {
+                status.append_status(condition);
             }
         }
     }
