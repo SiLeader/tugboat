@@ -12,4 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod status;
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct CniOperatorConfig {
+    #[serde(default)]
+    pub(crate) location: LocationConfig,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub(crate) struct LocationConfig {
+    pub(crate) bin: String,
+    pub(crate) config: String,
+    pub(crate) netns: String,
+}
+
+impl Default for LocationConfig {
+    fn default() -> Self {
+        Self {
+            bin: "/opt/cni/bin".to_string(),
+            config: "/etc/cni/net.d".to_string(),
+            netns: "/var/run/netns".to_string(),
+        }
+    }
+}

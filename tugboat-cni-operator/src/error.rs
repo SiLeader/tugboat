@@ -12,4 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod status;
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("JSON serialization error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
