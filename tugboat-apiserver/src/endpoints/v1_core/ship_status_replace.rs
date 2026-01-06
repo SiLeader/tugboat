@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::check_conflict_optimistic;
 use crate::data::{ModifyResponse, StatusResponse};
 use crate::operator::ApiOperator;
 use actix_web::put;
 use actix_web::web::{Data, Json, Path};
 use serde::Deserialize;
+use std::thread::current;
 use tugboat_resources::manifests::core::v1::Ship;
 use utoipa::ToSchema;
 
@@ -46,6 +48,8 @@ pub(super) async fn handle_ship_status_replace(
     };
     let current = current.apply_revision();
     let replacement = replacement.into_inner();
+    check_conflict_optimistic!(current, replacement);
+
     let replaced = if current.status == replacement.status {
         current
     } else {

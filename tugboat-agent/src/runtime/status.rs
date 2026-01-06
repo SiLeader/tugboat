@@ -29,15 +29,15 @@ impl RuntimeOperator {
             .read()
             .await
             .values()
-            .clone()
+            .map(|s| s.status())
             .collect::<Vec<_>>();
 
         let mut result = Vec::new();
         for ship in ships {
-            let status = ship.status(&self.config).await;
+            let status = ship.check(&self.config).await;
             result.push(status.map(|s| ShipConditionWithId {
-                namespace: ship.namespace().to_string(),
-                id: ship.id().to_string(),
+                namespace: ship.namespace,
+                id: ship.id,
                 condition: s,
             }))
         }

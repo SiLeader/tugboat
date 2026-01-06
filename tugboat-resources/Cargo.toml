@@ -23,7 +23,7 @@ serde = { workspace = true, features = ["derive"] }
 
 prost.workspace = true
 
-regex = { workspace = true, optional = true }
+regex.workspace = true
 
 utoipa = { workspace = true, optional = true }
 
@@ -32,4 +32,4 @@ prost-build.workspace = true
 
 [features]
 schema = ["utoipa"]
-validators = ["regex"]
+validators = []

@@ -15,10 +15,9 @@
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::runtime::Runtime;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 use tracing::error;
 use tugboat_resources::manifests::core::v1::{CpuSpec, Ship, ShipClass};
 use tugboat_resources::sized::SizedString;

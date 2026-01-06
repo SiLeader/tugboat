@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::reconciler::ShipReconciler;
+use crate::runtime::RuntimeOperator;
 use clap::Parser;
+use tugboat_client::TugboatClient;
 
 mod config;
 mod reconciler;
@@ -31,4 +34,10 @@ struct Args {
 pub async fn run() {
     let args = Args::parse();
     let config = config::AgentConfig::load_or_panic(args.config);
+
+    let client = TugboatClient::new(config.apiserver.url);
+    let runtime_operator = RuntimeOperator::new(config.runtime, config.image.cache_dir);
+    let reconciler = ShipReconciler::new(config.node.name, client, runtime_operator);
+
+    reconciler.run().await;
 }

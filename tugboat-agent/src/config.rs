@@ -17,13 +17,25 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentConfig {
+    pub node: NodeConfig,
     pub runtime: RuntimeConfig,
     pub apiserver: ApiserverConfig,
+    pub image: ImageConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct NodeConfig {
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ApiserverConfig {
     pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ImageConfig {
+    pub cache_dir: String,
 }
 
 impl AgentConfig {

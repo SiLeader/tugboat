@@ -12,22 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod status;
+use tracing_subscriber::EnvFilter;
 
-use tokio::process::Child;
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
-pub(crate) struct Runtime {
-    namespace: String,
-    id: String,
-    child: Child,
-}
-
-impl Runtime {
-    pub(super) fn new(namespace: String, id: String, child: Child) -> Self {
-        Self {
-            namespace,
-            id,
-            child,
-        }
-    }
+    tugboat_agent::run().await;
 }

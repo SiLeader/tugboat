@@ -29,7 +29,7 @@ impl ShipReconciler {
                         "metadata".to_string(),
                     ));
                 };
-                let Some(name) = ship_metadata.name else {
+                let Some(name) = &ship_metadata.name else {
                     return Err(ReconcileError::FieldMissing(
                         "v1.Ship".to_string(),
                         "metadata.name".to_string(),
@@ -42,10 +42,15 @@ impl ShipReconciler {
                     ));
                 };
                 let Some(class) = self.ship_class_api.get(&ship_spec.ship_class).await? else {
-                    return Err(ReconcileError::ShipClassNotFound(ship_spec.ship_class));
+                    return Err(ReconcileError::ShipClassNotFound(
+                        ship_spec.ship_class.clone(),
+                    ));
                 };
                 {
-                    let namespace = ship_metadata.namespace.unwrap_or("default".to_string());
+                    let namespace = ship_metadata
+                        .namespace
+                        .clone()
+                        .unwrap_or("default".to_string());
                     let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
                     let mut status_ship = ship.clone();
                     status_ship.append_status(ShipCondition {

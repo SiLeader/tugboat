@@ -17,7 +17,6 @@ mod reconcile;
 
 use crate::reconciler::reconcile::AppendStatus;
 use crate::runtime::RuntimeOperator;
-use crate::runtime::error::RuntimeError;
 use futures::{Stream, StreamExt};
 use std::cmp::min;
 use std::pin::Pin;
@@ -79,14 +78,14 @@ impl ShipReconciler {
     }
 
     fn start_status_collector(&self) -> JoinHandle<()> {
+        let client = self.client.clone();
         let operator = self.runtime_operator.clone();
         tokio::spawn(async move {
             loop {
                 for status in operator.collect_status().await {
                     match status {
                         Ok(status) => {
-                            let api: Api<Ship> =
-                                Api::namespaced(self.client.clone(), &status.namespace);
+                            let api: Api<Ship> = Api::namespaced(client.clone(), &status.namespace);
                             let mut ship = match api.get(&status.id).await {
                                 Ok(Some(s)) => s,
                                 Ok(None) => continue,
@@ -106,6 +105,7 @@ impl ShipReconciler {
                         }
                     }
                 }
+                sleep(Duration::from_secs(5)).await;
             }
         })
     }

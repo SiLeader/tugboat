@@ -19,8 +19,13 @@ use tugboat_resources::manifests::core::v1::ShipCondition;
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::status::{VmStatus, VmStatusResponse};
 
-impl Runtime {
-    pub(crate) async fn status(
+pub(crate) struct RuntimeStatusChecker {
+    pub id: String,
+    pub namespace: String,
+}
+
+impl RuntimeStatusChecker {
+    pub(crate) async fn check(
         &self,
         config: &RuntimeConfig,
     ) -> Result<ShipCondition, RuntimeError> {
@@ -39,6 +44,15 @@ impl Runtime {
                 String::from_utf8(output.stdout).unwrap_or_default(),
                 String::from_utf8(output.stderr).unwrap_or_default(),
             ))
+        }
+    }
+}
+
+impl Runtime {
+    pub(crate) fn status(&self) -> RuntimeStatusChecker {
+        RuntimeStatusChecker {
+            id: self.id.clone(),
+            namespace: self.namespace.clone(),
         }
     }
 }

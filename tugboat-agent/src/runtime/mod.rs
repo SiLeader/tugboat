@@ -20,6 +20,7 @@ mod status;
 use crate::runtime::runtime::Runtime;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -32,11 +33,20 @@ pub(crate) struct RuntimeOperator {
     children: Arc<RwLock<HashMap<String, Runtime>>>,
 }
 
+impl RuntimeOperator {
+    pub(crate) fn new(config: RuntimeConfig, image_dir: impl AsRef<Path>) -> Self {
+        Self {
+            config,
+            registry: VmImageRegistry::new(image_dir.as_ref().to_path_buf()),
+            children: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct RuntimeConfig {
     pub executable: String,
     pub args: Vec<String>,
-    pub config_file: String,
 }
 
 impl RuntimeConfig {

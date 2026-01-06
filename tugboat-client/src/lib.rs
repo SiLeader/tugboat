@@ -32,6 +32,15 @@ pub struct TugboatClient {
 }
 
 impl TugboatClient {
+    pub fn new(base_url: impl Into<String>) -> Self {
+        Self {
+            base_url: base_url.into(),
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+impl TugboatClient {
     async fn create_impl<T: StaticResource + Serialize + DeserializeOwned>(
         &self,
         path: String,
@@ -66,7 +75,7 @@ impl TugboatClient {
         Self::parse_response(res).await
     }
 
-    async fn put_impl<T: StaticResource + DeserializeOwned>(
+    async fn put_impl<T: StaticResource + Serialize + DeserializeOwned>(
         &self,
         path: String,
         body: T,
@@ -115,7 +124,9 @@ impl TugboatClient {
         self.patch_impl(path, patch).await
     }
 
-    pub(crate) async fn replace_status_cluster_scoped<T: StaticResource + DeserializeOwned>(
+    pub(crate) async fn replace_status_cluster_scoped<
+        T: StaticResource + Serialize + DeserializeOwned,
+    >(
         &self,
         name: &str,
         data: T,
@@ -191,7 +202,9 @@ impl TugboatClient {
         self.patch_impl(path, patch).await
     }
 
-    pub(crate) async fn replace_status_namespaced<T: StaticResource + DeserializeOwned>(
+    pub(crate) async fn replace_status_namespaced<
+        T: StaticResource + Serialize + DeserializeOwned,
+    >(
         &self,
         namespace: &str,
         name: &str,
