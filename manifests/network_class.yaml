@@ -13,17 +13,18 @@
 # limitations under the License.
 
 apiVersion: v1
-kind: Ship
+kind: NetworkClass
 metadata:
   namespace: default
-  name: ship
+  name: namespaced-network
 spec:
-  image: example.com/vm-images/ubuntu:24.04
-  shipClass: lightweight
-  networkClassRef:
-    - name: namespaced-network
-      apiGroup: core
-      kind: NetworkClass
-    - name: cluster-network
-      apiGroup: core
-      kind: ClusterNetworkClass
+  subnet: 192.168.1.0/24
+---
+apiVersion: v1
+kind: ClusterNetworkClass
+metadata:
+  name: cluster-network
+spec:
+  subnet: 10.0.0.0/8
+  routes:
+    - destination: 0.0.0.0/0

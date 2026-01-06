@@ -14,45 +14,28 @@
 
 syntax = "proto3";
 
-import "meta/v1/object_meta.proto";
-import "meta/v1/time.proto";
 import "meta/v1/type_meta.proto";
+import "meta/v1/object_meta.proto";
 
 package tugboat.core.v1;
 
-message Ship {
+message NetworkClass {
   meta.v1.TypeMeta type_meta = 1;
   meta.v1.ObjectMeta object_meta = 2;
-  ShipSpec spec = 3;
-  optional ShipStatus status = 4;
+  NetworkClassSpec spec = 3;
 }
 
-message ShipSpec {
-  string image = 1;
-  string ship_class = 2;
-  optional string node_name = 3;
-  repeated ShipNetworkClassRef network_class_ref = 4;
+message ClusterNetworkClass {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+  NetworkClassSpec spec = 3;
 }
 
-message ShipNetworkClassRef {
-  string kind = 1;
-  string name = 2;
-  string api_group = 3;
+message NetworkClassSpec {
+  string subnet = 1;
+  repeated NetworkClassRoute routes = 2;
 }
 
-message ShipStatus {
-  repeated ShipCondition conditions = 1;
-  repeated ShipIp ips = 2;
-}
-
-message ShipCondition {
-  string status = 1;
-  string message = 2;
-  meta.v1.Time timestamp = 3;
-}
-
-message ShipIp {
-  string nic = 1;
-  optional string ipv4 = 2;
-  optional string ipv6 = 3;
+message NetworkClassRoute {
+  string destination = 1;
 }

@@ -30,6 +30,7 @@ fn main() {
             &[
                 // core/v1
                 "proto/core/v1/namespace.proto",
+                "proto/core/v1/network_class.proto",
                 "proto/core/v1/node.proto",
                 "proto/core/v1/ship.proto",
                 "proto/core/v1/ship_class.proto",
