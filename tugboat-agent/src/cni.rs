@@ -62,28 +62,30 @@ impl CniWrapper {
                 cni_version: "1.0.0".to_string(),
                 name: network_class.name,
             },
-            plugins: vec![CniConfContent {
-                cni_type: "bridge".to_string(),
-                bridge: bridge.clone(),
-                is_gateway: network_class.spec.cluster_network.unwrap_or(true),
-                ip_masquerade: network_class.spec.internet_access.unwrap_or(false),
-                ipam: CniIpam {
-                    cni_type: "host-local".to_string(),
-                    subnet: network_class.spec.subnet,
-                    routes: network_class
-                        .spec
-                        .routes
-                        .into_iter()
-                        .map(|route| CniIpamRoute {
-                            destination: route.destination,
-                        })
-                        .collect(),
+            plugins: vec![
+                CniConfContent::Loopback,
+                CniConfContent::Bridge {
+                    bridge: bridge.clone(),
+                    is_gateway: network_class.spec.cluster_network.unwrap_or(true),
+                    ip_masquerade: network_class.spec.internet_access.unwrap_or(false),
+                    ipam: CniIpam {
+                        cni_type: "host-local".to_string(),
+                        subnet: network_class.spec.subnet,
+                        routes: network_class
+                            .spec
+                            .routes
+                            .into_iter()
+                            .map(|route| CniIpamRoute {
+                                destination: route.destination,
+                            })
+                            .collect(),
+                    },
                 },
-            }],
+            ],
         };
         self.operator.add(ship_id, iface_name, conf).await?;
         Ok(VmNetworkConfig {
-            iface_name: bridge,
+            iface_name: iface_name.to_string(),
             mac_address: mac,
         })
     }

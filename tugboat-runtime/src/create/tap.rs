@@ -7,7 +7,7 @@ pub async fn setup_tap_redirect(config: &QemuVmConfig, bridge: &str) -> Result<(
     let ip: &str = &config.executables.ip;
     let tc: &str = &config.executables.tc;
 
-    let tap = bridge.replace("br", "tp");
+    let tap = bridge.replace("eth", "tap");
 
     // Create tap device
     run_command(ip, &["tuntap", "add", "dev", &tap, "mode", "tap"]).await?;

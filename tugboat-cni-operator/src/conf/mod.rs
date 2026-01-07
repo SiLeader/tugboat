@@ -38,15 +38,16 @@ pub struct CniConfHeader {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CniConfContent {
-    #[serde(rename = "type")]
-    pub cni_type: String,
-    pub bridge: String,
-    pub is_gateway: bool,
-    #[serde(rename = "ipMasq")]
-    pub ip_masquerade: bool,
-    pub ipam: CniIpam,
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum CniConfContent {
+    Bridge {
+        bridge: String,
+        is_gateway: bool,
+        #[serde(rename = "ipMasq")]
+        ip_masquerade: bool,
+        ipam: CniIpam,
+    },
+    Loopback,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

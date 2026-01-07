@@ -17,7 +17,7 @@ mod vm;
 pub use vm::QemuVmConfig;
 
 use crate::config::load_config_or_panic;
-use crate::pre::{change_running_user_and_group, daemonize};
+use crate::pre::{change_running_user_and_group, daemonize, enter_to_network_namespace};
 use crate::start::vm::{QemuVmBuilder, Spawner};
 use clap::Parser;
 use tugboat_vm_runtime_interface::start::VmStartRequest;
@@ -30,8 +30,9 @@ pub(crate) struct StartArgs {
 
 pub(crate) async fn start(vm: QemuVmConfig, args: StartArgs) {
     let config = load_config_or_panic::<VmStartRequest>(args.config);
-    daemonize();
 
+    enter_to_network_namespace(&config.id).expect("Failed to enter to network namespace");
+    daemonize();
     change_running_user_and_group(&config.user).expect("Failed to change running user and group");
 
     let spawner = QemuVmBuilder::new(vm);
