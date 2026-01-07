@@ -91,11 +91,41 @@ impl ResourceStore {
         let Some(name) = &meta.name else {
             return Err(Error::FieldMissing("metadata.name".to_string()));
         };
+        let resource_version = meta
+            .resource_version
+            .as_ref()
+            .and_then(|v| i64::from_str_radix(v, 10).ok());
         let key = Self::create_key::<T>(meta.namespace.clone(), name);
         let bytes = value.serialize()?;
 
         let mut client = self.etcd.clone();
-        let res = client.put(key, bytes, None).await?;
+
+        let res = match resource_version {
+            Some(rv) => {
+                let txn = Txn::new()
+                    .when(vec![Compare::mod_revision(
+                        key.as_str(),
+                        CompareOp::Equal,
+                        rv,
+                    )])
+                    .and_then(vec![TxnOp::put(key.as_str(), bytes, None)]);
+                let res = client.txn(txn).await?;
+                if !res.succeeded() {
+                    return Err(Error::OptimisticLockFailed(rv));
+                }
+                if let TxnOpResponse::Put(p) = res
+                    .op_responses()
+                    .first()
+                    .ok_or(Error::OptimisticLockFailed(rv))?
+                    .clone()
+                {
+                    p
+                } else {
+                    return Err(Error::OptimisticLockFailed(rv));
+                }
+            }
+            None => client.put(key, bytes, None).await?,
+        };
 
         Ok(ContentData {
             data: value,

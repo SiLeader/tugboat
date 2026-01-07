@@ -26,4 +26,6 @@ pub enum Error {
     Etcd(#[from] etcd_client::Error),
     #[error("Event emit error: {0}")]
     EventEmit(#[from] tokio::sync::watch::error::SendError<Vec<WatchEvent>>),
+    #[error("Optimistic lock error: revision: {0}")]
+    OptimisticLockFailed(i64),
 }
