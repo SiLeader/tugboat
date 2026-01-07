@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod status;
+use crate::runtime::RuntimeOperator;
+use crate::runtime::error::RuntimeError;
+use tugboat_vm_runtime_interface::create::VmCreateRequest;
+use tugboat_vm_runtime_interface::start::VmNetworkConfig;
 
-use tokio::process::Child;
-
-pub(crate) struct Runtime {
-    namespace: String,
-    id: String,
-    child: Child,
-}
-
-impl Runtime {
-    pub(super) fn new(namespace: String, id: String, child: Child) -> Self {
-        Self {
-            namespace,
-            id,
-            child,
-        }
+impl RuntimeOperator {
+    pub(crate) async fn create(
+        &self,
+        id: &str,
+        networks: &[VmNetworkConfig],
+    ) -> Result<(), RuntimeError> {
+        let config = VmCreateRequest {
+            id: id.to_string(),
+            bridges: networks.iter().map(|n| n.iface_name.clone()).collect(),
+        };
+        self.run_command("create", &config).await?.wait().await?;
+        Ok(())
     }
 }

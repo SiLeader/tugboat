@@ -17,18 +17,22 @@ mod vm;
 pub use vm::QemuVmConfig;
 
 use crate::config::load_config_or_panic;
-use crate::run::vm::{QemuVmBuilder, Spawner};
+use crate::pre::{change_running_user_and_group, daemonize};
+use crate::start::vm::{QemuVmBuilder, Spawner};
 use clap::Parser;
-use tugboat_vm_runtime_interface::run::VmRunRequest;
+use tugboat_vm_runtime_interface::start::VmStartRequest;
 
 #[derive(Debug, Parser)]
-pub(crate) struct RunArgs {
+pub(crate) struct StartArgs {
     #[arg(help = "Path to the VM config file")]
     config: String,
 }
 
-pub(crate) async fn run(vm: QemuVmConfig, args: RunArgs) {
-    let config = load_config_or_panic::<VmRunRequest>(args.config);
+pub(crate) async fn start(vm: QemuVmConfig, args: StartArgs) {
+    let config = load_config_or_panic::<VmStartRequest>(args.config);
+    daemonize();
+
+    change_running_user_and_group(&config.user).expect("Failed to change running user and group");
 
     let spawner = QemuVmBuilder::new(vm);
     spawner.spawn(config).await.expect("Failed to spawn VM");

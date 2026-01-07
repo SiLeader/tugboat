@@ -12,18 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod create;
 pub(crate) mod error;
-mod run;
-mod runtime;
+mod inner;
+mod start;
 mod status;
 
-use crate::runtime::runtime::Runtime;
-use serde::Deserialize;
+use crate::runtime::error::RuntimeError;
+use crate::runtime::inner::Runtime;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Stdio;
 use std::sync::Arc;
-use tokio::process::Command;
+use tokio::io::AsyncWriteExt;
+use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
+use tracing::error;
 use tugboat_vm_image::VmImageRegistry;
 
 #[derive(Clone)]
@@ -41,6 +46,35 @@ impl RuntimeOperator {
             children: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+
+    async fn run_command(
+        &self,
+        subcommand: &str,
+        args: &impl Serialize,
+    ) -> Result<Child, RuntimeError> {
+        let vm_config = serde_json::to_string(args)?;
+        let mut child = self
+            .config
+            .runtime_command()
+            .args([subcommand, "-"])
+            .stdin(Stdio::piped())
+            .spawn()?;
+        match &mut child.stdin {
+            Some(stdin) => {
+                if let Err(e) = stdin.write_all(vm_config.as_bytes()).await {
+                    error!("Cannot write config: {e}");
+                    kill_impl(child).await?;
+                    Err(RuntimeError::Io(e))
+                } else {
+                    Ok(child)
+                }
+            }
+            None => {
+                kill_impl(child).await?;
+                Err(RuntimeError::RunVm)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -55,4 +89,14 @@ impl RuntimeConfig {
         command.args(&self.args);
         command
     }
+}
+
+async fn kill_impl(mut child: tokio::process::Child) -> Result<(), RuntimeError> {
+    child.kill().await?;
+    tokio::spawn(async move {
+        if let Err(e) = child.wait().await {
+            error!("Cannot wait child: {e}");
+        }
+    });
+    Ok(())
 }

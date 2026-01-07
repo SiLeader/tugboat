@@ -24,6 +24,7 @@ tugboat-vm-runtime-interface.workspace = true
 
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
+futures.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -34,4 +35,5 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 qapi = { workspace = true, features = ["qmp", "async-tokio-all"] }
-nix = { workspace = true, features = ["sched"] }
+
+nix = { workspace = true, features = ["sched", "user", "signal", "fs"] }

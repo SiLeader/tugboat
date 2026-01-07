@@ -56,6 +56,7 @@ impl ShipReconciler {
                     .namespace
                     .clone()
                     .unwrap_or("default".to_string());
+
                 let network_classes = self
                     .get_related_network_classes(&namespace, ship_spec)
                     .await?;
@@ -72,7 +73,10 @@ impl ShipReconciler {
                 }
 
                 let networks = self.cni.add(ship_id, network_classes).await?;
-                self.runtime_operator.run(ship, class, networks).await?;
+                self.runtime_operator
+                    .create(ship_id, networks.as_slice())
+                    .await?;
+                self.runtime_operator.start(ship, class, networks).await?;
                 Ok(())
             }
             WatchEvent::Modified(_ship) => {

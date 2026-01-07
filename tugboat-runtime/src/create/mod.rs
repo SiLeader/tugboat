@@ -15,8 +15,9 @@
 mod tap;
 
 use crate::config::load_config_or_panic;
+use crate::create::tap::setup_tap_redirect;
 use crate::pre::enter_to_network_namespace;
-use crate::run::QemuVmConfig;
+use crate::start::QemuVmConfig;
 use clap::Parser;
 use tugboat_vm_runtime_interface::create::VmCreateRequest;
 
@@ -30,5 +31,10 @@ pub(crate) async fn create(vm: QemuVmConfig, args: CreateArgs) {
     let config = load_config_or_panic::<VmCreateRequest>(args.config);
 
     enter_to_network_namespace(&config.id).expect("Failed to enter network namespace");
+    for bridge in &config.bridges {
+        setup_tap_redirect(&vm, bridge)
+            .await
+            .expect("Failed to setup tap redirect");
+    }
     todo!()
 }

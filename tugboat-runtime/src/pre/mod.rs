@@ -12,20 +12,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use nix::libc::umask;
 use nix::sched::{CloneFlags, setns};
+use nix::sys::signal::{SigHandler, Signal, signal};
+use nix::unistd::{Gid, Uid, chdir, fork, setgid, setsid, setuid};
 use std::fs::File;
+use std::process::exit;
+use tugboat_vm_runtime_interface::start::VmExecUser;
 
 pub(crate) fn enter_to_network_namespace(network_namespace: &str) -> Result<(), crate::Error> {
-    let netns_path = format!("/var/run/netns/{network_namespace}");
+    let netns_path = format!("/var/start/netns/{network_namespace}");
     let netns_file = File::open(netns_path)?;
     setns(netns_file, CloneFlags::CLONE_NEWNET)?;
 
     Ok(())
 }
 
-pub(crate) async fn change_running_user_and_group(
-    user: &str,
-    group: &str,
-) -> Result<(), crate::Error> {
-    todo!()
+pub(crate) fn change_running_user_and_group(user: &VmExecUser) -> Result<(), crate::Error> {
+    if let Some(user) = user.user {
+        setuid(Uid::from_raw(user))?;
+    }
+    if let Some(group) = user.group {
+        setgid(Gid::from_raw(group))?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn daemonize() {
+    let pid = unsafe { fork() }.expect("Failed to fork");
+    if pid.is_parent() {
+        exit(0);
+    }
+
+    setsid().expect("Failed to setsid");
+
+    unsafe { signal(Signal::SIGHUP, SigHandler::SigIgn) }.expect("Failed to disable SIGHUP");
+    unsafe { signal(Signal::SIGCHLD, SigHandler::SigIgn) }.expect("Failed to disable SIGCHLD");
+
+    let pid = unsafe { fork() }.expect("Failed to fork");
+    if pid.is_parent() {
+        exit(0);
+    }
+    unsafe { umask(0) };
+    chdir("/").expect("Failed to chdir");
 }

@@ -17,7 +17,7 @@ use tugboat_cni_operator::{
     CniConfContent, CniConfHeader, CniIpam, CniIpamRoute, CniNetConfList, CniOperator,
 };
 use tugboat_resources::manifests::core::v1::NetworkClassSpec;
-use tugboat_vm_runtime_interface::run::VmNetworkConfig;
+use tugboat_vm_runtime_interface::start::VmNetworkConfig;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniWrapper {

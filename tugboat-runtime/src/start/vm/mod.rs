@@ -14,7 +14,7 @@
 
 use async_trait::async_trait;
 pub use qemu::*;
-use tugboat_vm_runtime_interface::run::VmRunRequest;
+use tugboat_vm_runtime_interface::start::VmStartRequest;
 
 mod qemu;
 
@@ -25,5 +25,5 @@ pub(crate) trait RunVm {
 
 #[async_trait]
 pub trait Spawner {
-    async fn spawn(&self, args: VmRunRequest) -> crate::Result<()>;
+    async fn spawn(&self, args: VmStartRequest) -> crate::Result<()>;
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::run::vm::qemu::QemuVm;
+use crate::start::vm::qemu::QemuVm;
 use tokio::process::Command;
 
 pub(crate) struct BootDisk(pub String);

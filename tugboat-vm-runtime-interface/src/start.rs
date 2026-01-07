@@ -16,12 +16,21 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VmRunRequest {
+pub struct VmStartRequest {
     pub image: String,
     pub cpu: VmCpuConfig,
     pub memory: u64,
     pub id: String,
     pub networks: Vec<VmNetworkConfig>,
+    #[serde(default)]
+    pub user: VmExecUser,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmExecUser {
+    pub user: Option<u32>,
+    pub group: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

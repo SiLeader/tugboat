@@ -12,29 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::run::QemuVmConfig;
+use crate::start::QemuVmConfig;
 use clap::{Parser, Subcommand};
 use nix::errno::Errno;
 use serde::Deserialize;
-use std::env::VarError;
 use thiserror::Error;
 
 mod config;
 mod create;
 mod pre;
-mod run;
+mod start;
 mod status;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("IO Error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Environment Error: {0}: {1}")]
-    Environment(String, VarError),
-    #[error("Environment Parse Error: {0}")]
-    EnvironmentParseError(String, String),
     #[error("System call Error: {0}")]
     Syscall(#[from] Errno),
+    #[error("Failed to setup network: {0}")]
+    NetworkSetupFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -43,8 +40,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Args {
     #[arg(
         long,
-        help = "Path to the tugboat-runtime config file",
-        default_value = "/etc/tugboat/runtime/config.toml"
+        help = "Path to the tugboat-inner config file",
+        default_value = "/etc/tugboat/inner/config.toml"
     )]
     config: String,
 
@@ -54,7 +51,7 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 enum SubCommand {
-    Run(run::RunArgs),
+    Start(start::StartArgs),
     Status(status::StatusArgs),
     Create(create::CreateArgs),
 }
@@ -73,7 +70,7 @@ pub async fn run() {
     };
 
     match args.subcommand {
-        SubCommand::Run(run_args) => run::run(config.qemu, run_args).await,
+        SubCommand::Start(run_args) => start::start(config.qemu, run_args).await,
         SubCommand::Status(status_args) => status::status(config.qemu, status_args).await,
         SubCommand::Create(create_args) => create::create(config.qemu, create_args).await,
     }

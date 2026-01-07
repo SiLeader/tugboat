@@ -14,7 +14,7 @@
 
 use crate::runtime::RuntimeConfig;
 use crate::runtime::error::RuntimeError;
-use crate::runtime::runtime::Runtime;
+use crate::runtime::inner::Runtime;
 use tugboat_resources::manifests::core::v1::ShipCondition;
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::status::{VmStatus, VmStatusResponse};

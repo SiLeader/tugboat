@@ -14,16 +14,13 @@
 
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
-use crate::runtime::runtime::Runtime;
-use std::process::Stdio;
-use tokio::io::AsyncWriteExt;
-use tracing::error;
+use crate::runtime::inner::Runtime;
 use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
 use tugboat_resources::sized::SizedString;
-use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest};
+use tugboat_vm_runtime_interface::start::{VmCpuConfig, VmNetworkConfig, VmStartRequest};
 
 impl RuntimeOperator {
-    pub(crate) async fn run(
+    pub(crate) async fn start(
         &self,
         ship: Ship,
         ship_class: ShipClass,
@@ -58,7 +55,7 @@ impl RuntimeOperator {
 
         let memory_size = SizedString(memory.size.clone());
 
-        let vm_config = VmRunRequest {
+        let vm_config = VmStartRequest {
             id: ship_id.clone(),
             image: image.location,
             cpu: VmCpuConfig {
@@ -72,40 +69,11 @@ impl RuntimeOperator {
                 .as_byte_length()
                 .ok_or(RuntimeError::MemorySize(memory.size))?,
             networks,
+            user: Default::default(),
         };
-        let vm_config = serde_json::to_string(&vm_config)?;
-        let mut child = self
-            .config
-            .runtime_command()
-            .args(["run", "-"])
-            .stdin(Stdio::piped())
-            .spawn()?;
-        match &mut child.stdin {
-            Some(stdin) => {
-                if let Err(e) = stdin.write_all(vm_config.as_bytes()).await {
-                    error!("Cannot write config: {e}");
-                    kill_impl(child).await?;
-                    Err(RuntimeError::Io(e))
-                } else {
-                    let mut children = self.children.write().await;
-                    children.insert(ship_id.clone(), Runtime::new(namespace, ship_id, child));
-                    Ok(())
-                }
-            }
-            None => {
-                kill_impl(child).await?;
-                Err(RuntimeError::RunVm)
-            }
-        }
+        self.run_command("start", &vm_config).await?.wait().await?;
+        let mut children = self.children.write().await;
+        children.insert(ship_id.clone(), Runtime::new(namespace, ship_id));
+        Ok(())
     }
-}
-
-async fn kill_impl(mut child: tokio::process::Child) -> Result<(), RuntimeError> {
-    child.kill().await?;
-    tokio::spawn(async move {
-        if let Err(e) = child.wait().await {
-            error!("Cannot wait child: {e}");
-        }
-    });
-    Ok(())
 }
