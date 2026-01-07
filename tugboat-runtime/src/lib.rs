@@ -14,10 +14,14 @@
 
 use crate::run::QemuVmConfig;
 use clap::{Parser, Subcommand};
+use nix::errno::Errno;
 use serde::Deserialize;
 use std::env::VarError;
 use thiserror::Error;
 
+mod config;
+mod create;
+mod pre;
 mod run;
 mod status;
 
@@ -29,6 +33,8 @@ pub enum Error {
     Environment(String, VarError),
     #[error("Environment Parse Error: {0}")]
     EnvironmentParseError(String, String),
+    #[error("System call Error: {0}")]
+    Syscall(#[from] Errno),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -50,6 +56,7 @@ pub struct Args {
 enum SubCommand {
     Run(run::RunArgs),
     Status(status::StatusArgs),
+    Create(create::CreateArgs),
 }
 
 #[derive(Deserialize)]
@@ -68,5 +75,6 @@ pub async fn run() {
     match args.subcommand {
         SubCommand::Run(run_args) => run::run(config.qemu, run_args).await,
         SubCommand::Status(status_args) => status::status(config.qemu, status_args).await,
+        SubCommand::Create(create_args) => create::create(config.qemu, create_args).await,
     }
 }

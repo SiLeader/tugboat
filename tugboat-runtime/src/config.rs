@@ -12,6 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod create;
-pub mod run;
-pub mod status;
+use serde::de::DeserializeOwned;
+use std::fs::File;
+
+pub(crate) fn load_config_or_panic<T: DeserializeOwned>(path: String) -> T {
+    if path == "-" {
+        serde_json::from_reader(std::io::stdin())
+    } else {
+        serde_json::from_reader(File::open(path).expect("Cannot open config file"))
+    }
+    .expect("Failed to parse VM config file as TOML")
+}

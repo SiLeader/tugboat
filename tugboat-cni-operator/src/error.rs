@@ -18,4 +18,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[cfg(feature = "tap")]
+    #[error("Network Namespace error: {0}")]
+    Namespace(#[from] rtnetlink::Error),
 }

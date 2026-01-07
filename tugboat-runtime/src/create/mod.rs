@@ -12,14 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fs::File;
-use tugboat_vm_runtime_interface::run::VmRunRequest;
+mod tap;
 
-pub(super) fn load_run_config_or_panic(path: String) -> VmRunRequest {
-    if path == "-" {
-        serde_json::from_reader(std::io::stdin())
-    } else {
-        serde_json::from_reader(File::open(path).expect("Cannot open config file"))
-    }
-    .expect("Failed to parse VM config file as TOML")
+use crate::config::load_config_or_panic;
+use crate::pre::enter_to_network_namespace;
+use crate::run::QemuVmConfig;
+use clap::Parser;
+use tugboat_vm_runtime_interface::create::VmCreateRequest;
+
+#[derive(Debug, Parser)]
+pub(crate) struct CreateArgs {
+    #[arg(help = "Path to the VM config file")]
+    config: String,
+}
+
+pub(crate) async fn create(vm: QemuVmConfig, args: CreateArgs) {
+    let config = load_config_or_panic::<VmCreateRequest>(args.config);
+
+    enter_to_network_namespace(&config.id).expect("Failed to enter network namespace");
+    todo!()
 }

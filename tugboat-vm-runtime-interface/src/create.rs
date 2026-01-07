@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod create;
-pub mod run;
-pub mod status;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmCreateRequest {
+    pub id: String,
+    pub bridges: Vec<String>,
+}

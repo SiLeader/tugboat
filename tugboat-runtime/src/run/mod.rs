@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod config;
 mod vm;
 
 pub use vm::QemuVmConfig;
 
-use crate::run::config::load_run_config_or_panic;
+use crate::config::load_config_or_panic;
 use crate::run::vm::{QemuVmBuilder, Spawner};
 use clap::Parser;
+use tugboat_vm_runtime_interface::run::VmRunRequest;
 
 #[derive(Debug, Parser)]
 pub(crate) struct RunArgs {
@@ -28,7 +28,7 @@ pub(crate) struct RunArgs {
 }
 
 pub(crate) async fn run(vm: QemuVmConfig, args: RunArgs) {
-    let config = load_run_config_or_panic(args.config);
+    let config = load_config_or_panic::<VmRunRequest>(args.config);
 
     let spawner = QemuVmBuilder::new(vm);
     spawner.spawn(config).await.expect("Failed to spawn VM");

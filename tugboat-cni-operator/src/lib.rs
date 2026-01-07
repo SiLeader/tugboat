@@ -19,6 +19,8 @@ mod bridge;
 mod conf;
 mod config;
 mod error;
+#[cfg(feature = "tap")]
+mod tap;
 
 pub use conf::*;
 pub use config::*;

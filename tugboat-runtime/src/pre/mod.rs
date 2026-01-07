@@ -12,6 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod create;
-pub mod run;
-pub mod status;
+use nix::sched::{CloneFlags, setns};
+use std::fs::File;
+
+pub(crate) fn enter_to_network_namespace(network_namespace: &str) -> Result<(), crate::Error> {
+    let netns_path = format!("/var/run/netns/{network_namespace}");
+    let netns_file = File::open(netns_path)?;
+    setns(netns_file, CloneFlags::CLONE_NEWNET)?;
+
+    Ok(())
+}
+
+pub(crate) async fn change_running_user_and_group(
+    user: &str,
+    group: &str,
+) -> Result<(), crate::Error> {
+    todo!()
+}
