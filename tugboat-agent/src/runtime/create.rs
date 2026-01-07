@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
+use crate::runtime::{RuntimeOperator, handle_command_response};
 use tugboat_vm_runtime_interface::create::VmCreateRequest;
 use tugboat_vm_runtime_interface::start::VmNetworkConfig;
 
@@ -27,7 +27,6 @@ impl RuntimeOperator {
             id: id.to_string(),
             bridges: networks.iter().map(|n| n.iface_name.clone()).collect(),
         };
-        self.run_command("create", &config).await?.wait().await?;
-        Ok(())
+        handle_command_response(self.run_command("create", &config).await?).await
     }
 }

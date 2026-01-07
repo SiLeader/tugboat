@@ -91,7 +91,7 @@ impl RuntimeConfig {
     }
 }
 
-async fn kill_impl(mut child: tokio::process::Child) -> Result<(), RuntimeError> {
+async fn kill_impl(mut child: Child) -> Result<(), RuntimeError> {
     child.kill().await?;
     tokio::spawn(async move {
         if let Err(e) = child.wait().await {
@@ -99,4 +99,18 @@ async fn kill_impl(mut child: tokio::process::Child) -> Result<(), RuntimeError>
         }
     });
     Ok(())
+}
+
+async fn handle_command_response(child: Child) -> Result<(), RuntimeError> {
+    let output = child.wait_with_output().await?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(RuntimeError::CommandFailed(
+            output.status,
+            String::from_utf8_lossy(&output.stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ))
+    }
 }

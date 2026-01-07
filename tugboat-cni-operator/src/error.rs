@@ -18,4 +18,6 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Command failed: {0}")]
+    CommandFailed(std::process::ExitStatus, String, String),
 }

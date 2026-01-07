@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::inner::Runtime;
+use crate::runtime::{RuntimeOperator, handle_command_response};
 use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
 use tugboat_resources::sized::SizedString;
 use tugboat_vm_runtime_interface::start::{VmCpuConfig, VmNetworkConfig, VmStartRequest};
@@ -71,7 +71,7 @@ impl RuntimeOperator {
             networks,
             user: Default::default(),
         };
-        self.run_command("start", &vm_config).await?.wait().await?;
+        handle_command_response(self.run_command("start", &vm_config).await?).await?;
         let mut children = self.children.write().await;
         children.insert(ship_id.clone(), Runtime::new(namespace, ship_id));
         Ok(())

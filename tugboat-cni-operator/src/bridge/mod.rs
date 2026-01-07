@@ -47,8 +47,16 @@ impl BridgeCaller {
             .stdin(file)
             .spawn()?;
 
-        child.wait().await?;
-        Ok(())
+        let output = child.wait_with_output().await?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(crate::Error::CommandFailed(
+                output.status,
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ))
+        }
     }
 
     pub(crate) async fn add(
