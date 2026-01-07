@@ -17,6 +17,7 @@ use crate::runtime::RuntimeOperator;
 use clap::Parser;
 use tugboat_client::TugboatClient;
 
+mod cni;
 mod config;
 mod reconciler;
 mod runtime;
@@ -37,7 +38,8 @@ pub async fn run() {
 
     let client = TugboatClient::new(config.apiserver.url);
     let runtime_operator = RuntimeOperator::new(config.runtime, config.image.cache_dir);
-    let reconciler = ShipReconciler::new(config.node.name, client, runtime_operator);
+    let cni_operator = tugboat_cni_operator::CniOperator::new(config.cni);
+    let reconciler = ShipReconciler::new(config.node.name, client, runtime_operator, cni_operator);
 
     reconciler.run().await;
 }

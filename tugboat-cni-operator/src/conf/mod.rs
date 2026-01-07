@@ -14,7 +14,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CniNetConf {
@@ -34,8 +33,8 @@ pub struct CniNetConfList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CniConfHeader {
-    cni_version: String,
-    name: String,
+    pub cni_version: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

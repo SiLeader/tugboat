@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::run::config::VmConfig;
 use async_trait::async_trait;
 pub use qemu::*;
+use tugboat_vm_runtime_interface::run::VmRunRequest;
 
 mod qemu;
 
@@ -25,5 +25,5 @@ pub(crate) trait RunVm {
 
 #[async_trait]
 pub trait Spawner {
-    async fn spawn(&self, args: VmConfig) -> crate::Result<()>;
+    async fn spawn(&self, args: VmRunRequest) -> crate::Result<()>;
 }

@@ -12,25 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use serde::Deserialize;
 use std::fs::File;
-use tugboat_resources::manifests::core::v1::CpuSpec;
+use tugboat_vm_runtime_interface::run::VmRunRequest;
 
-#[derive(Debug, Clone, Deserialize)]
-pub(super) struct VmConfig {
-    pub image: String,
-    pub cpu: CpuSpec,
-    pub memory: u64,
-    pub id: String,
-}
-
-impl VmConfig {
-    pub(super) fn load_or_panic(path: String) -> Self {
-        if path == "-" {
-            serde_json::from_reader(std::io::stdin())
-        } else {
-            serde_json::from_reader(File::open(path).expect("Cannot open config file"))
-        }
-        .expect("Failed to parse VM config file as TOML")
+pub(super) fn load_run_config_or_panic(path: String) -> VmRunRequest {
+    if path == "-" {
+        serde_json::from_reader(std::io::stdin())
+    } else {
+        serde_json::from_reader(File::open(path).expect("Cannot open config file"))
     }
+    .expect("Failed to parse VM config file as TOML")
 }

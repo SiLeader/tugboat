@@ -35,6 +35,12 @@ impl ShipReconciler {
                         "metadata.name".to_string(),
                     ));
                 };
+                let Some(ship_id) = &ship_metadata.uid else {
+                    return Err(ReconcileError::FieldMissing(
+                        "v1.Ship".to_string(),
+                        "metadata.uid".to_string(),
+                    ));
+                };
                 let Some(ship_spec) = &ship.spec else {
                     return Err(ReconcileError::FieldMissing(
                         "v1.Ship".to_string(),
@@ -46,11 +52,15 @@ impl ShipReconciler {
                         ship_spec.ship_class.clone(),
                     ));
                 };
+                let namespace = ship_metadata
+                    .namespace
+                    .clone()
+                    .unwrap_or("default".to_string());
+                let network_classes = self
+                    .get_related_network_classes(&namespace, ship_spec)
+                    .await?;
+
                 {
-                    let namespace = ship_metadata
-                        .namespace
-                        .clone()
-                        .unwrap_or("default".to_string());
                     let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
                     let mut status_ship = ship.clone();
                     status_ship.append_status(ShipCondition {
@@ -58,10 +68,11 @@ impl ShipReconciler {
                         message: "Creating new Virtual Machine".to_string(),
                         timestamp: Some(Time::now()),
                     });
-                    api.replace_status(&name, status_ship).await?;
+                    api.replace_status(name, status_ship).await?;
                 }
 
-                self.runtime_operator.run(ship, class).await?;
+                let networks = self.cni.add(ship_id, network_classes).await?;
+                self.runtime_operator.run(ship, class, networks).await?;
                 Ok(())
             }
             WatchEvent::Modified(_ship) => {

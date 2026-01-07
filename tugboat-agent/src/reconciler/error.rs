@@ -13,7 +13,12 @@
 // limitations under the License.
 
 use crate::runtime::error::RuntimeError;
+use std::fmt::{Display, Formatter};
 use thiserror::Error;
+use tugboat_resources::manifests::core::v1::ShipNetworkClassRef;
+
+#[derive(Debug)]
+pub(crate) struct NetworkClassRefForError(ShipNetworkClassRef);
 
 #[derive(Debug, Error)]
 pub(crate) enum ReconcileError {
@@ -25,4 +30,22 @@ pub(crate) enum ReconcileError {
     ShipClassNotFound(String),
     #[error("Runtime error: {0}")]
     Runtime(#[from] RuntimeError),
+    #[error("Invalid NetworkClassRef: {0}")]
+    InvalidNetworkClassRef(NetworkClassRefForError),
+    #[error("NetworkClass '{0}' not found")]
+    NetworkClassNotFound(NetworkClassRefForError),
+    #[error("CNI error: {0}")]
+    Cni(#[from] tugboat_cni_operator::Error),
+}
+
+impl Display for NetworkClassRefForError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {} {}", self.0.api_group, self.0.kind, self.0.name)
+    }
+}
+
+impl From<ShipNetworkClassRef> for NetworkClassRefForError {
+    fn from(value: ShipNetworkClassRef) -> Self {
+        Self(value)
+    }
 }

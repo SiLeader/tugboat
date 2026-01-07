@@ -14,20 +14,29 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum VmStatus {
-    Paused,
-    Running,
-    Shutdown,
-    Suspended,
-    Panicked,
-    Error,
-    Prelaunch,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmRunRequest {
+    pub image: String,
+    pub cpu: VmCpuConfig,
+    pub memory: u64,
+    pub id: String,
+    pub networks: Vec<VmNetworkConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VmStatusResponse {
-    pub status: VmStatus,
-    pub message: String,
+pub struct VmCpuConfig {
+    pub architecture: String,
+    pub cores: u64,
+    pub sockets: u64,
+    pub dies: u64,
+    pub threads_per_core: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmNetworkConfig {
+    pub iface_name: String,
+    pub mac_address: String,
 }

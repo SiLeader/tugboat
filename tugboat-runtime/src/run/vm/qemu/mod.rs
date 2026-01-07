@@ -24,35 +24,20 @@ use std::fs::copy;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::debug;
-use tugboat_resources::manifests::core::v1::CpuSpec;
+use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest};
 
 #[derive(Debug, Clone)]
 struct QemuVm<'a> {
     config: &'a QemuVmConfig,
-    image: String,
-    cpu: CpuSpec,
-    memory: SizeInBytes,
-    id: String,
+    args: VmRunRequest,
 }
 
 #[derive(Debug, Clone)]
 struct SizeInBytes(u64);
 
 impl<'a> QemuVm<'a> {
-    fn new(
-        config: &'a QemuVmConfig,
-        image: String,
-        cpu: CpuSpec,
-        memory: SizeInBytes,
-        id: String,
-    ) -> Self {
-        Self {
-            config,
-            image,
-            cpu,
-            memory,
-            id,
-        }
+    fn new(config: &'a QemuVmConfig, args: VmRunRequest) -> Self {
+        Self { config, args }
     }
 }
 
@@ -60,15 +45,15 @@ impl<'a> QemuVm<'a> {
 impl RunVm for QemuVm<'_> {
     async fn run_vm(&self) -> crate::Result<()> {
         let img = self.create_boot_disk().await?;
-        let qmp_uds = self.config.get_uds_url(&self.id);
+        let qmp_uds = self.config.get_uds_url(&self.args.id);
         let err = Command::new(&self.config.executables.qemu)
             .args(["-machine", "q35"])
             .args(["-nographic"])
-            .args(["-net", "none"]) // TODO
             .args(["-qmp", qmp_uds.as_str()])
             .args_if(self.config.kvm.enabled, &["-enable-kvm"])
-            .qemu_args(&self.cpu)
-            .qemu_args(&self.memory)
+            .qemu_args(&self.args.cpu)
+            .qemu_args(&SizeInBytes(self.args.memory))
+            .qemu_args(&self.args.networks)
             .qemu_args(&img)
             .qemu_args_with_arg(&self.config.uefi, &self)
             .debug_command()
@@ -93,8 +78,8 @@ trait ConditionalArgs: Sized {
     fn args_if(&mut self, predicate: bool, args: &[&str]) -> &mut Self;
 }
 
-impl QemuArgs<CpuSpec> for Command {
-    fn qemu_args(&mut self, value: &CpuSpec) -> &mut Self {
+impl QemuArgs<VmCpuConfig> for Command {
+    fn qemu_args(&mut self, value: &VmCpuConfig) -> &mut Self {
         let smp = value.threads_per_core * value.cores * value.dies * value.sockets;
         if smp > 0 {
             let smp_arg = format!(
@@ -122,6 +107,22 @@ impl QemuArgs<BootDisk> for Command {
     }
 }
 
+impl QemuArgs<Vec<VmNetworkConfig>> for Command {
+    fn qemu_args(&mut self, value: &Vec<VmNetworkConfig>) -> &mut Self {
+        for (idx, network) in value.iter().enumerate() {
+            let opts = format!(
+                "tap,id=net{idx},ifname={},script=no,downscript=no",
+                network.iface_name
+            );
+            self.arg("-netdev").arg(opts);
+
+            let dev = format!("virtio-net-pci,netdev=net{idx},mac={}", network.mac_address);
+            self.arg("-device").arg(dev);
+        }
+        self
+    }
+}
+
 impl QemuArgsWithArg<Option<QemuVmConfigUefi>, QemuVm<'_>> for Command {
     fn qemu_args_with_arg(
         &mut self,
@@ -130,8 +131,10 @@ impl QemuArgsWithArg<Option<QemuVmConfigUefi>, QemuVm<'_>> for Command {
     ) -> &mut Self {
         if let Some(uefi) = value {
             let code_opts = format!("if=pflash,format=raw,readonly=on,file={}", uefi.code_file);
-            let vars_location =
-                format!("{}/{}.uefi.vars", this.config.disk_image_location, this.id);
+            let vars_location = format!(
+                "{}/{}.uefi.vars",
+                this.config.disk_image_location, this.args.id
+            );
             copy(&uefi.vars_file, &vars_location).expect("Cannot copy vars file"); // TODO
             let vars_opts = format!("if=pflash,format=raw,file={}", vars_location);
             self.args(["-drive", &code_opts, "-drive", &vars_opts])

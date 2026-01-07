@@ -34,6 +34,8 @@ message ClusterNetworkClass {
 message NetworkClassSpec {
   string subnet = 1;
   repeated NetworkClassRoute routes = 2;
+  optional bool internet_access = 3;
+  optional bool cluster_network = 4;
 }
 
 message NetworkClassRoute {

@@ -15,23 +15,20 @@
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::runtime::Runtime;
-use serde::Serialize;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tracing::error;
-use tugboat_resources::manifests::core::v1::{CpuSpec, Ship, ShipClass};
+use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
 use tugboat_resources::sized::SizedString;
-
-#[derive(Debug, Clone, Serialize)]
-struct VmConfig {
-    image: String,
-    cpu: CpuSpec,
-    memory: u64,
-    id: String,
-}
+use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest};
 
 impl RuntimeOperator {
-    pub(crate) async fn run(&self, ship: Ship, ship_class: ShipClass) -> Result<(), RuntimeError> {
+    pub(crate) async fn run(
+        &self,
+        ship: Ship,
+        ship_class: ShipClass,
+        networks: Vec<VmNetworkConfig>,
+    ) -> Result<(), RuntimeError> {
         let Some(object_meta) = ship.object_meta else {
             return Err(RuntimeError::MissingField("v1.Ship.metadata".to_string()));
         };
@@ -61,13 +58,20 @@ impl RuntimeOperator {
 
         let memory_size = SizedString(memory.size.clone());
 
-        let vm_config = VmConfig {
+        let vm_config = VmRunRequest {
             id: ship_id.clone(),
             image: image.location,
-            cpu,
+            cpu: VmCpuConfig {
+                architecture: cpu.architecture,
+                cores: cpu.cores,
+                sockets: cpu.sockets,
+                dies: cpu.dies,
+                threads_per_core: cpu.threads_per_core,
+            },
             memory: memory_size
                 .as_byte_length()
                 .ok_or(RuntimeError::MemorySize(memory.size))?,
+            networks,
         };
         let vm_config = serde_json::to_string(&vm_config)?;
         let mut child = self

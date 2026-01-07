@@ -38,6 +38,7 @@ tugboat-runtime = { path = "tugboat-runtime" }
 tugboat-client = { path = "tugboat-client" }
 tugboat-vm-image = { path = "tugboat-vm-image" }
 tugboat-vm-runtime-interface = { path = "tugboat-vm-runtime-interface" }
+tugboat-cni-operator = { path = "tugboat-cni-operator" }
 
 # command line
 clap = "4.5.53"

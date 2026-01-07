@@ -15,6 +15,7 @@
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
+#[derive(Debug, Clone)]
 pub(crate) struct BridgeCaller {
     bin_path: PathBuf,
     net_ns_base_path: PathBuf,

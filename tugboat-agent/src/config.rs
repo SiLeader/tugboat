@@ -14,6 +14,7 @@
 
 use crate::runtime::RuntimeConfig;
 use serde::Deserialize;
+use tugboat_cni_operator::CniOperatorConfig;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentConfig {
@@ -21,6 +22,7 @@ pub(crate) struct AgentConfig {
     pub runtime: RuntimeConfig,
     pub apiserver: ApiserverConfig,
     pub image: ImageConfig,
+    pub cni: CniOperatorConfig,
 }
 
 #[derive(Debug, Deserialize)]

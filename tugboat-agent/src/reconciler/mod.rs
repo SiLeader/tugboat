@@ -13,8 +13,10 @@
 // limitations under the License.
 
 mod error;
+mod network;
 mod reconcile;
 
+use crate::cni::CniWrapper;
 use crate::reconciler::reconcile::AppendStatus;
 use crate::runtime::RuntimeOperator;
 use futures::{Stream, StreamExt};
@@ -25,6 +27,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::{error, info};
 use tugboat_client::{Api, TugboatClient, WatchEvent, WatchParams};
+use tugboat_cni_operator::CniOperator;
 use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
 
 #[derive(Clone)]
@@ -34,6 +37,7 @@ pub(crate) struct ShipReconciler {
     ship_all_api: Api<Ship>,
     ship_class_api: Api<ShipClass>,
     runtime_operator: RuntimeOperator,
+    cni: CniWrapper,
 }
 
 impl ShipReconciler {
@@ -41,6 +45,7 @@ impl ShipReconciler {
         node_name: String,
         client: TugboatClient,
         runtime_operator: RuntimeOperator,
+        cni: CniOperator,
     ) -> Self {
         Self {
             node_name,
@@ -48,6 +53,7 @@ impl ShipReconciler {
             ship_class_api: Api::all(client.clone()),
             client,
             runtime_operator,
+            cni: CniWrapper::new(cni),
         }
     }
 

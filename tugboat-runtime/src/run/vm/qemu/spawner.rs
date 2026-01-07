@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::run::config::VmConfig;
-use crate::run::vm::qemu::{QemuVm, SizeInBytes};
+use crate::run::vm::qemu::QemuVm;
 use crate::run::vm::{RunVm, Spawner};
 use serde::Deserialize;
+use tugboat_vm_runtime_interface::run::VmRunRequest;
 
 #[derive(Debug, Clone)]
 pub struct QemuVmBuilder {
@@ -30,16 +30,8 @@ impl QemuVmBuilder {
 
 #[async_trait::async_trait]
 impl Spawner for QemuVmBuilder {
-    async fn spawn(&self, args: VmConfig) -> crate::Result<()> {
-        QemuVm::new(
-            &self.config,
-            args.image,
-            args.cpu,
-            SizeInBytes(args.memory),
-            args.id,
-        )
-        .run_vm()
-        .await
+    async fn spawn(&self, args: VmRunRequest) -> crate::Result<()> {
+        QemuVm::new(&self.config, args).run_vm().await
     }
 }
 

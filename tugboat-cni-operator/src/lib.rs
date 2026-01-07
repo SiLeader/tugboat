@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::conf::CniNetworkConfiguration;
-use crate::config::CniOperatorConfig;
 pub use crate::error::Error;
-use std::fmt::format;
 use std::path::PathBuf;
 
 mod bridge;
@@ -23,6 +20,10 @@ mod conf;
 mod config;
 mod error;
 
+pub use conf::*;
+pub use config::*;
+
+#[derive(Debug, Clone)]
 pub struct CniOperator {
     bridge_caller: bridge::BridgeCaller,
     config_dir: PathBuf,

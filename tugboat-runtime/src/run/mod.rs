@@ -17,7 +17,7 @@ mod vm;
 
 pub use vm::QemuVmConfig;
 
-use crate::run::config::VmConfig;
+use crate::run::config::load_run_config_or_panic;
 use crate::run::vm::{QemuVmBuilder, Spawner};
 use clap::Parser;
 
@@ -28,7 +28,7 @@ pub(crate) struct RunArgs {
 }
 
 pub(crate) async fn run(vm: QemuVmConfig, args: RunArgs) {
-    let config = VmConfig::load_or_panic(args.config);
+    let config = load_run_config_or_panic(args.config);
 
     let spawner = QemuVmBuilder::new(vm);
     spawner.spawn(config).await.expect("Failed to spawn VM");
