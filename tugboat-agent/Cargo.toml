@@ -36,6 +36,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tokio-util.workspace = true
 
 thiserror.workspace = true
 

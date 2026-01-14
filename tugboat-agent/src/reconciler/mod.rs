@@ -23,8 +23,11 @@ use futures::{Stream, StreamExt};
 use std::cmp::min;
 use std::pin::Pin;
 use std::time::Duration;
+use tokio::select;
+use tokio::signal::unix::SignalKind;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tugboat_client::{Api, TugboatClient, WatchEvent, WatchParams};
 use tugboat_cni_operator::CniOperator;
@@ -38,6 +41,7 @@ pub(crate) struct ShipReconciler {
     ship_class_api: Api<ShipClass>,
     runtime_operator: RuntimeOperator,
     cni: CniWrapper,
+    cancellation_token: CancellationToken,
 }
 
 impl ShipReconciler {
@@ -54,6 +58,7 @@ impl ShipReconciler {
             client,
             runtime_operator,
             cni: CniWrapper::new(cni),
+            cancellation_token: CancellationToken::new(),
         }
     }
 
@@ -62,12 +67,16 @@ impl ShipReconciler {
             "Starting ship reconciliation loop on node '{}'",
             self.node_name
         );
+        self.spawn_watch_shutdown_signal();
+
         let watch_params =
             WatchParams::default().fields(format!("spec.nodeName={}", self.node_name));
         self.start_status_collector();
 
         loop {
-            let mut stream = self.get_watch_stream(&watch_params).await;
+            let Some(mut stream) = self.get_watch_stream(&watch_params).await else {
+                break;
+            };
             while let Some(event) = stream.next().await {
                 match event {
                     Ok(event) => {
@@ -86,6 +95,7 @@ impl ShipReconciler {
     fn start_status_collector(&self) -> JoinHandle<()> {
         let client = self.client.clone();
         let operator = self.runtime_operator.clone();
+        let token = self.cancellation_token.clone();
         tokio::spawn(async move {
             loop {
                 for status in operator.collect_status().await {
@@ -111,7 +121,12 @@ impl ShipReconciler {
                         }
                     }
                 }
-                sleep(Duration::from_secs(5)).await;
+                select! {
+                    _ = sleep(Duration::from_secs(5)) => {}
+                    _ = token.cancelled() => {
+                        break;
+                    }
+                }
             }
         })
     }
@@ -119,17 +134,35 @@ impl ShipReconciler {
     async fn get_watch_stream(
         &self,
         params: &WatchParams,
-    ) -> Pin<Box<impl Stream<Item = Result<WatchEvent<Ship>, tugboat_client::Error>>>> {
+    ) -> Option<Pin<Box<impl Stream<Item = Result<WatchEvent<Ship>, tugboat_client::Error>>>>> {
         let mut count = 0;
         loop {
             match self.ship_all_api.watch(params).await {
-                Ok(stream) => return Box::pin(stream),
+                Ok(stream) => return Some(Box::pin(stream)),
                 Err(e) => {
                     error!("Failed to create watch stream: {e}");
-                    sleep(Duration::from_secs(min(128, 2u64.pow(count)))).await;
+                    select! {
+                        _ = self.cancellation_token.cancelled() => {
+                            return None;
+                        }
+                        _ = sleep(Duration::from_secs(min(128, 2u64.pow(count)))) => {}
+                    }
                     count += 1;
                 }
             }
         }
+    }
+
+    fn spawn_watch_shutdown_signal(&self) {
+        let mut terminate = tokio::signal::unix::signal(SignalKind::terminate())
+            .expect("Failed to listen terminate signal");
+        let token = self.cancellation_token.clone();
+        tokio::spawn(async move {
+            select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = terminate.recv() => {},
+            }
+            token.cancel();
+        });
     }
 }

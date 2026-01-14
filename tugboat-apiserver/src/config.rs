@@ -54,7 +54,8 @@ impl crate::ApiServer {
 
 impl ApiServerConfig {
     pub fn load_from_file_or_panic(file: impl AsRef<std::path::Path>) -> Self {
-        let file = std::fs::read_to_string(file).expect("Failed to read config file");
+        let file = std::fs::read_to_string(file.as_ref())
+            .unwrap_or_else(|e| panic!("Failed to read config file: {:?}: {e}", file.as_ref()));
         toml::from_str(&file).expect("Failed to parse config file")
     }
 }

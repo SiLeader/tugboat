@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::check_conflict_optimistic;
 use crate::data::{ModifyResponse, StatusResponse};
 use crate::operator::ApiOperator;
 use actix_web::patch;
@@ -61,7 +60,6 @@ pub(super) async fn handle_ship_status_patch(
         j.merge(&patch);
         serde_json::from_value::<Ship>(j)?
     };
-    check_conflict_optimistic!(current, patched);
     let patched = if current != patched {
         operator.store.put(patched).await?.apply_revision()
     } else {

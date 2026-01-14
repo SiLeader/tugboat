@@ -94,7 +94,7 @@ impl ResourceStore {
         let resource_version = meta
             .resource_version
             .as_ref()
-            .and_then(|v| i64::from_str_radix(v, 10).ok());
+            .and_then(|v| v.parse::<i64>().ok());
         let key = Self::create_key::<T>(meta.namespace.clone(), name);
         let bytes = value.serialize()?;
 

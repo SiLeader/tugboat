@@ -120,6 +120,12 @@ impl From<tugboat_resource_store::error::Error> for StatusResponse {
             tugboat_resource_store::error::Error::EventEmit(_) => {
                 StatusResponse::internal_error("Event emit error", None)
             }
+            tugboat_resource_store::error::Error::OptimisticLockFailed(revision) => {
+                StatusResponse::conflict(
+                    "Resources are conflicted",
+                    Some(serde_json::json!({"revision": revision})),
+                )
+            }
         }
     }
 }

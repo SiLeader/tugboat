@@ -17,7 +17,6 @@ use crate::endpoints::WatchOption;
 use crate::endpoints::selector::{FieldSelector, Selector};
 use crate::operator::ApiOperator;
 use actix_web::HttpResponse;
-use actix_web_lab::__reexports::futures_util::StreamExt;
 use actix_web_lab::respond::NdJson;
 use async_stream::stream;
 use serde::Serialize;

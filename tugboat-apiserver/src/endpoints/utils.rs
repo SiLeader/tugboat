@@ -75,23 +75,3 @@ macro_rules! create_object {
         Err(StatusResponse::conflict("Generate name failed", None))
     }};
 }
-
-#[macro_export]
-macro_rules! check_conflict_optimistic {
-    ($current:expr, $replacement:expr) => {{
-        if let Some(current_meta) = &$current.object_meta
-            && let Some(replacement_meta) = &$replacement.object_meta
-        {
-            if let Some(current_resource_version) = &current_meta.resource_version
-                && let Some(replacement_resource_version) = &replacement_meta.resource_version
-            {
-                if current_resource_version != replacement_resource_version {
-                    return Err($crate::data::StatusResponse::conflict(
-                        "'resourceVersion' does not match.",
-                        Some(::serde_json::json!({"current": current_resource_version})),
-                    ));
-                }
-            }
-        }
-    }};
-}

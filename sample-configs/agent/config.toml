@@ -24,3 +24,5 @@ url = "http://localhost:8080"
 
 [image]
 cache_dir = "/tmp"
+
+[cni]
