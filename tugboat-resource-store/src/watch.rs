@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use etcd_client::{Client, EventType};
+use etcd_client::{Client, EventType, WatchOptions};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::watch::{Receiver, Sender, channel};
 use tokio::time::sleep;
-use tracing::error;
+use tracing::{debug, error};
 
 #[derive(Clone)]
 pub struct KeyValue {
@@ -55,6 +55,7 @@ impl WatchMuxAggregator {
         key: &str,
         _resource_version: Option<String>,
     ) -> Result<WatchReceiver, crate::Error> {
+        debug!("Get watch receiver: key: {key}");
         let mut mux = self.mux.lock().await;
         if let Some(mux) = mux.get(key).cloned() {
             return Ok(mux.receiver());
@@ -68,13 +69,17 @@ impl WatchMuxAggregator {
         tokio::spawn(async move {
             let mut client = client;
             loop {
-                let Ok((_watcher, mut stream)) = client.watch(key.as_str(), None).await else {
+                let Ok((_watcher, mut stream)) = client
+                    .watch(key.as_str(), Some(WatchOptions::default().with_prefix()))
+                    .await
+                else {
                     sleep(Duration::from_millis(500)).await;
                     continue;
                 };
                 while let Some(event) = stream.next().await {
                     match event {
                         Ok(event) => {
+                            debug!("Watch event: key: {key}: {event:?}");
                             let events = event
                                 .events()
                                 .iter()

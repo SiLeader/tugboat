@@ -24,6 +24,10 @@ pub trait Resource {
     fn type_meta() -> TypeMeta;
 }
 
+pub trait SetTypeMeta {
+    fn set_type_meta(&mut self, type_meta: TypeMeta);
+}
+
 pub trait StaticResource: Resource {
     fn group() -> &'static str;
     fn version() -> &'static str;
@@ -42,6 +46,9 @@ pub trait ObjectMetaResource: Resource {
     fn object_meta_mut(&mut self) -> &mut Option<ObjectMeta>;
     fn modify_object_meta(&mut self, f: impl FnOnce(&mut Option<ObjectMeta>)) {
         f(self.object_meta_mut());
+    }
+    fn set_object_meta(&mut self, object_meta: Option<ObjectMeta>) {
+        *self.object_meta_mut() = object_meta;
     }
 }
 
@@ -94,6 +101,12 @@ macro_rules! apply_resource {
 
             fn object_meta_mut(&mut self) -> &mut Option<$crate::manifests::meta::v1::ObjectMeta> {
                 &mut self.object_meta
+            }
+        }
+
+        impl $crate::SetTypeMeta for $ty {
+            fn set_type_meta(&mut self, type_meta: $crate::manifests::meta::v1::TypeMeta) {
+                self.type_meta = Some(type_meta);
             }
         }
     };

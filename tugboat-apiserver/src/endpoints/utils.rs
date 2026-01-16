@@ -15,7 +15,7 @@
 #[macro_export]
 macro_rules! extract_object_meta {
     ($obj:expr) => {
-        match $obj.object_meta.clone() {
+        match ::tugboat_resources::ObjectMetaResource::object_meta(&$obj).clone() {
             Some(meta) => meta,
             None => {
                 return Err($crate::data::StatusResponse::bad_request(
@@ -43,35 +43,48 @@ macro_rules! check_namespace_absent {
 macro_rules! create_object {
     ($operator:expr, $object_meta:expr, $object:expr, $type_meta:expr) => {{
         let mut object = $object;
-        object.type_meta = Some($type_meta);
+        ::tugboat_resources::SetTypeMeta::set_type_meta(&mut object, $type_meta);
 
-        for _ in 0..5 {
-            let name = match $object_meta.name.clone() {
-                None => match &$object_meta.generate_name {
-                    None => {
-                        return Err(StatusResponse::bad_request(
-                            "metadata.name or metadata.generateName is required",
-                            None,
-                        ));
-                    }
-                    Some(base_name) => $operator.name_generator.generate(&base_name).await,
-                },
-                Some(name) => name,
+        let object_meta = $operator.apply_uid($object_meta);
+
+        if object_meta.name.is_some() {
+            ::tugboat_resources::ObjectMetaResource::set_object_meta(
+                &mut object,
+                Some(object_meta),
+            );
+            return if let Some(data) = $operator.store.put_if_not_exists(object).await? {
+                Ok($crate::data::ModifyResponse::Created(data.apply_revision()))
+            } else {
+                Err(StatusResponse::conflict(
+                    "Specified name is already exists",
+                    None,
+                ))
             };
+        }
 
+        let Some(generate_name) = &object_meta.generate_name else {
+            return Err(StatusResponse::bad_request(
+                "metadata.generateName is required",
+                None,
+            ));
+        };
+        for _ in 0..5 {
+            let name = $operator.name_generator.generate(generate_name).await;
             let object = {
                 let mut obj = object.clone();
-                obj.object_meta = Some(tugboat_resources::manifests::meta::v1::ObjectMeta {
-                    name: Some(name),
-                    ..$object_meta.clone()
-                });
+                ::tugboat_resources::ObjectMetaResource::set_object_meta(
+                    &mut obj,
+                    Some(tugboat_resources::manifests::meta::v1::ObjectMeta {
+                        name: Some(name),
+                        ..object_meta.clone()
+                    }),
+                );
                 obj
             };
             if let Some(data) = $operator.store.put_if_not_exists(object).await? {
                 return Ok($crate::data::ModifyResponse::Created(data.apply_revision()));
             }
         }
-
         Err(StatusResponse::conflict("Generate name failed", None))
     }};
 }

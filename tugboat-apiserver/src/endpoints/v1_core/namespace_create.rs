@@ -30,7 +30,6 @@ pub(super) async fn handle_namespace_create(
 
     let object_meta = extract_object_meta!(namespace);
     check_namespace_absent!(object_meta);
-    let object_meta = operator.apply_uid(object_meta);
 
     create_object!(operator, object_meta, namespace, Namespace::type_meta())
 }

@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/work/target \
 
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y openssl && \
+RUN apt-get update && apt-get install -y openssl curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

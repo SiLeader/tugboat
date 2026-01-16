@@ -14,6 +14,7 @@
 
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
+use tracing::{debug, info};
 use tugboat_client::{Api, WatchEvent};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
@@ -22,7 +23,15 @@ use tugboat_resources::manifests::meta::v1::Time;
 impl ShipReconciler {
     pub(super) async fn reconcile(&self, event: WatchEvent<Ship>) -> Result<(), ReconcileError> {
         match event {
+            WatchEvent::Modified(_ship) => {
+                todo!()
+            }
+            WatchEvent::Deleted(_ship) => {
+                todo!()
+            }
             WatchEvent::Added(ship) => {
+                info!("Starting reconciliation for ship");
+                debug!("Checking ship configuration");
                 let Some(ship_metadata) = ship.object_meta() else {
                     return Err(ReconcileError::FieldMissing(
                         "v1.Ship".to_string(),
@@ -47,6 +56,7 @@ impl ShipReconciler {
                         "spec".to_string(),
                     ));
                 };
+                debug!("Getting ship class named '{}'", ship_spec.ship_class);
                 let Some(class) = self.ship_class_api.get(&ship_spec.ship_class).await? else {
                     return Err(ReconcileError::ShipClassNotFound(
                         ship_spec.ship_class.clone(),
@@ -57,11 +67,14 @@ impl ShipReconciler {
                     .clone()
                     .unwrap_or("default".to_string());
 
+                debug!("Getting network classes for ship");
                 let network_classes = self
                     .get_related_network_classes(&namespace, ship_spec)
                     .await?;
+                debug!("{} network classes loaded", network_classes.len());
 
                 {
+                    debug!("Updating Ship status");
                     let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
                     let mut status_ship = ship.clone();
                     status_ship.append_status(ShipCondition {
@@ -72,18 +85,15 @@ impl ShipReconciler {
                     api.replace_status(name, status_ship).await?;
                 }
 
+                debug!("Creating network resources");
                 let networks = self.cni.add(ship_id, network_classes).await?;
+                debug!("Setup virtual machine");
                 self.runtime_operator
                     .create(ship_id, networks.as_slice())
                     .await?;
+                debug!("Starting runtime operator");
                 self.runtime_operator.start(ship, class, networks).await?;
                 Ok(())
-            }
-            WatchEvent::Modified(_ship) => {
-                todo!()
-            }
-            WatchEvent::Deleted(_ship) => {
-                todo!()
             }
         }
     }

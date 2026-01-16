@@ -16,6 +16,7 @@ use crate::error::Error;
 use crate::serializer::StaticSerializable;
 use crate::watch::WatchReceiver;
 use etcd_client::{Client, Compare, CompareOp, GetOptions, Txn, TxnOp, TxnOpResponse};
+use tracing::{debug, info};
 use tugboat_resources::manifests::meta::v1::ObjectMeta;
 use tugboat_resources::{ObjectMetaResource, StaticResource};
 
@@ -55,6 +56,7 @@ impl<T: ObjectMetaResource> ContentData<T> {
 
 impl ResourceStore {
     pub async fn new(endpoints: &[String]) -> Self {
+        info!("Creating etcd client: endpoints: {endpoints:?}");
         let client = Client::connect(endpoints, None)
             .await
             .expect("Connect to etcd failed");
@@ -85,10 +87,13 @@ impl ResourceStore {
         &self,
         value: T,
     ) -> Result<ContentData<T>, Error> {
+        info!("Put resource");
         let Some(meta) = value.object_meta() else {
+            info!("Resource metadata is missing");
             return Err(Error::FieldMissing("metadata".to_string()));
         };
         let Some(name) = &meta.name else {
+            info!("Resource metadata.name is missing");
             return Err(Error::FieldMissing("metadata.name".to_string()));
         };
         let resource_version = meta
@@ -97,6 +102,7 @@ impl ResourceStore {
             .and_then(|v| v.parse::<i64>().ok());
         let key = Self::create_key::<T>(meta.namespace.clone(), name);
         let bytes = value.serialize()?;
+        debug!("Put resource key = {key}, value = {} bytes", bytes.len());
 
         let mut client = self.etcd.clone();
 
@@ -137,14 +143,21 @@ impl ResourceStore {
         &self,
         value: T,
     ) -> Result<Option<ContentData<T>>, Error> {
+        info!("Put resource if not exists");
         let Some(meta) = value.object_meta() else {
+            info!("Resource metadata is missing");
             return Err(Error::FieldMissing("metadata".to_string()));
         };
         let Some(name) = &meta.name else {
+            info!("Resource metadata.name is missing");
             return Err(Error::FieldMissing("metadata.name".to_string()));
         };
         let key = Self::create_key::<T>(meta.namespace.clone(), name);
         let bytes = value.serialize()?;
+        debug!(
+            "Put resource (if not exists) key = {key}, value = {} bytes",
+            bytes.len()
+        );
 
         let txn = Txn::new()
             .when(vec![Compare::create_revision(
@@ -155,6 +168,7 @@ impl ResourceStore {
             .and_then(vec![TxnOp::put(key.as_str(), bytes, None)]);
         let mut client = self.etcd.clone();
         let res = client.txn(txn).await?;
+        debug!("Txn response: {res:?}");
         if let Some(TxnOpResponse::Put(txn_res)) = res.op_responses().first()
             && res.succeeded()
         {
@@ -173,6 +187,7 @@ impl ResourceStore {
         name: &str,
     ) -> Result<Option<ContentData<T>>, Error> {
         let key = Self::create_key::<T>(namespace, name);
+        info!("Get resource: key = {key}");
 
         let mut client = self.etcd.clone();
         let res = client.get(key, None).await?;
@@ -193,6 +208,7 @@ impl ResourceStore {
         limit: Option<usize>,
     ) -> Result<Vec<ContentData<T>>, Error> {
         let key = Self::create_key::<T>(namespace, "");
+        info!("List resources: key = {key}");
         let mut client = self.etcd.clone();
         let mut options = GetOptions::default().with_prefix();
         if let Some(limit) = limit {
@@ -217,6 +233,7 @@ impl ResourceStore {
         namespace: Option<String>,
     ) -> Result<WatchReceiver, Error> {
         let key = Self::create_watch_key::<T>(namespace);
+        info!("Watch resources: key = {key}");
         self.watch_mux.get(&key, resource_version).await
     }
 }

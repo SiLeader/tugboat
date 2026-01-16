@@ -30,7 +30,6 @@ pub(super) async fn handle_shipclass_create(
 
     let object_meta = extract_object_meta!(shipclass);
     check_namespace_absent!(object_meta);
-    let object_meta = operator.apply_uid(object_meta);
 
     create_object!(operator, object_meta, shipclass, ShipClass::type_meta())
 }

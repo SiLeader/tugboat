@@ -24,7 +24,6 @@ tugboat-resources.workspace = true
 etcd-client.workspace = true
 
 prost.workspace = true
-serde_json.workspace = true
 
 thiserror.workspace = true
 

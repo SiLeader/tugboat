@@ -27,7 +27,7 @@ pub(super) struct ShipReplacePathParams {
 }
 
 #[utoipa::path()]
-#[put("/v1/namespaces/{namespace}/ships/{ship}/status")]
+#[put("/v1/namespaces/{namespace}/ships/{name}/status")]
 pub(super) async fn handle_ship_status_replace(
     path: Path<ShipReplacePathParams>,
     replacement: Json<Ship>,

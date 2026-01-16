@@ -17,6 +17,7 @@ use crate::error::{ApiStatus, Error};
 use reqwest::Response;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use tracing::debug;
 
 #[derive(Deserialize)]
 struct ListResponse<T> {
@@ -36,7 +37,8 @@ impl TugboatClient {
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             Ok(None)
         } else {
-            Self::parse_impl(response).await
+            let data = Self::parse_impl(response).await?;
+            Ok(Some(data))
         }
     }
 
@@ -48,10 +50,13 @@ impl TugboatClient {
     }
 
     async fn parse_impl<T: DeserializeOwned>(response: Response) -> Result<T, Error> {
-        if response.status().is_success() {
-            Ok(response.json().await?)
+        let status = response.status();
+        let text = response.text().await?;
+        debug!("Response from api: {text}");
+        if status.is_success() {
+            Ok(serde_json::from_str(&text)?)
         } else {
-            let status: ApiStatus = response.json().await?;
+            let status: ApiStatus = serde_json::from_str(&text)?;
             Err(Error::Api(status))
         }
     }

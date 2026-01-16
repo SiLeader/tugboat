@@ -77,7 +77,16 @@ impl ShipReconciler {
             let Some(mut stream) = self.get_watch_stream(&watch_params).await else {
                 break;
             };
-            while let Some(event) = stream.next().await {
+            loop {
+                let event = select! {
+                    event = stream.next() => event,
+                    _ = self.cancellation_token.cancelled() => {
+                        break;
+                    }
+                };
+                let Some(event) = event else {
+                    continue;
+                };
                 match event {
                     Ok(event) => {
                         if let Err(e) = self.reconcile(event).await {
@@ -162,6 +171,7 @@ impl ShipReconciler {
                 _ = tokio::signal::ctrl_c() => {},
                 _ = terminate.recv() => {},
             }
+            info!("Received terminate signal. Shutting down ship reconciler.");
             token.cancel();
         });
     }

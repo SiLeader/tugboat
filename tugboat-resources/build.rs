@@ -26,6 +26,10 @@ fn main() {
         .enum_attribute(".", "#[serde(rename_all = \"PascalCase\"")
         .field_attribute("object_meta", "#[serde(rename = \"metadata\")]")
         .field_attribute("type_meta", "#[serde(flatten)]")
+        .field_attribute(
+            ".",
+            "#[serde(default, skip_serializing_if = \"crate::manifests::default\")]",
+        )
         .compile_protos(
             &[
                 // core/v1

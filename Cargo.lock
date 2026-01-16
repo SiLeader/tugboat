@@ -3303,6 +3303,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "tokio-util",
+ "tracing",
  "tugboat-resources",
  "url",
 ]
@@ -3324,7 +3325,6 @@ dependencies = [
  "etcd-client",
  "futures",
  "prost",
- "serde_json",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
