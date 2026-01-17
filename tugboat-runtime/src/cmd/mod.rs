@@ -12,18 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use async_trait::async_trait;
-pub use qemu::*;
-use tugboat_vm_runtime_interface::start::VmStartRequest;
-
-mod qemu;
-
-#[async_trait]
-pub(crate) trait RunVm {
-    async fn run_vm(&self) -> crate::Result<()>;
-}
-
-#[async_trait]
-pub trait Spawner {
-    async fn spawn(&self, args: VmStartRequest) -> crate::Result<()>;
-}
+pub mod create;
+pub mod run;
+pub mod start;
+pub mod status;

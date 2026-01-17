@@ -22,7 +22,7 @@ license.workspace = true
 tugboat-client.workspace = true
 tugboat-resources.workspace = true
 tugboat-vm-image = { workspace = true, features = ["pull"] }
-tugboat-vm-runtime-interface.workspace = true
+tugboat-vm-runtime-interface = { workspace = true, features = ["operator"] }
 tugboat-cni-operator.workspace = true
 
 serde = { workspace = true, features = ["derive"] }

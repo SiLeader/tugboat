@@ -80,14 +80,14 @@ impl ApiServer {
                 .expect("Failed to bind server")
                 .run()
                 .await
-                .expect("Failed to start server");
+                .expect("Failed to run server");
         } else {
             server
                 .bind(self.listen)
                 .expect("Failed to bind server")
                 .run()
                 .await
-                .expect("Failed to start server");
+                .expect("Failed to run server");
         }
     }
 }

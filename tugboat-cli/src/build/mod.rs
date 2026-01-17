@@ -29,6 +29,9 @@ pub(crate) struct BuildArgs {
     #[arg(long, short, help = "OCI Artifact Tags", required = true)]
     tag: String,
 
+    #[arg(long, help = "Use HTTP instead of HTTPS")]
+    http: bool,
+
     #[arg(help = "Context directory")]
     context: String,
 }
@@ -56,7 +59,13 @@ pub(crate) async fn run_build(args: BuildArgs) {
 
     let client = VmImageRegistry::default();
     client
-        .push(args.tag, imagefile.arch, imagefile.format, disk_data, None)
+        .push(
+            args.tag,
+            imagefile.arch,
+            imagefile.format,
+            disk_data,
+            if args.http { Some(true) } else { None },
+        )
         .await
         .expect("Failed to push image");
 }

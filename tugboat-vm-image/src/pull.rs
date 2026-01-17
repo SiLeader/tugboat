@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::auth::load_auth_or_anonymous;
+use crate::compress::decompress_gzip;
 use crate::{Error, VmImageRegistry};
 use oci_distribution::Reference;
 
@@ -21,7 +22,7 @@ pub struct Image {
 }
 
 impl VmImageRegistry {
-    pub async fn pull(&self, image: String, insecure: Option<bool>) -> Result<Image, Error> {
+    pub async fn pull(&self, image: &str, insecure: Option<bool>) -> Result<Image, Error> {
         let reference: Reference = image.parse()?;
 
         let auth = load_auth_or_anonymous(reference.registry());
@@ -50,9 +51,10 @@ impl VmImageRegistry {
                 .to_str()
                 .ok_or(Error::FileLocationEncode)?
                 .to_string();
-            tokio::fs::write(&filename, layer.data).await?;
+            let data = decompress_gzip(layer.data.as_slice())?;
+            tokio::fs::write(&filename, data).await?;
             return Ok(Image { location });
         }
-        Err(Error::DiskImageMissing(image))
+        Err(Error::DiskImageMissing(image.to_string()))
     }
 }

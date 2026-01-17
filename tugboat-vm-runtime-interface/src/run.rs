@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VmStartRequest {
+pub struct VmRunRequest {
     pub image: String,
     pub cpu: VmCpuConfig,
     pub memory: u64,

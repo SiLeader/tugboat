@@ -12,15 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod vm;
-
-pub use vm::QemuVmConfig;
+use crate::execute::vm::QemuVmConfig;
 
 use crate::config::load_config_or_panic;
-use crate::pre::{change_running_user_and_group, daemonize, enter_to_network_namespace};
-use crate::start::vm::{QemuVmBuilder, Spawner};
+use crate::pre::enter_to_network_namespace;
 use clap::Parser;
-use tugboat_vm_runtime_interface::start::VmStartRequest;
+use tugboat_vm_runtime_interface::run::VmRunRequest;
 
 #[derive(Debug, Parser)]
 pub(crate) struct StartArgs {
@@ -28,13 +25,9 @@ pub(crate) struct StartArgs {
     config: String,
 }
 
-pub(crate) async fn start(vm: QemuVmConfig, args: StartArgs) {
-    let config = load_config_or_panic::<VmStartRequest>(args.config);
-
-    enter_to_network_namespace(&config.id).expect("Failed to enter to network namespace");
-    daemonize();
-    change_running_user_and_group(&config.user).expect("Failed to change running user and group");
-
-    let spawner = QemuVmBuilder::new(vm);
-    spawner.spawn(config).await.expect("Failed to spawn VM");
+pub(crate) async fn run(vm: QemuVmConfig, args: StartArgs) -> Result<(), crate::Error> {
+    let config = load_config_or_panic::<VmRunRequest>(args.config);
+    enter_to_network_namespace(&config.id)?;
+    crate::execute::run(vm, config).await?;
+    Ok(())
 }

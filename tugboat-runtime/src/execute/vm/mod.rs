@@ -12,11 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use serde::{Deserialize, Serialize};
+use async_trait::async_trait;
+pub use qemu::*;
+use tugboat_vm_runtime_interface::run::VmRunRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VmCreateRequest {
-    pub id: String,
-    pub bridges: Vec<String>,
+mod qemu;
+
+#[async_trait]
+pub trait RunVm {
+    async fn run_vm(&self) -> crate::Result<()>;
+}
+
+#[async_trait]
+pub trait Spawner {
+    async fn spawn(&self, args: VmRunRequest) -> crate::Result<()>;
 }

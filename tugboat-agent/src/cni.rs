@@ -17,17 +17,25 @@ use tugboat_cni_operator::{
     CniConfContent, CniConfHeader, CniIpam, CniIpamRoute, CniNetConfList, CniOperator,
 };
 use tugboat_resources::manifests::core::v1::NetworkClassSpec;
-use tugboat_vm_runtime_interface::start::VmNetworkConfig;
+use tugboat_vm_runtime_interface::run::VmNetworkConfig;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniWrapper {
     operator: CniOperator,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct NetworkClassInfo {
     pub name: String,
     pub namespace: Option<String>,
     pub spec: NetworkClassSpec,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlannedNetworkConfig {
+    pub bridge: String,
+    pub info: NetworkClassInfo,
+    pub vm: VmNetworkConfig,
 }
 
 impl CniWrapper {
@@ -35,16 +43,46 @@ impl CniWrapper {
         Self { operator }
     }
 
-    pub(crate) async fn add(
+    pub(crate) fn create_network_configs(
         &self,
         ship_id: &str,
         network_classes: Vec<NetworkClassInfo>,
+    ) -> Vec<PlannedNetworkConfig> {
+        let mut planned = Vec::new();
+        for (idx, network_class) in network_classes.into_iter().enumerate() {
+            let iface_name = format!("eth{}", idx);
+            let plan = Self::plan_single(ship_id, iface_name, network_class);
+            planned.push(plan);
+        }
+        planned
+    }
+
+    fn plan_single(
+        ship_id: &str,
+        iface_name: String,
+        network_class: NetworkClassInfo,
+    ) -> PlannedNetworkConfig {
+        let bridge = create_bridge_name(&network_class.namespace, &network_class.name);
+        let mac = mac_address(&network_class.namespace, &network_class.name, ship_id);
+        PlannedNetworkConfig {
+            bridge,
+            info: network_class,
+            vm: VmNetworkConfig {
+                iface_name,
+                mac_address: mac,
+            },
+        }
+    }
+
+    pub(crate) async fn add(
+        &self,
+        ship_id: &str,
+        config: Vec<PlannedNetworkConfig>,
     ) -> Result<Vec<VmNetworkConfig>, tugboat_cni_operator::Error> {
         self.add_loopback(ship_id).await?;
         let mut applied = Vec::new();
-        for (idx, network_class) in network_classes.into_iter().enumerate() {
-            let iface_name = format!("eth{}", idx);
-            let net = self.add_single(ship_id, &iface_name, network_class).await?;
+        for c in config {
+            let net = self.add_single(ship_id, c).await?;
             applied.push(net);
         }
         Ok(applied)
@@ -65,24 +103,22 @@ impl CniWrapper {
     async fn add_single(
         &self,
         ship_id: &str,
-        iface_name: &str,
-        network_class: NetworkClassInfo,
+        config: PlannedNetworkConfig,
     ) -> Result<VmNetworkConfig, tugboat_cni_operator::Error> {
-        let bridge = create_bridge_name(&network_class.namespace, &network_class.name);
-        let mac = mac_address(&network_class.namespace, &network_class.name, ship_id);
         let conf = CniNetConfList {
             header: CniConfHeader {
                 cni_version: "1.0.0".to_string(),
-                name: network_class.name,
+                name: config.info.name,
             },
             plugins: vec![CniConfContent::Bridge {
-                bridge: bridge.clone(),
-                is_gateway: network_class.spec.cluster_network.unwrap_or(true),
-                ip_masquerade: network_class.spec.internet_access.unwrap_or(false),
+                bridge: config.bridge,
+                is_gateway: config.info.spec.cluster_network.unwrap_or(true),
+                ip_masquerade: config.info.spec.internet_access.unwrap_or(false),
                 ipam: CniIpam {
                     cni_type: "host-local".to_string(),
-                    subnet: network_class.spec.subnet,
-                    routes: network_class
+                    subnet: config.info.spec.subnet,
+                    routes: config
+                        .info
                         .spec
                         .routes
                         .into_iter()
@@ -94,12 +130,9 @@ impl CniWrapper {
             }],
         };
         self.operator
-            .add(ship_id, iface_name, "bridge", conf)
+            .add(ship_id, &config.vm.iface_name, "bridge", conf)
             .await?;
-        Ok(VmNetworkConfig {
-            iface_name: iface_name.to_string(),
-            mac_address: mac,
-        })
+        Ok(config.vm)
     }
 }
 

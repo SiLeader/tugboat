@@ -21,6 +21,7 @@ use crate::reconciler::reconcile::AppendStatus;
 use crate::runtime::RuntimeOperator;
 use futures::{Stream, StreamExt};
 use std::cmp::min;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
@@ -73,29 +74,29 @@ impl ShipReconciler {
             WatchParams::default().fields(format!("spec.nodeName={}", self.node_name));
         self.start_status_collector();
 
+        let Some(mut stream) = self.get_watch_stream(&watch_params).await else {
+            info!("Get watch stream stopped. Shutting down ship reconciler.");
+            return;
+        };
         loop {
-            let Some(mut stream) = self.get_watch_stream(&watch_params).await else {
-                break;
+            let event = select! {
+                event = stream.next() => event,
+                _ = self.cancellation_token.cancelled() => {
+                    info!("Ship reconciliation loop stopped.");
+                    break;
+                }
             };
-            loop {
-                let event = select! {
-                    event = stream.next() => event,
-                    _ = self.cancellation_token.cancelled() => {
-                        break;
+            let Some(event) = event else {
+                continue;
+            };
+            match event {
+                Ok(event) => {
+                    if let Err(e) = self.reconcile(event).await {
+                        error!("Failed to reconcile ship: {e}");
                     }
-                };
-                let Some(event) = event else {
-                    continue;
-                };
-                match event {
-                    Ok(event) => {
-                        if let Err(e) = self.reconcile(event).await {
-                            error!("Failed to reconcile ship: {e}");
-                        }
-                    }
-                    Err(err) => {
-                        error!("Failed to watch ship: {err}");
-                    }
+                }
+                Err(err) => {
+                    error!("Failed to watch ship: {err}");
                 }
             }
         }

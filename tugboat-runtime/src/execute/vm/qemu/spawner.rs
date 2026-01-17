@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::start::vm::qemu::QemuVm;
-use crate::start::vm::{RunVm, Spawner};
+use crate::execute::vm::qemu::QemuVm;
+use crate::execute::vm::{RunVm, Spawner};
 use serde::Deserialize;
-use tugboat_vm_runtime_interface::start::VmStartRequest;
+use tugboat_vm_runtime_interface::run::VmRunRequest;
 
 #[derive(Debug, Clone)]
 pub struct QemuVmBuilder {
@@ -30,44 +30,44 @@ impl QemuVmBuilder {
 
 #[async_trait::async_trait]
 impl Spawner for QemuVmBuilder {
-    async fn spawn(&self, args: VmStartRequest) -> crate::Result<()> {
+    async fn spawn(&self, args: VmRunRequest) -> crate::Result<()> {
         QemuVm::new(&self.config, args).run_vm().await
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct QemuVmConfig {
-    pub(crate) executables: QemuVmConfigExecutables,
-    pub(crate) disk_image_location: String,
-    pub(crate) kvm: QemuVmConfigKvm,
-    pub(crate) uefi: Option<QemuVmConfigUefi>,
+    pub executables: QemuVmConfigExecutables,
+    pub disk_image_location: String,
+    pub kvm: QemuVmConfigKvm,
+    pub uefi: Option<QemuVmConfigUefi>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct QemuVmConfigExecutables {
-    pub(crate) qemu: String,
-    pub(crate) qemu_img: String,
-    pub(crate) ip: String,
-    pub(crate) tc: String,
+pub struct QemuVmConfigExecutables {
+    pub qemu: String,
+    pub qemu_img: String,
+    pub ip: String,
+    pub tc: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct QemuVmConfigKvm {
-    pub(crate) enabled: bool,
+pub struct QemuVmConfigKvm {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct QemuVmConfigUefi {
-    pub(crate) code_file: String,
-    pub(crate) vars_file: String,
+pub struct QemuVmConfigUefi {
+    pub code_file: String,
+    pub vars_file: String,
 }
 
 impl QemuVmConfig {
-    pub(crate) fn get_uds_path(&self, id: &str) -> String {
+    pub fn get_uds_path(&self, id: &str) -> String {
         format!("{}/{id}.qmp.sock", self.disk_image_location)
     }
 
-    pub(crate) fn get_uds_url(&self, id: &str) -> String {
+    pub fn get_uds_url(&self, id: &str) -> String {
         format!("unix:{}", self.get_uds_path(id))
     }
 }

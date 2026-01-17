@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::start::vm::qemu::QemuVm;
+use crate::execute::vm::qemu::QemuVm;
 use tokio::process::Command;
 
-pub(crate) struct BootDisk(pub String);
+pub struct BootDisk(pub String);
 
 impl QemuVm<'_> {
     async fn fetch_image(&self) -> crate::Result<String> {
         Ok(self.args.image.clone())
     }
 
-    pub(crate) async fn create_boot_disk(&self) -> crate::Result<BootDisk> {
+    pub async fn create_boot_disk(&self) -> crate::Result<BootDisk> {
         let path = self.fetch_image().await?;
         let disk = format!("{}/{}.qcow2", self.config.disk_image_location, self.args.id);
         let mut child = Command::new(&self.config.executables.qemu_img)

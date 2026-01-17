@@ -89,14 +89,23 @@ impl ShipReconciler {
                     api.replace_status(name, status_ship).await?;
                 }
 
-                debug!("Creating network resources");
-                let networks = self.cni.add(ship_id, network_classes).await?;
+                debug!("Planning network configurations for ship");
+                let networks = self.cni.create_network_configs(&ship_id, network_classes);
+
                 debug!("Setup virtual machine");
                 self.runtime_operator
-                    .create(ship_id, networks.as_slice())
+                    .create(
+                        ship_id.clone(),
+                        namespace,
+                        ship_spec,
+                        class,
+                        networks.iter().map(|n| n.vm.clone()).collect(),
+                    )
                     .await?;
+                debug!("Creating network resources");
+                self.cni.add(ship_id, networks).await?;
                 debug!("Starting runtime operator");
-                self.runtime_operator.start(ship, class, networks).await?;
+                self.runtime_operator.start(ship_id).await?;
                 Ok(())
             }
         }

@@ -30,7 +30,7 @@ impl Default for LocationConfig {
         Self {
             bin: "/opt/cni/bin".to_string(),
             config: "/etc/cni/net.d".to_string(),
-            netns: "/var/start/netns".to_string(),
+            netns: "/var/run/netns".to_string(),
         }
     }
 }

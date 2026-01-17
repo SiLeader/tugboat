@@ -14,6 +14,7 @@
 
 use crate::runtime::RuntimeConfig;
 use serde::Deserialize;
+use std::collections::HashSet;
 use tugboat_cni_operator::CniOperatorConfig;
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +39,8 @@ pub(crate) struct ApiserverConfig {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ImageConfig {
     pub cache_dir: String,
+    #[serde(default)]
+    pub http_hosts: HashSet<String>,
 }
 
 impl AgentConfig {

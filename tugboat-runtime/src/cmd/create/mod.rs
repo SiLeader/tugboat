@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod tap;
-
 use crate::config::load_config_or_panic;
-use crate::create::tap::setup_tap_redirect;
+use crate::execute::run;
+use crate::execute::vm::QemuVmConfig;
 use crate::pre::enter_to_network_namespace;
-use crate::start::QemuVmConfig;
+use crate::utils::{create_signal_fifo, wait_signal_using_fifo};
 use clap::Parser;
-use tugboat_vm_runtime_interface::create::VmCreateRequest;
+use tugboat_vm_runtime_interface::run::VmRunRequest;
 
 #[derive(Debug, Parser)]
 pub(crate) struct CreateArgs {
@@ -27,14 +26,13 @@ pub(crate) struct CreateArgs {
     config: String,
 }
 
-pub(crate) async fn create(vm: QemuVmConfig, args: CreateArgs) {
-    let config = load_config_or_panic::<VmCreateRequest>(args.config);
+pub(crate) async fn create(vm: QemuVmConfig, args: CreateArgs) -> Result<(), crate::Error> {
+    let config = load_config_or_panic::<VmRunRequest>(args.config);
+    enter_to_network_namespace(&config.id)?;
 
-    enter_to_network_namespace(&config.id).expect("Failed to enter network namespace");
-    for bridge in &config.bridges {
-        setup_tap_redirect(&vm, bridge)
-            .await
-            .expect("Failed to setup tap redirect");
-    }
-    todo!()
+    create_signal_fifo(&config.id)?;
+    wait_signal_using_fifo(&config.id)?;
+
+    run(vm, config).await?;
+    Ok(())
 }

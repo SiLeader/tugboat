@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::runtime::RuntimeConfig;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::inner::Runtime;
 use tugboat_resources::manifests::core::v1::ShipCondition;
 use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_vm_runtime_interface::operator::VmRuntimeOperator;
 use tugboat_vm_runtime_interface::status::{VmStatus, VmStatusResponse};
 
 pub(crate) struct RuntimeStatusChecker {
@@ -27,24 +27,10 @@ pub(crate) struct RuntimeStatusChecker {
 impl RuntimeStatusChecker {
     pub(crate) async fn check(
         &self,
-        config: &RuntimeConfig,
+        operator: &VmRuntimeOperator,
     ) -> Result<ShipCondition, RuntimeError> {
-        let output = config
-            .runtime_command()
-            .arg("status")
-            .arg(&self.id)
-            .output()
-            .await?;
-        if output.status.success() {
-            let status: VmStatusResponse = serde_json::from_slice(output.stdout.as_slice())?;
-            Ok(status_to_condition(status))
-        } else {
-            Err(RuntimeError::CommandFailed(
-                output.status,
-                String::from_utf8(output.stdout).unwrap_or_default(),
-                String::from_utf8(output.stderr).unwrap_or_default(),
-            ))
-        }
+        let status = operator.status(&self.id).await?;
+        Ok(status_to_condition(status))
     }
 }
 

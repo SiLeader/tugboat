@@ -20,3 +20,11 @@ license.workspace = true
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
+
+tokio = { workspace = true, optional = true, features = ["process", "rt", "io-util"] }
+thiserror = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[features]
+operator = ["tokio", "thiserror", "serde_json", "tracing"]

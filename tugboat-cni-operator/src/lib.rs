@@ -37,6 +37,11 @@ impl CniOperator {
         }
     }
 
+    pub async fn initialize(&self) -> Result<(), Error> {
+        tokio::fs::create_dir_all(&self.config_dir).await?;
+        Ok(())
+    }
+
     pub async fn add(
         &self,
         container_id: &str,

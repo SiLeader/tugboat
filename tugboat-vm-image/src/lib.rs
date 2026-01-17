@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod auth;
+mod compress;
 #[cfg(feature = "pull")]
 pub mod pull;
 #[cfg(feature = "push")]
@@ -72,10 +73,9 @@ pub enum Error {
     ParseTag(#[from] ParseError),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-
-    #[cfg(feature = "pull")]
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
     #[cfg(feature = "pull")]
     #[error("Cannot encode file location")]
     FileLocationEncode,

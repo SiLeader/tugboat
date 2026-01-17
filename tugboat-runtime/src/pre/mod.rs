@@ -18,10 +18,10 @@ use nix::sys::signal::{SigHandler, Signal, signal};
 use nix::unistd::{Gid, Uid, chdir, fork, setgid, setsid, setuid};
 use std::fs::File;
 use std::process::exit;
-use tugboat_vm_runtime_interface::start::VmExecUser;
+use tugboat_vm_runtime_interface::run::VmExecUser;
 
 pub(crate) fn enter_to_network_namespace(network_namespace: &str) -> Result<(), crate::Error> {
-    let netns_path = format!("/var/start/netns/{network_namespace}");
+    let netns_path = format!("/var/run/netns/{network_namespace}");
     let netns_file = File::open(netns_path)?;
     setns(netns_file, CloneFlags::CLONE_NEWNET)?;
 

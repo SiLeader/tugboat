@@ -13,11 +13,12 @@
 // limitations under the License.
 
 use crate::auth::load_auth_or_anonymous;
+use crate::compress::compress_gzip;
 use crate::{Arch, Error, Format, VmImageRegistry};
 use oci_distribution::Reference;
 use oci_distribution::client::{Config, ImageLayer};
 use serde::Serialize;
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Serialize)]
 struct TugboatImageMetadata {
@@ -34,6 +35,7 @@ impl VmImageRegistry {
         disk_data: Vec<u8>,
         insecure: Option<bool>,
     ) -> Result<(), Error> {
+        info!("Pushing image: {tag} ({} bytes)", disk_data.len());
         let metadata = TugboatImageMetadata {
             format: match format {
                 Format::Qcow2 => "qcow2".to_string(),
@@ -43,6 +45,13 @@ impl VmImageRegistry {
             },
         };
         let metadata = serde_json::to_vec(&metadata)?;
+        let original_size = disk_data.len();
+        let disk_data = compress_gzip(&disk_data)?;
+        debug!(
+            "Compressed disk data size: {} bytes ({}% compressed)",
+            disk_data.len(),
+            (original_size - disk_data.len()) / original_size * 100
+        );
 
         let layers = vec![
             ImageLayer {
@@ -58,7 +67,7 @@ impl VmImageRegistry {
         ];
 
         let reference: Reference = tag.parse()?;
-        let auth = load_auth_or_anonymous(&reference.registry());
+        let auth = load_auth_or_anonymous(reference.registry());
 
         let client = self.get_client(reference.registry(), insecure);
         debug!("Pushing image to {}", reference);

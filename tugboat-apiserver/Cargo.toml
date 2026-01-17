@@ -20,7 +20,7 @@ license.workspace = true
 
 [dependencies]
 tugboat-resource-store.workspace = true
-tugboat-resources = { workspace = true, features = ["schema", "validators"] }
+tugboat-resources = { workspace = true, features = ["schema"] }
 
 actix-web = { workspace = true, features = ["openssl"] }
 actix-web-lab.workspace = true

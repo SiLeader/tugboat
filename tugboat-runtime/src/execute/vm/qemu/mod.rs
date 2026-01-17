@@ -15,28 +15,28 @@
 mod spawner;
 mod volume_copy;
 
-use crate::start::vm::RunVm;
-use crate::start::vm::qemu::spawner::QemuVmConfigUefi;
-use crate::start::vm::qemu::volume_copy::BootDisk;
+use crate::execute::vm::RunVm;
+use crate::execute::vm::qemu::spawner::QemuVmConfigUefi;
+use crate::execute::vm::qemu::volume_copy::BootDisk;
 use async_trait::async_trait;
 pub use spawner::{QemuVmBuilder, QemuVmConfig};
 use std::fs::copy;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::debug;
-use tugboat_vm_runtime_interface::start::{VmCpuConfig, VmNetworkConfig, VmStartRequest};
+use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest};
 
 #[derive(Debug, Clone)]
 struct QemuVm<'a> {
     config: &'a QemuVmConfig,
-    args: VmStartRequest,
+    args: VmRunRequest,
 }
 
 #[derive(Debug, Clone)]
 struct SizeInBytes(u64);
 
 impl<'a> QemuVm<'a> {
-    fn new(config: &'a QemuVmConfig, args: VmStartRequest) -> Self {
+    fn new(config: &'a QemuVmConfig, args: VmRunRequest) -> Self {
         Self { config, args }
     }
 }

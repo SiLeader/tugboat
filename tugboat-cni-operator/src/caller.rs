@@ -39,7 +39,7 @@ impl CniCaller {
     ) -> Result<(), crate::error::Error> {
         let file = std::fs::File::open(config_file)?;
 
-        let mut child = Command::new(self.bin_path.join(cni_type))
+        let child = Command::new(self.bin_path.join(cni_type))
             .env("CNI_COMMAND", command)
             .env("CNI_CONTAINERID", id)
             .env("CNI_NETNS", self.net_ns_base_path.join(id))

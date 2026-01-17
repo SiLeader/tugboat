@@ -12,20 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use thiserror::Error;
+use crate::utils::start_signal_using_fifo;
+use clap::Parser;
 
-#[derive(Debug, Error)]
-pub(crate) enum RuntimeError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Missing field: {0}")]
-    MissingField(String),
-    #[error("Image error: {0}")]
-    Image(#[from] tugboat_vm_image::Error),
-    #[error("JSON Serialization error: {0}")]
-    Json(#[from] serde_json::Error),
-    #[error("Invalid memory size: {0}")]
-    MemorySize(String),
-    #[error("Runtime operator error: {0}")]
-    RuntimeOperator(#[from] tugboat_vm_runtime_interface::operator::Error),
+#[derive(Debug, Parser)]
+pub(crate) struct StartArgs {
+    #[arg(help = "The VM ID")]
+    id: String,
+}
+
+pub(crate) async fn start(args: StartArgs) -> Result<(), crate::Error> {
+    start_signal_using_fifo(&args.id)
 }

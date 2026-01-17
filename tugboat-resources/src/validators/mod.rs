@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod name;
-pub mod namespace;
+mod name;
+mod namespace;
+
+pub use name::*;
+pub use namespace::*;
 
 pub trait Validator<T> {
     fn validate(&self, value: &T) -> bool;

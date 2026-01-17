@@ -12,17 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::start::QemuVmConfig;
+use crate::cmd::start;
+use crate::execute::vm::QemuVmConfig;
 use clap::{Parser, Subcommand};
+use cmd::{create, run, status};
 use nix::errno::Errno;
 use serde::Deserialize;
 use thiserror::Error;
+use tracing::error;
 
+mod cmd;
 mod config;
-mod create;
+mod execute;
 mod pre;
-mod start;
-mod status;
+mod utils;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -51,9 +54,10 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 enum SubCommand {
-    Start(start::StartArgs),
+    Run(run::StartArgs),
     Status(status::StatusArgs),
     Create(create::CreateArgs),
+    Start(start::StartArgs),
 }
 
 #[derive(Deserialize)]
@@ -69,9 +73,13 @@ pub async fn run() {
         config
     };
 
-    match args.subcommand {
-        SubCommand::Start(run_args) => start::start(config.qemu, run_args).await,
+    if let Err(e) = match args.subcommand {
+        SubCommand::Run(run_args) => run::run(config.qemu, run_args).await,
         SubCommand::Status(status_args) => status::status(config.qemu, status_args).await,
         SubCommand::Create(create_args) => create::create(config.qemu, create_args).await,
+        SubCommand::Start(start_args) => start::start(start_args).await,
+    } {
+        error!("Runtime error: {e}");
+        todo!();
     }
 }

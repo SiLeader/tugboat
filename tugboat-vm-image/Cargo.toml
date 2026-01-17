@@ -32,6 +32,8 @@ regex.workspace = true
 
 tokio = { workspace = true, features = ["fs"] }
 
+flate2.workspace = true
+
 [features]
 push = []
 pull = []

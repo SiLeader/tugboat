@@ -37,8 +37,18 @@ pub async fn run() {
     let config = config::AgentConfig::load_or_panic(args.config);
 
     let client = TugboatClient::new(config.apiserver.url);
-    let runtime_operator = RuntimeOperator::new(config.runtime, config.image.cache_dir);
+    let runtime_operator = RuntimeOperator::new(
+        config.runtime,
+        config.image.cache_dir,
+        config.image.http_hosts,
+    );
     let cni_operator = tugboat_cni_operator::CniOperator::new(config.cni);
+
+    cni_operator
+        .initialize()
+        .await
+        .unwrap_or_else(|e| panic!("Failed to initialize CNI operator: {e}"));
+
     let reconciler = ShipReconciler::new(config.node.name, client, runtime_operator, cni_operator);
 
     reconciler.run().await;

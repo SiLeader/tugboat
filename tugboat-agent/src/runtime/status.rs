@@ -34,7 +34,7 @@ impl RuntimeOperator {
 
         let mut result = Vec::new();
         for ship in ships {
-            let status = ship.check(&self.config).await;
+            let status = ship.check(&self.operator).await;
             result.push(status.map(|s| ShipConditionWithId {
                 namespace: ship.namespace,
                 id: ship.id,

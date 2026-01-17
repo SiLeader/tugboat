@@ -32,4 +32,3 @@ prost-build.workspace = true
 
 [features]
 schema = ["utoipa"]
-validators = []

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::start::QemuVmConfig;
+use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use qapi::futures::QmpStreamTokio;
 use qapi::qmp::RunState;
@@ -51,7 +51,7 @@ impl FromQmp<RunState> for VmStatus {
     }
 }
 
-pub(crate) async fn status(vm: QemuVmConfig, args: StatusArgs) {
+pub(crate) async fn status(vm: QemuVmConfig, args: StatusArgs) -> Result<(), crate::Error> {
     let stream = QmpStreamTokio::open_uds(vm.get_uds_path(&args.id))
         .await
         .expect("Cannot open UDS");
@@ -87,4 +87,6 @@ pub(crate) async fn status(vm: QemuVmConfig, args: StatusArgs) {
         .to_string(),
     };
     serde_json::to_writer(std::io::stdout(), &status).expect("Cannot serialize status");
+
+    Ok(())
 }
