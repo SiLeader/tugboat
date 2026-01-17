@@ -33,9 +33,6 @@ message ShipClassSpec {
 message CpuSpec {
   string architecture = 1;
   uint64 cores = 2;
-  uint64 sockets = 3;
-  uint64 dies = 4;
-  uint64 threads_per_core = 5;
 }
 
 message MemorySpec {

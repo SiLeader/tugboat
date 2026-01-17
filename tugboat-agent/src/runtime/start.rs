@@ -61,9 +61,6 @@ impl RuntimeOperator {
             cpu: VmCpuConfig {
                 architecture: cpu.architecture,
                 cores: cpu.cores,
-                sockets: cpu.sockets,
-                dies: cpu.dies,
-                threads_per_core: cpu.threads_per_core,
             },
             memory: memory_size
                 .as_byte_length()

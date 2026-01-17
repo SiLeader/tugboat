@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
-pub(crate) struct BridgeCaller {
+pub(crate) struct CniCaller {
     bin_path: PathBuf,
     net_ns_base_path: PathBuf,
 }
 
-impl BridgeCaller {
+impl CniCaller {
     pub(crate) fn new(bin_path: impl AsRef<Path>, net_ns_base_path: impl AsRef<Path>) -> Self {
         Self {
             bin_path: bin_path.as_ref().to_path_buf(),
@@ -34,11 +34,12 @@ impl BridgeCaller {
         command: &str,
         id: &str,
         iface_name: &str,
+        cni_type: &str,
         config_file: impl AsRef<Path>,
     ) -> Result<(), crate::error::Error> {
         let file = std::fs::File::open(config_file)?;
 
-        let mut child = Command::new(self.bin_path.join("bridge"))
+        let mut child = Command::new(self.bin_path.join(cni_type))
             .env("CNI_COMMAND", command)
             .env("CNI_CONTAINERID", id)
             .env("CNI_NETNS", self.net_ns_base_path.join(id))
@@ -63,17 +64,21 @@ impl BridgeCaller {
         &self,
         id: &str,
         iface_name: &str,
+        cni_type: &str,
         config_file: impl AsRef<Path>,
     ) -> Result<(), crate::error::Error> {
-        self.call("ADD", id, iface_name, config_file).await
+        self.call("ADD", id, iface_name, cni_type, config_file)
+            .await
     }
 
     pub(crate) async fn del(
         &self,
         id: &str,
         iface_name: &str,
+        cni_type: &str,
         config_file: impl AsRef<Path>,
     ) -> Result<(), crate::error::Error> {
-        self.call("DEL", id, iface_name, config_file).await
+        self.call("DEL", id, iface_name, cni_type, config_file)
+            .await
     }
 }

@@ -38,9 +38,6 @@ pub struct VmExecUser {
 pub struct VmCpuConfig {
     pub architecture: String,
     pub cores: u64,
-    pub sockets: u64,
-    pub dies: u64,
-    pub threads_per_core: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

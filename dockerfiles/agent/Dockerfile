@@ -32,6 +32,6 @@ RUN apt-get update && apt-get install -y qemu-system qemu-utils && \
 
 COPY --from=builder /tugboat-agent /usr/bin/tugboat-agent
 COPY --from=builder /tugboat-runtime /usr/bin/tugboat-runtime
-COPY --from=cni-download /plugins/* /opt/cni/bin/*
+COPY --from=cni-download /plugins/ /opt/cni/bin/
 
 CMD ["/usr/bin/tugboat-agent"]

@@ -39,7 +39,7 @@ impl VmImageRegistry {
                 Format::Qcow2 => "qcow2".to_string(),
             },
             arch: match arch {
-                Arch::X86_64 => "x86_64".to_string(),
+                Arch::X64 => "x64".to_string(),
             },
         };
         let metadata = serde_json::to_vec(&metadata)?;

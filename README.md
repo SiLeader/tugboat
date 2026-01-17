@@ -82,7 +82,7 @@ metadata:
   name: lightweight
 spec:
   cpu:
-    architecture: x86_64
+    architecture: x64
     cores: 2
   memory:
     size: 4Gi

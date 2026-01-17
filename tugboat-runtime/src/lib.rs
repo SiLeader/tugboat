@@ -40,8 +40,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Args {
     #[arg(
         long,
-        help = "Path to the tugboat-inner config file",
-        default_value = "/etc/tugboat/inner/config.toml"
+        help = "Path to the tugboat-runtime config file",
+        default_value = "/etc/tugboat/runtime/config.toml"
     )]
     config: String,
 

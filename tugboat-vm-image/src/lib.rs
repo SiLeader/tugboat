@@ -56,7 +56,7 @@ impl VmImageRegistry {
 
 #[derive(Debug, Copy, Clone)]
 pub enum Arch {
-    X86_64,
+    X64,
 }
 
 #[derive(Debug, Copy, Clone)]

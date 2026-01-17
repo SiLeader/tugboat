@@ -15,7 +15,7 @@
 pub use crate::error::Error;
 use std::path::PathBuf;
 
-mod bridge;
+mod caller;
 mod conf;
 mod config;
 mod error;
@@ -25,14 +25,14 @@ pub use config::*;
 
 #[derive(Debug, Clone)]
 pub struct CniOperator {
-    bridge_caller: bridge::BridgeCaller,
+    caller: caller::CniCaller,
     config_dir: PathBuf,
 }
 
 impl CniOperator {
     pub fn new(config: CniOperatorConfig) -> Self {
         Self {
-            bridge_caller: bridge::BridgeCaller::new(&config.location.bin, &config.location.netns),
+            caller: caller::CniCaller::new(&config.location.bin, &config.location.netns),
             config_dir: config.location.config.into(),
         }
     }
@@ -41,12 +41,13 @@ impl CniOperator {
         &self,
         container_id: &str,
         iface_name: &str,
+        cni_type: &str,
         config: impl CniNetworkConfiguration,
     ) -> Result<(), Error> {
         let config_file = self.config_dir.join(config.file_name());
         config.serialize_to_file(std::fs::File::create(&config_file)?)?;
-        self.bridge_caller
-            .add(container_id, iface_name, config_file)
+        self.caller
+            .add(container_id, iface_name, cni_type, config_file)
             .await
     }
 
@@ -54,11 +55,12 @@ impl CniOperator {
         &self,
         container_id: &str,
         iface_name: &str,
+        cni_type: &str,
         config: impl CniNetworkConfiguration,
     ) -> Result<(), Error> {
         let config_file = self.config_dir.join(config.file_name());
-        self.bridge_caller
-            .del(container_id, iface_name, config_file)
+        self.caller
+            .del(container_id, iface_name, cni_type, config_file)
             .await
     }
 }

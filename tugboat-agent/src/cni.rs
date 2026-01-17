@@ -40,6 +40,7 @@ impl CniWrapper {
         ship_id: &str,
         network_classes: Vec<NetworkClassInfo>,
     ) -> Result<Vec<VmNetworkConfig>, tugboat_cni_operator::Error> {
+        self.add_loopback(ship_id).await?;
         let mut applied = Vec::new();
         for (idx, network_class) in network_classes.into_iter().enumerate() {
             let iface_name = format!("eth{}", idx);
@@ -47,6 +48,18 @@ impl CniWrapper {
             applied.push(net);
         }
         Ok(applied)
+    }
+
+    async fn add_loopback(&self, ship_id: &str) -> Result<(), tugboat_cni_operator::Error> {
+        let conf = CniNetConfList {
+            header: CniConfHeader {
+                cni_version: "1.0.0".to_string(),
+                name: "loopback".to_string(),
+            },
+            plugins: vec![CniConfContent::Loopback],
+        };
+        self.operator.add(ship_id, "lo", "loopback", conf).await?;
+        Ok(())
     }
 
     async fn add_single(
@@ -62,28 +75,27 @@ impl CniWrapper {
                 cni_version: "1.0.0".to_string(),
                 name: network_class.name,
             },
-            plugins: vec![
-                CniConfContent::Loopback,
-                CniConfContent::Bridge {
-                    bridge: bridge.clone(),
-                    is_gateway: network_class.spec.cluster_network.unwrap_or(true),
-                    ip_masquerade: network_class.spec.internet_access.unwrap_or(false),
-                    ipam: CniIpam {
-                        cni_type: "host-local".to_string(),
-                        subnet: network_class.spec.subnet,
-                        routes: network_class
-                            .spec
-                            .routes
-                            .into_iter()
-                            .map(|route| CniIpamRoute {
-                                destination: route.destination,
-                            })
-                            .collect(),
-                    },
+            plugins: vec![CniConfContent::Bridge {
+                bridge: bridge.clone(),
+                is_gateway: network_class.spec.cluster_network.unwrap_or(true),
+                ip_masquerade: network_class.spec.internet_access.unwrap_or(false),
+                ipam: CniIpam {
+                    cni_type: "host-local".to_string(),
+                    subnet: network_class.spec.subnet,
+                    routes: network_class
+                        .spec
+                        .routes
+                        .into_iter()
+                        .map(|route| CniIpamRoute {
+                            destination: route.destination,
+                        })
+                        .collect(),
                 },
-            ],
+            }],
         };
-        self.operator.add(ship_id, iface_name, conf).await?;
+        self.operator
+            .add(ship_id, iface_name, "bridge", conf)
+            .await?;
         Ok(VmNetworkConfig {
             iface_name: iface_name.to_string(),
             mac_address: mac,

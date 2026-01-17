@@ -18,7 +18,9 @@ fn default<T: Default + PartialEq>(t: &T) -> bool {
 
 pub mod core {
     pub mod v1 {
-        use crate::apply_resource;
+        use crate::validators::name::NameValidator;
+        use crate::validators::namespace::NamespaceProhibitedValidator;
+        use crate::{apply_resource, apply_validators};
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.core.v1.rs"));
 
@@ -42,6 +44,13 @@ pub mod core {
         apply_resource!(Node, "core", "v1", "nodes", "node", cluster);
         apply_resource!(Ship, "core", "v1", "ships", "ship", namespaced);
         apply_resource!(ShipClass, "core", "v1", "shipclasses", "shipclass", cluster);
+
+        apply_validators!(Namespace, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(NetworkClass, validators NameValidator);
+        apply_validators!(ClusterNetworkClass, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(Node, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(Ship, validators NameValidator);
+        apply_validators!(ShipClass, validators NameValidator, NamespaceProhibitedValidator);
     }
 }
 

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ObjectMetaResource;
+use crate::validators::Validator;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -19,9 +21,33 @@ pub struct NameValidator;
 
 static NAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$").unwrap());
+static GENERATE_NAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new("^[a-z0-9][-a-z0-9]*?$").unwrap());
+
+impl<T> Validator<T> for NameValidator
+where
+    T: ObjectMetaResource,
+{
+    fn validate(&self, value: &T) -> bool {
+        let Some(meta) = value.object_meta() else {
+            return false;
+        };
+        if let Some(name) = &meta.name {
+            self.validate_name(name)
+        } else if let Some(generate_name) = &meta.generate_name {
+            self.validate_generate_name(generate_name)
+        } else {
+            false
+        }
+    }
+}
 
 impl NameValidator {
-    pub fn validate_name(&self, name: &str) -> bool {
-        0 < name.len() && name.len() <= 253 && NAME_REGEX.is_match(name)
+    fn validate_name(&self, name: &str) -> bool {
+        !name.is_empty() && name.len() <= 253 && NAME_REGEX.is_match(name)
+    }
+
+    fn validate_generate_name(&self, name: &str) -> bool {
+        !name.is_empty() && name.len() <= (253 - 5) && GENERATE_NAME_REGEX.is_match(name)
     }
 }

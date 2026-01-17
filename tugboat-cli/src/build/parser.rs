@@ -40,7 +40,7 @@ impl FromStr for Imagefile {
         let s = MULTILINE_REGEX.replace_all(s.as_ref(), "\n");
 
         let mut image: &str = "";
-        let mut arch = Arch::X86_64;
+        let mut arch = Arch::X64;
         let mut format = Format::Qcow2;
         for line in s.lines() {
             if line.starts_with("FROM ") {
@@ -48,7 +48,7 @@ impl FromStr for Imagefile {
             } else if line.starts_with("ARCH ") {
                 let arch_str = line.trim_start_matches("ARCH ").trim();
                 arch = match arch_str {
-                    "x86_64" => Arch::X86_64,
+                    "x64" => Arch::X64,
                     _ => return Err(BuildError::InvalidArch(arch_str.to_string())),
                 };
             } else if line.starts_with("FORMAT ") {

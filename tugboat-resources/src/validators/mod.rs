@@ -13,3 +13,24 @@
 // limitations under the License.
 
 pub mod name;
+pub mod namespace;
+
+pub trait Validator<T> {
+    fn validate(&self, value: &T) -> bool;
+}
+
+pub trait Validatable {
+    fn validate(&self) -> bool;
+}
+
+#[macro_export]
+macro_rules! apply_validators {
+    ($ty:ident, validators $($validator:expr),+ $(,)?) => {
+        impl $crate::validators::Validatable for $ty {
+            fn validate(&self) -> bool {
+                $($crate::validators::Validator::validate(&$validator, self) &&)+
+                true
+            }
+        }
+    };
+}

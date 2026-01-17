@@ -14,7 +14,7 @@
 
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tugboat_client::{Api, WatchEvent};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
@@ -23,11 +23,15 @@ use tugboat_resources::manifests::meta::v1::Time;
 impl ShipReconciler {
     pub(super) async fn reconcile(&self, event: WatchEvent<Ship>) -> Result<(), ReconcileError> {
         match event {
-            WatchEvent::Modified(_ship) => {
-                todo!()
+            WatchEvent::Modified(ship) => {
+                // TODO modified
+                warn!("Modify Ship is not handled yet. (Ship: {ship:?})");
+                Ok(())
             }
-            WatchEvent::Deleted(_ship) => {
-                todo!()
+            WatchEvent::Deleted(ship) => {
+                // TODO deleted
+                warn!("Delete Ship is not handled yet. (Ship: {ship:?})");
+                Ok(())
             }
             WatchEvent::Added(ship) => {
                 info!("Starting reconciliation for ship");

@@ -80,12 +80,9 @@ trait ConditionalArgs: Sized {
 
 impl QemuArgs<VmCpuConfig> for Command {
     fn qemu_args(&mut self, value: &VmCpuConfig) -> &mut Self {
-        let smp = value.threads_per_core * value.cores * value.dies * value.sockets;
+        let smp = value.cores;
         if smp > 0 {
-            let smp_arg = format!(
-                "{smp},sockets={},dies={},cores={},threads={}",
-                value.sockets, value.dies, value.cores, value.threads_per_core
-            );
+            let smp_arg = format!("{smp},cores={}", value.cores,);
             self.args(["-smp", smp_arg.as_str()])
         } else {
             self
