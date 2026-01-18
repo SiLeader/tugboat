@@ -36,6 +36,8 @@ pub enum Error {
     Stdin,
     #[error("Failed to execute command: status: {0}, stdout: '{1}', stderr: '{2}'")]
     CommandFailed(ExitStatus, String, String),
+    #[error("Pid is missing")]
+    PidMissing,
 }
 
 impl VmRuntimeOperator {
@@ -76,8 +78,11 @@ impl VmRuntimeOperator {
         }
     }
 
-    pub async fn create(&self, args: VmRunRequest) -> Result<(), Error> {
-        handle_command_response(self.call("create", &args).await?).await
+    pub async fn create(&self, args: VmRunRequest) -> Result<u32, Error> {
+        let child = self.call("create", &args).await?;
+        let pid = child.id().ok_or(Error::PidMissing)?;
+        handle_command_response(child).await?;
+        Ok(pid)
     }
 
     pub async fn start(&self, id: &str) -> Result<(), Error> {

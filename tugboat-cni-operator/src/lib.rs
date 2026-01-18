@@ -19,6 +19,7 @@ mod caller;
 mod conf;
 mod config;
 mod error;
+mod link;
 
 pub use conf::*;
 pub use config::*;
@@ -27,6 +28,7 @@ pub use config::*;
 pub struct CniOperator {
     caller: caller::CniCaller,
     config_dir: PathBuf,
+    netns: String,
 }
 
 impl CniOperator {
@@ -34,6 +36,7 @@ impl CniOperator {
         Self {
             caller: caller::CniCaller::new(&config.location.bin, &config.location.netns),
             config_dir: config.location.config.into(),
+            netns: config.location.netns,
         }
     }
 

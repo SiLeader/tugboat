@@ -13,17 +13,15 @@
 // limitations under the License.
 
 use nix::libc::umask;
-use nix::sched::{CloneFlags, setns};
+use nix::sched::{CloneFlags, setns, unshare};
 use nix::sys::signal::{SigHandler, Signal, signal};
 use nix::unistd::{Gid, Uid, chdir, fork, setgid, setsid, setuid};
 use std::fs::File;
 use std::process::exit;
 use tugboat_vm_runtime_interface::run::VmExecUser;
 
-pub(crate) fn enter_to_network_namespace(network_namespace: &str) -> Result<(), crate::Error> {
-    let netns_path = format!("/var/run/netns/{network_namespace}");
-    let netns_file = File::open(netns_path)?;
-    setns(netns_file, CloneFlags::CLONE_NEWNET)?;
+pub(crate) fn create_and_enter_to_network_namespace() -> Result<(), crate::Error> {
+    unshare(CloneFlags::CLONE_NEWNET)?;
 
     Ok(())
 }

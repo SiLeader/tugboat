@@ -90,10 +90,11 @@ impl ShipReconciler {
                 }
 
                 debug!("Planning network configurations for ship");
-                let networks = self.cni.create_network_configs(&ship_id, network_classes);
+                let networks = self.cni.create_network_configs(ship_id, network_classes);
 
                 debug!("Setup virtual machine");
-                self.runtime_operator
+                let pid = self
+                    .runtime_operator
                     .create(
                         ship_id.clone(),
                         namespace,
@@ -103,7 +104,7 @@ impl ShipReconciler {
                     )
                     .await?;
                 debug!("Creating network resources");
-                self.cni.add(ship_id, networks).await?;
+                self.cni.add(ship_id, pid, networks).await?;
                 debug!("Starting runtime operator");
                 self.runtime_operator.start(ship_id).await?;
                 Ok(())

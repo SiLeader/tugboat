@@ -12,22 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::execute::vm::QemuVmConfig;
+use crate::{CniOperator, Error};
+use tokio::fs::symlink;
 
-use crate::config::load_config_or_panic;
-use crate::pre::create_and_enter_to_network_namespace;
-use clap::Parser;
-use tugboat_vm_runtime_interface::run::VmRunRequest;
-
-#[derive(Debug, Parser)]
-pub(crate) struct StartArgs {
-    #[arg(help = "Path to the VM config file")]
-    config: String,
-}
-
-pub(crate) async fn run(vm: QemuVmConfig, args: StartArgs) -> Result<(), crate::Error> {
-    let config = load_config_or_panic::<VmRunRequest>(args.config);
-    create_and_enter_to_network_namespace(&config.id)?;
-    crate::execute::run(vm, config).await?;
-    Ok(())
+impl CniOperator {
+    pub async fn create_netns_symlink(&self, pid: u32, ship_id: &str) -> Result<(), Error> {
+        let original = format!("/proc/{pid}/ns/net");
+        let link = format!("{}/{ship_id}", self.netns);
+        symlink(original, link).await?;
+        Ok(())
+    }
 }

@@ -77,8 +77,10 @@ impl CniWrapper {
     pub(crate) async fn add(
         &self,
         ship_id: &str,
+        pid: u32,
         config: Vec<PlannedNetworkConfig>,
     ) -> Result<Vec<VmNetworkConfig>, tugboat_cni_operator::Error> {
+        self.operator.create_netns_symlink(pid, ship_id).await?;
         self.add_loopback(ship_id).await?;
         let mut applied = Vec::new();
         for c in config {

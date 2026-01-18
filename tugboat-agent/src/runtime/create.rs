@@ -32,7 +32,7 @@ impl RuntimeOperator {
         ship_spec: &ShipSpec,
         ship_class: ShipClass,
         networks: Vec<VmNetworkConfig>,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<u32, RuntimeError> {
         let Some(ship_class_spec) = ship_class.spec else {
             return Err(RuntimeError::MissingField("v1.ShipClass.spec".to_string()));
         };
@@ -66,9 +66,9 @@ impl RuntimeOperator {
             networks,
             user: Default::default(),
         };
-        self.operator.create(vm_config).await?;
+        let pid = self.operator.create(vm_config).await?;
         let mut children = self.children.write().await;
         children.insert(ship_id.clone(), Runtime::new(namespace, ship_id));
-        Ok(())
+        Ok(pid)
     }
 }
