@@ -27,7 +27,7 @@ pub(crate) struct StartArgs {
 
 pub(crate) async fn run(vm: QemuVmConfig, args: StartArgs) -> Result<(), crate::Error> {
     let config = load_config_or_panic::<VmRunRequest>(args.config);
-    create_and_enter_to_network_namespace(&config.id)?;
+    create_and_enter_to_network_namespace()?;
     crate::execute::run(vm, config).await?;
     Ok(())
 }

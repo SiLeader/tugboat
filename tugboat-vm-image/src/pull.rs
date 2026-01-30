@@ -16,6 +16,7 @@ use crate::auth::load_auth_or_anonymous;
 use crate::compress::decompress_gzip;
 use crate::{Error, VmImageRegistry};
 use oci_distribution::Reference;
+use tracing::{debug, info};
 
 pub struct Image {
     pub location: String,
@@ -34,25 +35,27 @@ impl VmImageRegistry {
                 &auth,
                 vec![
                     "application/vnd.tugboat.disk.qcow2.v1+gzip",
-                    // "application/vnd.tugboat.metadata.v1+json",
+                    "application/vnd.tugboat.metadata.v1+json",
                 ],
             )
             .await?;
 
         for layer in data.layers {
             let filename = if layer.media_type.contains("qcow2") {
-                self.directory
-                    .join(layer.sha256_digest())
-                    .join("disk.qcow2")
+                let dir = self.directory.join(layer.sha256_digest());
+                tokio::fs::create_dir_all(&dir).await?;
+                dir.join("disk.qcow2")
             } else {
                 continue;
             };
+            debug!("Saving Qcow2 Disk layer to {filename:?}");
             let location = filename
                 .to_str()
                 .ok_or(Error::FileLocationEncode)?
                 .to_string();
             let data = decompress_gzip(layer.data.as_slice())?;
             tokio::fs::write(&filename, data).await?;
+            info!("Image '{image}' pull finished");
             return Ok(Image { location });
         }
         Err(Error::DiskImageMissing(image.to_string()))

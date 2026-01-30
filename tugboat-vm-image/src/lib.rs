@@ -45,7 +45,9 @@ impl VmImageRegistry {
 
     fn get_client(&self, registry: &str, insecure: Option<bool>) -> Client {
         Client::new(ClientConfig {
-            protocol: if insecure.unwrap_or(registry.starts_with("localhost")) {
+            protocol: if insecure.unwrap_or_else(|| {
+                registry.starts_with("localhost") || registry.starts_with("host.docker.internal")
+            }) {
                 ClientProtocol::Http
             } else {
                 ClientProtocol::Https

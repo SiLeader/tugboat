@@ -28,7 +28,7 @@ pub(crate) struct CreateArgs {
 
 pub(crate) async fn create(vm: QemuVmConfig, args: CreateArgs) -> Result<(), crate::Error> {
     let config = load_config_or_panic::<VmRunRequest>(args.config);
-    create_and_enter_to_network_namespace(&config.id)?;
+    create_and_enter_to_network_namespace()?;
 
     create_signal_fifo(&config.id)?;
     wait_signal_using_fifo(&config.id)?;
