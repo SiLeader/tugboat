@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use sha2::Digest;
+use tracing::{debug, info};
 use tugboat_cni_operator::{
     CniConfContent, CniConfHeader, CniIpam, CniIpamRoute, CniNetConfList, CniOperator,
 };
@@ -48,12 +49,18 @@ impl CniWrapper {
         ship_id: &str,
         network_classes: Vec<NetworkClassInfo>,
     ) -> Vec<PlannedNetworkConfig> {
+        debug!("Create network configuration plans for '{ship_id}'");
         let mut planned = Vec::new();
         for (idx, network_class) in network_classes.into_iter().enumerate() {
             let iface_name = format!("eth{}", idx);
             let plan = Self::plan_single(ship_id, iface_name, network_class);
             planned.push(plan);
         }
+        debug!("Network configuration plans: {planned:?}");
+        info!(
+            "{} network configuration plans for '{ship_id}' was created.",
+            planned.len()
+        );
         planned
     }
 
@@ -62,6 +69,9 @@ impl CniWrapper {
         iface_name: String,
         network_class: NetworkClassInfo,
     ) -> PlannedNetworkConfig {
+        debug!(
+            "Create network configuration plan: ship id = '{ship_id}' interface = '{iface_name}'"
+        );
         let bridge = create_bridge_name(&network_class.namespace, &network_class.name);
         let mac = mac_address(&network_class.namespace, &network_class.name, ship_id);
         PlannedNetworkConfig {
@@ -77,10 +87,8 @@ impl CniWrapper {
     pub(crate) async fn add(
         &self,
         ship_id: &str,
-        pid: u32,
         config: Vec<PlannedNetworkConfig>,
     ) -> Result<Vec<VmNetworkConfig>, tugboat_cni_operator::Error> {
-        self.operator.create_netns_symlink(pid, ship_id).await?;
         self.add_loopback(ship_id).await?;
         let mut applied = Vec::new();
         for c in config {

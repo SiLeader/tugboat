@@ -15,6 +15,7 @@
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::inner::Runtime;
+use tracing::{debug, info};
 use tugboat_resources::manifests::core::v1::{ShipClass, ShipSpec};
 use tugboat_resources::sized::SizedString;
 use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest};
@@ -46,6 +47,7 @@ impl RuntimeOperator {
                 "v1.ShipClass.spec.memory".to_string(),
             ));
         };
+        debug!("Pulling image '{}'", ship_spec.image);
         let image = self
             .registry
             .pull(&ship_spec.image, self.is_http_host(&ship_spec.image))
@@ -66,7 +68,9 @@ impl RuntimeOperator {
             networks,
             user: Default::default(),
         };
+        debug!("Creating VM: {:?}", vm_config);
         let pid = self.operator.create(vm_config).await?;
+        info!("Create VM '{ship_id}' called successfully",);
         let mut children = self.children.write().await;
         children.insert(ship_id.clone(), Runtime::new(namespace, ship_id));
         Ok(pid)

@@ -38,6 +38,13 @@ impl CniCaller {
         config_file: impl AsRef<Path>,
     ) -> Result<(), crate::error::Error> {
         let file = std::fs::File::open(config_file)?;
+        println!("===== BEGIN DUMP NETNS DIR =====");
+        if let Ok(rd) = self.net_ns_base_path.read_dir() {
+            for entry in rd.flatten() {
+                println!("Netns: {:?}", entry.path());
+            }
+        }
+        println!("===== END DUMP NETNS DIR =====");
 
         let child = Command::new(self.bin_path.join(cni_type))
             .env("CNI_COMMAND", command)

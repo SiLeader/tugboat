@@ -15,7 +15,7 @@
 use crate::execute::vm::QemuVmConfig;
 
 use crate::config::load_config_or_panic;
-use crate::pre::create_and_enter_to_network_namespace;
+use crate::pre::{create_and_enter_to_network_namespace, daemonize};
 use clap::Parser;
 use tugboat_vm_runtime_interface::run::VmRunRequest;
 
@@ -27,7 +27,8 @@ pub(crate) struct StartArgs {
 
 pub(crate) async fn run(vm: QemuVmConfig, args: StartArgs) -> Result<(), crate::Error> {
     let config = load_config_or_panic::<VmRunRequest>(args.config);
-    create_and_enter_to_network_namespace()?;
+    create_and_enter_to_network_namespace(&config.id)?;
+    daemonize();
     crate::execute::run(vm, config).await?;
     Ok(())
 }

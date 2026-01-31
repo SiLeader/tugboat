@@ -14,6 +14,7 @@
 
 use crate::execute::vm::qemu::QemuVm;
 use tokio::process::Command;
+use tracing::{debug, info};
 
 pub struct BootDisk(pub String);
 
@@ -23,12 +24,15 @@ impl QemuVm<'_> {
     }
 
     pub async fn create_boot_disk(&self) -> crate::Result<BootDisk> {
+        info!("Creating boot disk");
         let path = self.fetch_image().await?;
         let disk = format!("{}/{}.qcow2", self.config.disk_image_location, self.args.id);
+        debug!("Calling qemu-img create -f qcow2 -b {path} -F qcow2 {disk}");
         let mut child = Command::new(&self.config.executables.qemu_img)
             .args(["create", "-f", "qcow2", "-b", &path, "-F", "qcow2", &disk])
             .spawn()?;
         child.wait().await?;
+        debug!("qemu-img finished");
         Ok(BootDisk(disk))
     }
 }

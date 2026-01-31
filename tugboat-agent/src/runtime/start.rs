@@ -14,10 +14,13 @@
 
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
+use tracing::{debug, info};
 
 impl RuntimeOperator {
     pub(crate) async fn start(&self, id: &str) -> Result<(), RuntimeError> {
+        debug!("Calling start '{id}'");
         self.operator.start(id).await?;
+        info!("Start called successfully '{id}'");
         Ok(())
     }
 }

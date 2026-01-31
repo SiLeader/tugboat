@@ -23,7 +23,7 @@ pub use spawner::{QemuVmBuilder, QemuVmConfig};
 use std::fs::copy;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use tracing::debug;
+use tracing::{debug, info};
 use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest};
 
 #[derive(Debug, Clone)]
@@ -44,6 +44,8 @@ impl<'a> QemuVm<'a> {
 #[async_trait]
 impl RunVm for QemuVm<'_> {
     async fn run_vm(&self) -> crate::Result<()> {
+        info!("Starting QEMU VM");
+        debug!("QemuVm = {self:?}");
         let img = self.create_boot_disk().await?;
         let qmp_uds = self.config.get_uds_url(&self.args.id);
         let err = Command::new(&self.config.executables.qemu)

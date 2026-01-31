@@ -14,12 +14,12 @@
 
 pub use crate::error::Error;
 use std::path::PathBuf;
+use tracing::{debug, info};
 
 mod caller;
 mod conf;
 mod config;
 mod error;
-mod link;
 
 pub use conf::*;
 pub use config::*;
@@ -41,7 +41,11 @@ impl CniOperator {
     }
 
     pub async fn initialize(&self) -> Result<(), Error> {
+        info!("Initialize CNI operator.");
+        debug!("Creating config directory: {:?}", self.config_dir);
         tokio::fs::create_dir_all(&self.config_dir).await?;
+        debug!("Creating netns directory: {:?}", self.netns);
+        tokio::fs::create_dir_all(&self.netns).await?;
         Ok(())
     }
 

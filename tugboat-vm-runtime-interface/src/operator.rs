@@ -18,7 +18,7 @@ use serde::Serialize;
 use std::process::{ExitStatus, Stdio};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
-use tracing::error;
+use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
 pub struct VmRuntimeOperator {
@@ -56,6 +56,7 @@ impl VmRuntimeOperator {
         A: Serialize,
     {
         let vm_config = serde_json::to_string(args)?;
+        debug!("Calling VM Runtime: {op}({vm_config})");
         let mut child = self
             .run_command()
             .args([op, "-"])
@@ -63,6 +64,7 @@ impl VmRuntimeOperator {
             .spawn()?;
         match &mut child.stdin {
             Some(stdin) => {
+                debug!("Writing config to stdin: {vm_config}");
                 if let Err(e) = stdin.write_all(vm_config.as_bytes()).await {
                     error!("Cannot write config: {e}");
                     kill_impl(child).await?;
@@ -72,6 +74,7 @@ impl VmRuntimeOperator {
                 }
             }
             None => {
+                debug!("Stdin is not loaded");
                 kill_impl(child).await?;
                 Err(Error::Stdin)
             }
@@ -107,8 +110,10 @@ impl VmRuntimeOperator {
 }
 
 async fn kill_impl(mut child: Child) -> Result<(), Error> {
+    debug!("Killing child: pid: {}", child.id().unwrap_or_default());
     child.kill().await?;
     tokio::spawn(async move {
+        debug!("Waiting child: pid: {}", child.id().unwrap_or_default());
         if let Err(e) = child.wait().await {
             error!("Cannot wait child: {e}");
         }
