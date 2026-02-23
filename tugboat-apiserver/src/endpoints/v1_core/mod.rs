@@ -14,9 +14,15 @@
 
 use utoipa_actix_web::service_config::ServiceConfig;
 
+mod clusternetworkclass_create;
+mod clusternetworkclass_list;
+mod clusternetworkclass_read;
 mod namespace_create;
 mod namespace_list;
 mod namespace_read;
+mod networkclass_create;
+mod networkclass_list;
+mod networkclass_read;
 mod ship_create;
 mod ship_list;
 mod ship_read;
@@ -28,9 +34,16 @@ mod shipclass_read;
 
 pub(super) fn register_v1_core(service: &mut ServiceConfig) {
     service
+        .service(clusternetworkclass_create::handle_clusternetworkclass_create)
+        .service(clusternetworkclass_list::handle_clusternetworkclass_list)
+        .service(clusternetworkclass_read::handle_clusternetworkclass_read)
         .service(namespace_create::handle_namespace_create)
         .service(namespace_list::handle_namespace_list)
         .service(namespace_read::handle_namespace_read)
+        .service(networkclass_create::handle_networkclass_create)
+        .service(networkclass_list::handle_networkclass_list)
+        .service(networkclass_list::handle_networkclass_list_all)
+        .service(networkclass_read::handle_networkclass_read)
         .service(ship_create::handle_ship_create)
         .service(ship_list::handle_ship_list)
         .service(ship_list::handle_ship_list_all)
