@@ -15,9 +15,11 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tugboat_resources::StaticResource;
+use url::Url;
 
 mod api;
 mod error;
+mod reflector;
 mod response;
 mod watch;
 
@@ -66,6 +68,30 @@ impl TugboatClient {
         Self::parse_response_list(res).await
     }
 
+    async fn list_impl_with_params<T: StaticResource + DeserializeOwned>(
+        &self,
+        path: String,
+        params: &WatchParams,
+    ) -> Result<Vec<T>, Error> {
+        let url = Url::parse_with_params(
+            &path,
+            [
+                params
+                    .label_selector
+                    .as_ref()
+                    .map(|l| ("labelSelector", l.as_str())),
+                params
+                    .field_selector
+                    .as_ref()
+                    .map(|f| ("fieldSelector", f.as_str())),
+            ]
+            .into_iter()
+            .flatten(),
+        )?;
+        let res = self.client.get(url.as_str()).send().await?;
+        Self::parse_response_list(res).await
+    }
+
     async fn patch_impl<T: StaticResource + DeserializeOwned>(
         &self,
         path: String,
@@ -105,6 +131,14 @@ impl TugboatClient {
     ) -> Result<Vec<T>, Error> {
         let path = format!("{}/{}/{}", self.base_url, T::version(), T::plural());
         self.list_impl(path).await
+    }
+
+    pub(crate) async fn list_cluster_scoped_with_params<T: StaticResource + DeserializeOwned>(
+        &self,
+        params: &WatchParams,
+    ) -> Result<Vec<T>, Error> {
+        let path = format!("{}/{}/{}", self.base_url, T::version(), T::plural());
+        self.list_impl_with_params(path, params).await
     }
 
     pub(crate) async fn patch_status_cluster_scoped<
@@ -182,6 +216,20 @@ impl TugboatClient {
             T::plural()
         );
         self.list_impl(path).await
+    }
+
+    pub(crate) async fn list_namespaced_with_params<T: StaticResource + DeserializeOwned>(
+        &self,
+        namespace: &str,
+        params: &WatchParams,
+    ) -> Result<Vec<T>, Error> {
+        let path = format!(
+            "{}/{}/namespaces/{namespace}/{}",
+            self.base_url,
+            T::version(),
+            T::plural()
+        );
+        self.list_impl_with_params(path, params).await
     }
 
     pub(crate) async fn patch_status_namespaced<
