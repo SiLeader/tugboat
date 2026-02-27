@@ -48,16 +48,18 @@ impl RunVm for QemuVm<'_> {
         debug!("QemuVm = {self:?}");
         let img = self.create_boot_disk().await?;
         let qmp_uds = self.config.get_uds_url(&self.args.id);
+        let qmp_opt = format!("{qmp_uds},server=on,wait=off");
+        debug!("QEMU UDS = {qmp_uds}");
         let err = Command::new(&self.config.executables.qemu)
             .args(["-machine", "q35"])
             .args(["-nographic"])
-            .args(["-qmp", qmp_uds.as_str()])
+            .args(["-qmp", qmp_opt.as_str()])
             .args_if(self.config.kvm.enabled, &["-enable-kvm"])
             .qemu_args(&self.args.cpu)
             .qemu_args(&SizeInBytes(self.args.memory))
             .qemu_args(&self.args.networks)
             .qemu_args(&img)
-            .qemu_args_with_arg(&self.config.uefi, &self)
+            .qemu_args_with_arg_if(self.args.uefi.enabled, &self.config.uefi, &self)
             .debug_command()
             .exec();
         panic!("Cannot exec: {err}");
@@ -68,8 +70,8 @@ trait QemuArgs<T>: Sized {
     fn qemu_args(&mut self, value: &T) -> &mut Self;
 }
 
-trait QemuArgsWithArg<T, A>: Sized {
-    fn qemu_args_with_arg(&mut self, value: &T, arg: &A) -> &mut Self;
+trait QemuArgsWithArgIf<T, A>: Sized {
+    fn qemu_args_with_arg_if(&mut self, predicate: bool, value: &T, arg: &A) -> &mut Self;
 }
 
 trait DebugCommand: Sized {
@@ -122,13 +124,16 @@ impl QemuArgs<Vec<VmNetworkConfig>> for Command {
     }
 }
 
-impl QemuArgsWithArg<Option<QemuVmConfigUefi>, QemuVm<'_>> for Command {
-    fn qemu_args_with_arg(
+impl QemuArgsWithArgIf<Option<QemuVmConfigUefi>, QemuVm<'_>> for Command {
+    fn qemu_args_with_arg_if(
         &mut self,
+        predicate: bool,
         value: &Option<QemuVmConfigUefi>,
         this: &QemuVm<'_>,
     ) -> &mut Self {
-        if let Some(uefi) = value {
+        if let Some(uefi) = value
+            && predicate
+        {
             let code_opts = format!("if=pflash,format=raw,readonly=on,file={}", uefi.code_file);
             let vars_location = format!(
                 "{}/{}.uefi.vars",

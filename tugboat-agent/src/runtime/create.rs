@@ -18,7 +18,7 @@ use crate::runtime::inner::Runtime;
 use tracing::{debug, info};
 use tugboat_resources::manifests::core::v1::{ShipClass, ShipSpec};
 use tugboat_resources::sized::SizedString;
-use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest};
+use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest, VmUefiConfig};
 
 impl RuntimeOperator {
     fn is_http_host(&self, image: &str) -> Option<bool> {
@@ -67,6 +67,9 @@ impl RuntimeOperator {
                 .ok_or(RuntimeError::MemorySize(memory.size))?,
             networks,
             user: Default::default(),
+            uefi: VmUefiConfig {
+                enabled: ship_spec.uefi.map(|u| u.enabled).unwrap_or(false),
+            },
         };
         debug!("Creating VM: {:?}", vm_config);
         let pid = self.operator.create(vm_config).await?;
