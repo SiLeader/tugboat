@@ -113,7 +113,7 @@ where
         }
     }
 
-    pub async fn watch(
+    pub(crate) async fn watch_raw(
         &self,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {

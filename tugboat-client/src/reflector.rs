@@ -27,12 +27,12 @@ where
 {
     /// First lists existing resources (emitted as `WatchEvent::Added`),
     /// then streams subsequent watch events.
-    pub async fn reflector(
+    pub(crate) async fn reflector(
         &self,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
         let initial = self.list_with_params(params).await?;
-        let watch_stream = self.watch(params).await?;
+        let watch_stream = self.watch_raw(params).await?;
 
         Ok(stream! {
             for item in initial {
@@ -43,5 +43,12 @@ where
                 yield event;
             }
         })
+    }
+
+    pub async fn watch(
+        &self,
+        params: &WatchParams,
+    ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
+        self.reflector(params).await
     }
 }
