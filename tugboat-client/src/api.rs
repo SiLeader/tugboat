@@ -83,6 +83,16 @@ where
         }
     }
 
+    pub async fn list_with_params(&self, params: &WatchParams) -> Result<Vec<T>, Error> {
+        if let Some(namespace) = &self.namespace {
+            self.client
+                .list_namespaced_with_params(namespace, params)
+                .await
+        } else {
+            self.client.list_cluster_scoped_with_params(params).await
+        }
+    }
+
     pub async fn patch_status<P: Serialize>(&self, name: &str, patch: P) -> Result<T, Error> {
         if let Some(namespace) = &self.namespace {
             self.client
