@@ -43,6 +43,15 @@ impl TugboatClient {
 }
 
 impl TugboatClient {
+    fn api_prefix<T: StaticResource>(&self) -> String {
+        let group = T::group();
+        if group == "core" || group.is_empty() {
+            format!("{}/api/{}", self.base_url, T::version())
+        } else {
+            format!("{}/apis/{}/{}", self.base_url, group, T::version())
+        }
+    }
+
     async fn create_impl<T: StaticResource + Serialize + DeserializeOwned>(
         &self,
         path: String,
@@ -114,7 +123,7 @@ impl TugboatClient {
         &self,
         resource: T,
     ) -> Result<T, Error> {
-        let path = format!("{}/{}/{}", self.base_url, T::version(), T::plural());
+        let path = format!("{}/{}", self.api_prefix::<T>(), T::plural());
         self.create_impl(path, resource).await
     }
 
@@ -122,14 +131,14 @@ impl TugboatClient {
         &self,
         name: &str,
     ) -> Result<Option<T>, Error> {
-        let path = format!("{}/{}/{}/{name}", self.base_url, T::version(), T::plural());
+        let path = format!("{}/{}/{name}", self.api_prefix::<T>(), T::plural());
         self.get_impl(path).await
     }
 
     pub(crate) async fn list_cluster_scoped<T: StaticResource + DeserializeOwned>(
         &self,
     ) -> Result<Vec<T>, Error> {
-        let path = format!("{}/{}/{}", self.base_url, T::version(), T::plural());
+        let path = format!("{}/{}", self.api_prefix::<T>(), T::plural());
         self.list_impl(path).await
     }
 
@@ -137,7 +146,7 @@ impl TugboatClient {
         &self,
         params: &WatchParams,
     ) -> Result<Vec<T>, Error> {
-        let path = format!("{}/{}/{}", self.base_url, T::version(), T::plural());
+        let path = format!("{}/{}", self.api_prefix::<T>(), T::plural());
         self.list_impl_with_params(path, params).await
     }
 
@@ -149,12 +158,7 @@ impl TugboatClient {
         name: &str,
         patch: P,
     ) -> Result<T, Error> {
-        let path = format!(
-            "{}/{}/{}/{name}/status",
-            self.base_url,
-            T::version(),
-            T::plural()
-        );
+        let path = format!("{}/{}/{name}/status", self.api_prefix::<T>(), T::plural());
         self.patch_impl(path, patch).await
     }
 
@@ -166,12 +170,7 @@ impl TugboatClient {
         data: T,
     ) -> Result<T, Error> {
         self.put_impl(
-            format!(
-                "{}/{}/{}/{name}/status",
-                self.base_url,
-                T::version(),
-                T::plural()
-            ),
+            format!("{}/{}/{name}/status", self.api_prefix::<T>(), T::plural()),
             data,
         )
         .await
@@ -183,9 +182,8 @@ impl TugboatClient {
         resource: T,
     ) -> Result<T, Error> {
         let path = format!(
-            "{}/{}/namespaces/{namespace}/{}",
-            self.base_url,
-            T::version(),
+            "{}/namespaces/{namespace}/{}",
+            self.api_prefix::<T>(),
             T::plural()
         );
         self.create_impl(path, resource).await
@@ -197,9 +195,8 @@ impl TugboatClient {
         name: &str,
     ) -> Result<Option<T>, Error> {
         let path = format!(
-            "{}/{}/namespaces/{namespace}/{}/{name}",
-            self.base_url,
-            T::version(),
+            "{}/namespaces/{namespace}/{}/{name}",
+            self.api_prefix::<T>(),
             T::plural()
         );
         self.get_impl(path).await
@@ -210,9 +207,8 @@ impl TugboatClient {
         namespace: &str,
     ) -> Result<Vec<T>, Error> {
         let path = format!(
-            "{}/{}/namespaces/{namespace}/{}",
-            self.base_url,
-            T::version(),
+            "{}/namespaces/{namespace}/{}",
+            self.api_prefix::<T>(),
             T::plural()
         );
         self.list_impl(path).await
@@ -224,9 +220,8 @@ impl TugboatClient {
         params: &WatchParams,
     ) -> Result<Vec<T>, Error> {
         let path = format!(
-            "{}/{}/namespaces/{namespace}/{}",
-            self.base_url,
-            T::version(),
+            "{}/namespaces/{namespace}/{}",
+            self.api_prefix::<T>(),
             T::plural()
         );
         self.list_impl_with_params(path, params).await
@@ -242,9 +237,8 @@ impl TugboatClient {
         patch: P,
     ) -> Result<T, Error> {
         let path = format!(
-            "{}/{}/namespaces/{namespace}/{}/{name}/status",
-            self.base_url,
-            T::version(),
+            "{}/namespaces/{namespace}/{}/{name}/status",
+            self.api_prefix::<T>(),
             T::plural()
         );
         self.patch_impl(path, patch).await
@@ -260,9 +254,37 @@ impl TugboatClient {
     ) -> Result<T, Error> {
         self.put_impl(
             format!(
-                "{}/{}/namespaces/{namespace}/{}/{name}/status",
-                self.base_url,
-                T::version(),
+                "{}/namespaces/{namespace}/{}/{name}/status",
+                self.api_prefix::<T>(),
+                T::plural()
+            ),
+            data,
+        )
+        .await
+    }
+
+    pub(crate) async fn replace_cluster_scoped<T: StaticResource + Serialize + DeserializeOwned>(
+        &self,
+        name: &str,
+        data: T,
+    ) -> Result<T, Error> {
+        self.put_impl(
+            format!("{}/{}/{name}", self.api_prefix::<T>(), T::plural()),
+            data,
+        )
+        .await
+    }
+
+    pub(crate) async fn replace_namespaced<T: StaticResource + Serialize + DeserializeOwned>(
+        &self,
+        namespace: &str,
+        name: &str,
+        data: T,
+    ) -> Result<T, Error> {
+        self.put_impl(
+            format!(
+                "{}/namespaces/{namespace}/{}/{name}",
+                self.api_prefix::<T>(),
                 T::plural()
             ),
             data,

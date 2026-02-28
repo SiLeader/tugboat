@@ -113,18 +113,30 @@ where
         }
     }
 
+    pub async fn replace(&self, name: &str, data: T) -> Result<T, Error> {
+        if let Some(namespace) = &self.namespace {
+            self.client.replace_namespaced(namespace, name, data).await
+        } else {
+            self.client.replace_cluster_scoped(name, data).await
+        }
+    }
+
     pub(crate) async fn watch_raw(
         &self,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
+        let api_prefix = if T::group() == "core" || T::group().is_empty() {
+            format!("api/{}", T::version())
+        } else {
+            format!("apis/{}/{}", T::group(), T::version())
+        };
         let path = if let Some(namespace) = &self.namespace {
             format!(
-                "{}/namespaces/{namespace}/{}?watch=true",
-                T::version(),
+                "{api_prefix}/namespaces/{namespace}/{}?watch=true",
                 T::plural()
             )
         } else {
-            format!("{}/{}?watch=true", T::version(), T::plural())
+            format!("{api_prefix}/{}?watch=true", T::plural())
         };
         self.client.watch_impl(path, params).await
     }

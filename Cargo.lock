@@ -3365,6 +3365,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tugboat-scheduler"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tugboat-client",
+ "tugboat-resources",
+ "uuid",
+]
+
+[[package]]
 name = "tugboat-vm-image"
 version = "0.1.0"
 dependencies = [

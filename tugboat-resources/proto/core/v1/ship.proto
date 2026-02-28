@@ -33,6 +33,16 @@ message ShipSpec {
   optional string node_name = 3;
   repeated ShipNetworkClassRef network_class_ref = 4;
   optional ShipUefi uefi = 5;
+  repeated Toleration tolerations = 6;
+  optional string scheduler_name = 7;
+}
+
+message Toleration {
+  optional string key = 1;
+  string operator = 2;
+  optional string value = 3;
+  string effect = 4;
+  optional int64 toleration_seconds = 5;
 }
 
 message ShipNetworkClassRef {

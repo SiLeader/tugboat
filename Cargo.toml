@@ -24,6 +24,7 @@ members = [
     "tugboat-vm-image",
     "tugboat-vm-runtime-interface",
     "tugboat-cni-operator",
+    "tugboat-scheduler",
 ]
 resolver = "3"
 

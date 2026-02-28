@@ -29,6 +29,13 @@ message NodeSpec {
   NodeOvercommitSpec overcommit = 1;
   repeated string ips = 2;
   NodeResource resource = 3;
+  repeated Taint taints = 4;
+}
+
+message Taint {
+  string key = 1;
+  string value = 2;
+  string effect = 3;
 }
 
 message NodeOvercommitSpec {

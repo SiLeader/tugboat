@@ -1,0 +1,67 @@
+// Copyright 2025- SiLeader (Cerussite).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use clap::Parser;
+use tugboat_client::TugboatClient;
+
+mod cache;
+mod config;
+pub mod framework;
+mod leader_election;
+pub mod plugins;
+mod scheduler;
+
+#[derive(Debug, Parser)]
+struct Args {
+    #[arg(
+        long,
+        help = "Path to the tugboat-scheduler config file",
+        default_value = "/etc/tugboat/scheduler/config.toml"
+    )]
+    config: String,
+}
+
+pub async fn run() {
+    let args = Args::parse();
+    let config = config::SchedulerConfig::load_or_panic(args.config);
+
+    let client = TugboatClient::new(&config.apiserver.url);
+
+    let mut fw = framework::Framework::new();
+    for name in &config.scheduler.plugins.filter {
+        if let Some(plugin) = plugins::create_filter_plugin(name) {
+            fw.add_filter_plugin(plugin);
+        } else {
+            tracing::warn!("Unknown filter plugin: {name}");
+        }
+    }
+    for name in &config.scheduler.plugins.score {
+        if let Some(plugin) = plugins::create_score_plugin(name) {
+            fw.add_score_plugin(plugin);
+        } else {
+            tracing::warn!("Unknown score plugin: {name}");
+        }
+    }
+
+    let leader_elector = leader_election::LeaderElector::new(
+        client.clone(),
+        config.scheduler.name.clone(),
+        config.scheduler.lease_duration_seconds,
+        config.scheduler.renew_interval_seconds,
+    );
+
+    let scheduler = scheduler::Scheduler::new(client, fw, leader_elector, config.scheduler);
+
+    scheduler.run().await;
+}

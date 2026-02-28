@@ -12,18 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use utoipa_actix_web::service_config::ServiceConfig;
+use tracing_subscriber::EnvFilter;
 
-mod lease_create;
-mod lease_list;
-mod lease_read;
-mod lease_replace;
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
-pub(super) fn register_v1_coordination(service: &mut ServiceConfig) {
-    service
-        .service(lease_create::handle_lease_create)
-        .service(lease_list::handle_lease_list)
-        .service(lease_list::handle_lease_list_all)
-        .service(lease_read::handle_lease_read)
-        .service(lease_replace::handle_lease_replace);
+    tugboat_scheduler::run().await;
 }

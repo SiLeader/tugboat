@@ -1,0 +1,158 @@
+// Copyright 2025- SiLeader (Cerussite).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
+
+/// Context shared across plugin invocations for a single scheduling cycle.
+pub struct SchedulingContext {
+    /// The Ship being scheduled.
+    pub ship: Ship,
+    /// The ShipClass referenced by the Ship.
+    pub ship_class: ShipClass,
+    /// All Ships currently in the cluster (for resource usage calculation).
+    pub all_ships: Vec<Ship>,
+    /// All ShipClasses (for resolving resource requirements of scheduled ships).
+    pub all_ship_classes: Vec<ShipClass>,
+}
+
+impl SchedulingContext {
+    /// Calculate the total CPU and memory used by Ships assigned to a given node.
+    /// Returns (cpu_used, memory_used_bytes).
+    pub fn node_resource_usage(&self, node_name: &str) -> (u64, u64) {
+        let mut cpu_used: u64 = 0;
+        let mut memory_used: u64 = 0;
+
+        for ship in &self.all_ships {
+            let assigned_node = ship.spec.as_ref().and_then(|s| s.node_name.as_deref());
+            if assigned_node != Some(node_name) {
+                continue;
+            }
+
+            let class_name = ship
+                .spec
+                .as_ref()
+                .map(|s| s.ship_class.as_str())
+                .unwrap_or("");
+            if let Some(sc) = self.find_ship_class(class_name)
+                && let Some(spec) = sc.spec.as_ref()
+            {
+                if let Some(cpu) = spec.cpu.as_ref() {
+                    cpu_used += cpu.cores;
+                }
+                if let Some(mem) = spec.memory.as_ref() {
+                    memory_used += parse_memory_size(&mem.size);
+                }
+            }
+        }
+
+        (cpu_used, memory_used)
+    }
+
+    fn find_ship_class(&self, name: &str) -> Option<&ShipClass> {
+        self.all_ship_classes
+            .iter()
+            .find(|sc| sc.object_meta.as_ref().and_then(|m| m.name.as_deref()) == Some(name))
+    }
+
+    /// Get CPU and memory requested by the Ship being scheduled.
+    /// Returns (cpu_cores, memory_bytes).
+    pub fn requested_resources(&self) -> (u64, u64) {
+        let spec = self.ship_class.spec.as_ref();
+        let cpu = spec
+            .and_then(|s| s.cpu.as_ref())
+            .map(|c| c.cores)
+            .unwrap_or(0);
+        let memory = spec
+            .and_then(|s| s.memory.as_ref())
+            .map(|m| parse_memory_size(&m.size))
+            .unwrap_or(0);
+        (cpu, memory)
+    }
+}
+
+/// Parse a memory size string (e.g., "1Gi", "512Mi", "2G", "1024M", "1073741824") into bytes.
+pub fn parse_memory_size(s: &str) -> u64 {
+    let s = s.trim();
+    if s.is_empty() {
+        return 0;
+    }
+
+    if let Ok(bytes) = s.parse::<u64>() {
+        return bytes;
+    }
+
+    let (num_str, suffix) = if let Some(n) = s.strip_suffix("Gi") {
+        (n, "Gi")
+    } else if let Some(n) = s.strip_suffix("Mi") {
+        (n, "Mi")
+    } else if let Some(n) = s.strip_suffix("Ki") {
+        (n, "Ki")
+    } else if let Some(n) = s.strip_suffix("Ti") {
+        (n, "Ti")
+    } else if let Some(n) = s.strip_suffix('G') {
+        (n, "G")
+    } else if let Some(n) = s.strip_suffix('M') {
+        (n, "M")
+    } else if let Some(n) = s.strip_suffix('K') {
+        (n, "K")
+    } else if let Some(n) = s.strip_suffix('T') {
+        (n, "T")
+    } else {
+        return 0;
+    };
+
+    let num: f64 = match num_str.parse() {
+        Ok(n) => n,
+        Err(_) => return 0,
+    };
+
+    let multiplier: u64 = match suffix {
+        "Ki" => 1024,
+        "Mi" => 1024 * 1024,
+        "Gi" => 1024 * 1024 * 1024,
+        "Ti" => 1024 * 1024 * 1024 * 1024,
+        "K" => 1000,
+        "M" => 1000 * 1000,
+        "G" => 1000 * 1000 * 1000,
+        "T" => 1000 * 1000 * 1000 * 1000,
+        _ => return 0,
+    };
+
+    (num * multiplier as f64) as u64
+}
+
+pub enum FilterResult {
+    Accept,
+    Reject(String),
+}
+
+pub enum ScoreResult {
+    Score(i64),
+    Skip,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_memory_size() {
+        assert_eq!(parse_memory_size("1Gi"), 1024 * 1024 * 1024);
+        assert_eq!(parse_memory_size("512Mi"), 512 * 1024 * 1024);
+        assert_eq!(parse_memory_size("1G"), 1_000_000_000);
+        assert_eq!(parse_memory_size("1024"), 1024);
+        assert_eq!(parse_memory_size(""), 0);
+        assert_eq!(parse_memory_size("2Ti"), 2 * 1024 * 1024 * 1024 * 1024);
+    }
+}
