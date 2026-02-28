@@ -47,8 +47,20 @@ pub(super) async fn handle_lease_replace(
     let current = current.apply_revision();
     let replacement = replacement.into_inner();
 
+    // Use the client's resource_version for optimistic concurrency control.
+    // The store's compare-and-swap will reject the update with 409 Conflict
+    // if the resource has been modified since the client last read it.
+    let mut replaced_meta = current.object_meta.clone().unwrap_or_default();
+    if let Some(client_rv) = replacement
+        .object_meta
+        .as_ref()
+        .and_then(|m| m.resource_version.clone())
+    {
+        replaced_meta.resource_version = Some(client_rv);
+    }
+
     let replaced = Lease {
-        object_meta: current.object_meta.clone(),
+        object_meta: Some(replaced_meta),
         type_meta: current.type_meta.clone(),
         spec: replacement.spec,
     };

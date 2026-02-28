@@ -48,10 +48,10 @@ impl SchedulingContext {
                 && let Some(spec) = sc.spec.as_ref()
             {
                 if let Some(cpu) = spec.cpu.as_ref() {
-                    cpu_used += cpu.cores;
+                    cpu_used = cpu_used.saturating_add(cpu.cores);
                 }
                 if let Some(mem) = spec.memory.as_ref() {
-                    memory_used += parse_memory_size(&mem.size);
+                    memory_used = memory_used.saturating_add(parse_memory_size(&mem.size));
                 }
             }
         }
@@ -129,7 +129,11 @@ pub fn parse_memory_size(s: &str) -> u64 {
         _ => return 0,
     };
 
-    (num * multiplier as f64) as u64
+    let result = num * multiplier as f64;
+    if result >= u64::MAX as f64 {
+        return u64::MAX;
+    }
+    result as u64
 }
 
 pub enum FilterResult {

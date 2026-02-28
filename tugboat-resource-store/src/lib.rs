@@ -48,7 +48,10 @@ impl<T: ObjectMetaResource> ContentData<T> {
                     ..Default::default()
                 });
             }
-            Some(meta) => meta.generation = Some(rev),
+            Some(meta) => {
+                meta.generation = Some(rev);
+                meta.resource_version = Some(rev.to_string());
+            }
         });
         self.data
     }
