@@ -22,7 +22,7 @@ use actix_web::{HttpResponse, get};
 use tugboat_resources::manifests::core::v1::Ship;
 
 #[utoipa::path()]
-#[get("/v1/namespaces/{namespace}/ships")]
+#[get("/api/v1/namespaces/{namespace}/ships")]
 pub(super) async fn handle_ship_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
@@ -34,7 +34,7 @@ pub(super) async fn handle_ship_list(
 }
 
 #[utoipa::path()]
-#[get("/v1/ships")]
+#[get("/api/v1/ships")]
 pub(super) async fn handle_ship_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,

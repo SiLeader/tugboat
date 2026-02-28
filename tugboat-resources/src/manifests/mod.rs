@@ -53,6 +53,19 @@ pub mod core {
     }
 }
 
+pub mod coordination {
+    pub mod v1 {
+        use crate::validators::NameValidator;
+        use crate::{apply_resource, apply_validators};
+
+        include!(concat!(env!("OUT_DIR"), "/tugboat.coordination.v1.rs"));
+
+        apply_resource!(Lease, "coordination", "v1", "leases", "lease", namespaced);
+
+        apply_validators!(Lease, validators NameValidator);
+    }
+}
+
 pub mod meta {
     pub mod v1 {
         include!(concat!(env!("OUT_DIR"), "/tugboat.meta.v1.rs"));

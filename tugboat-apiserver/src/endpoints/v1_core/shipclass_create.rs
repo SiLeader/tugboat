@@ -21,7 +21,7 @@ use tugboat_resources::Resource;
 use tugboat_resources::manifests::core::v1::ShipClass;
 
 #[utoipa::path()]
-#[post("/v1/shipclasses")]
+#[post("/api/v1/shipclasses")]
 pub(super) async fn handle_shipclass_create(
     json: Json<ShipClass>,
     operator: Data<ApiOperator>,

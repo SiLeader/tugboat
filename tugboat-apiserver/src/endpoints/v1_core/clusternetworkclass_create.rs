@@ -21,7 +21,7 @@ use tugboat_resources::Resource;
 use tugboat_resources::manifests::core::v1::ClusterNetworkClass;
 
 #[utoipa::path()]
-#[post("/v1/clusternetworkclasses")]
+#[post("/api/v1/clusternetworkclasses")]
 pub(super) async fn handle_clusternetworkclass_create(
     json: Json<ClusterNetworkClass>,
     operator: Data<ApiOperator>,

@@ -22,7 +22,7 @@ use actix_web::{HttpResponse, get};
 use tugboat_resources::manifests::core::v1::ShipClass;
 
 #[utoipa::path()]
-#[get("/v1/shipclasses")]
+#[get("/api/v1/shipclasses")]
 pub(super) async fn handle_shipclass_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,

@@ -27,7 +27,7 @@ pub(super) struct ShipReadPathParams {
 }
 
 #[utoipa::path()]
-#[get("/v1/namespaces/{namespace}/ships/{name}")]
+#[get("/api/v1/namespaces/{namespace}/ships/{name}")]
 pub(super) async fn handle_ship_read(
     path: Path<ShipReadPathParams>,
     operator: Data<ApiOperator>,

@@ -29,7 +29,6 @@ pub(crate) struct EtcdConfig {
 #[derive(serde::Deserialize)]
 pub(crate) struct HttpConfig {
     listen: String,
-    mount: String,
     tls: Option<TlsConfig>,
 }
 
@@ -43,12 +42,7 @@ pub struct TlsConfig {
 impl crate::ApiServer {
     pub async fn from_config(value: ApiServerConfig) -> Self {
         let operator = ApiOperator::new(ResourceStore::new(value.etcd.endpoints.as_slice()).await);
-        Self::new(
-            value.http.listen,
-            value.http.mount,
-            operator,
-            value.http.tls,
-        )
+        Self::new(value.http.listen, operator, value.http.tls)
     }
 }
 

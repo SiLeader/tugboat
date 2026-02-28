@@ -16,6 +16,7 @@ mod protobuf;
 
 use crate::error::Error;
 use crate::serializer::protobuf::ProtobufSerializer;
+use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, Namespace, NetworkClass, Node, Ship, ShipClass,
 };
@@ -65,6 +66,7 @@ macro_rules! protobuf_serializable {
 }
 
 protobuf_serializable!(ClusterNetworkClass);
+protobuf_serializable!(Lease);
 protobuf_serializable!(Namespace);
 protobuf_serializable!(NetworkClass);
 protobuf_serializable!(Node);

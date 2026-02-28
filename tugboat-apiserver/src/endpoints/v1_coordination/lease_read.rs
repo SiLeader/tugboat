@@ -17,27 +17,32 @@ use crate::operator::ApiOperator;
 use actix_web::get;
 use actix_web::web::{Data, Path};
 use serde::Deserialize;
-use tugboat_resources::manifests::core::v1::ClusterNetworkClass;
+use tugboat_resources::manifests::coordination::v1::Lease;
 use utoipa::ToSchema;
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct ReadParams {
+pub(super) struct LeaseReadPathParams {
+    namespace: String,
     name: String,
 }
 
 #[utoipa::path()]
-#[get("/api/v1/clusternetworkclasses/{name}")]
-pub(super) async fn handle_clusternetworkclass_read(
-    path: Path<ReadParams>,
+#[get("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
+pub(super) async fn handle_lease_read(
+    path: Path<LeaseReadPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<ClusterNetworkClass>, StatusResponse> {
-    let resource = operator.store.get(None, &path.name).await?;
+) -> Result<ReadResponse<Lease>, StatusResponse> {
+    let path = path.into_inner();
+    let resource = operator
+        .store
+        .get(Some(path.namespace.clone()), &path.name)
+        .await?;
 
     match resource {
         Some(data) => Ok(ReadResponse::new(data.apply_revision())),
         None => Err(StatusResponse::not_found(
-            "ClusterNetworkClass not found",
-            Some(serde_json::json!({ "name": path.name })),
+            "Lease not found",
+            Some(serde_json::json!({ "namespace": path.namespace, "name": path.name })),
         )),
     }
 }

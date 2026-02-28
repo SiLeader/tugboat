@@ -26,7 +26,7 @@ pub(super) struct ReadParams {
 }
 
 #[utoipa::path()]
-#[get("/v1/namespaces/{name}")]
+#[get("/api/v1/namespaces/{name}")]
 pub(super) async fn handle_namespace_read(
     path: Path<ReadParams>,
     operator: Data<ApiOperator>,

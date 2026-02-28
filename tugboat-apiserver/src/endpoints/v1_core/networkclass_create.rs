@@ -22,7 +22,7 @@ use tugboat_resources::Resource;
 use tugboat_resources::manifests::core::v1::NetworkClass;
 
 #[utoipa::path()]
-#[post("/v1/namespaces/{namespace}/networkclasses")]
+#[post("/api/v1/namespaces/{namespace}/networkclasses")]
 pub(super) async fn handle_networkclass_create(
     path: Path<NamespacedPathParams>,
     json: Json<NetworkClass>,
@@ -33,5 +33,10 @@ pub(super) async fn handle_networkclass_create(
     let object_meta = extract_object_meta!(networkclass);
     let object_meta = operator.apply_namespace(object_meta, path.into_inner().namespace);
 
-    create_object!(operator, object_meta, networkclass, NetworkClass::type_meta())
+    create_object!(
+        operator,
+        object_meta,
+        networkclass,
+        NetworkClass::type_meta()
+    )
 }

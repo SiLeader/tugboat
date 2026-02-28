@@ -22,7 +22,7 @@ use actix_web::{HttpResponse, get};
 use tugboat_resources::manifests::core::v1::NetworkClass;
 
 #[utoipa::path()]
-#[get("/v1/namespaces/{namespace}/networkclasses")]
+#[get("/api/v1/namespaces/{namespace}/networkclasses")]
 pub(super) async fn handle_networkclass_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
@@ -34,7 +34,7 @@ pub(super) async fn handle_networkclass_list(
 }
 
 #[utoipa::path()]
-#[get("/v1/networkclasses")]
+#[get("/api/v1/networkclasses")]
 pub(super) async fn handle_networkclass_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
@@ -61,10 +61,7 @@ async fn handle_networkclass_list_impl(
     } else {
         let field_selector = query.to_field_selector()?;
         let label_selector = query.to_label_selector()?;
-        let resources = operator
-            .store
-            .list::<NetworkClass>(namespace, None)
-            .await?;
+        let resources = operator.store.list::<NetworkClass>(namespace, None).await?;
         Ok(ResourceList::from_serializable(
             resources
                 .into_iter()

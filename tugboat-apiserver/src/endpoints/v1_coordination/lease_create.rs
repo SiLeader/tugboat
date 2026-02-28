@@ -19,19 +19,19 @@ use crate::{create_object, extract_object_meta};
 use actix_web::post;
 use actix_web::web::{Data, Json, Path};
 use tugboat_resources::Resource;
-use tugboat_resources::manifests::core::v1::Ship;
+use tugboat_resources::manifests::coordination::v1::Lease;
 
 #[utoipa::path()]
-#[post("/api/v1/namespaces/{namespace}/ships")]
-pub(super) async fn handle_ship_create(
+#[post("/apis/coordination/v1/namespaces/{namespace}/leases")]
+pub(super) async fn handle_lease_create(
     path: Path<NamespacedPathParams>,
-    json: Json<Ship>,
+    json: Json<Lease>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, StatusResponse> {
-    let ship = json.into_inner();
+) -> Result<ModifyResponse<Lease>, StatusResponse> {
+    let lease = json.into_inner();
 
-    let object_meta = extract_object_meta!(ship);
+    let object_meta = extract_object_meta!(lease);
     let object_meta = operator.apply_namespace(object_meta, path.into_inner().namespace);
 
-    create_object!(operator, object_meta, ship, Ship::type_meta())
+    create_object!(operator, object_meta, lease, Lease::type_meta())
 }

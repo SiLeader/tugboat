@@ -13,37 +13,57 @@
 // limitations under the License.
 
 use crate::data::{ResourceList, StatusResponse};
-use crate::endpoints::ListQuery;
 use crate::endpoints::selector::FilterBySelector;
 use crate::endpoints::watch_utils::watch;
+use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
-use actix_web::web::{Data, Query};
+use actix_web::web::{Data, Path, Query};
 use actix_web::{HttpResponse, get};
-use tugboat_resources::manifests::core::v1::Namespace;
+use tugboat_resources::manifests::coordination::v1::Lease;
 
 #[utoipa::path()]
-#[get("/api/v1/namespaces")]
-pub(super) async fn handle_namespace_list(
+#[get("/apis/coordination/v1/namespaces/{namespace}/leases")]
+pub(super) async fn handle_lease_list(
+    path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
 ) -> Result<HttpResponse, StatusResponse> {
     let query = query.into_inner();
+    let path = path.into_inner();
+    handle_lease_list_impl(&operator, query, Some(path.namespace)).await
+}
+
+#[utoipa::path()]
+#[get("/apis/coordination/v1/leases")]
+pub(super) async fn handle_lease_list_all(
+    query: Query<ListQuery>,
+    operator: Data<ApiOperator>,
+) -> Result<HttpResponse, StatusResponse> {
+    let query = query.into_inner();
+    handle_lease_list_impl(&operator, query, None).await
+}
+
+async fn handle_lease_list_impl(
+    operator: &ApiOperator,
+    query: ListQuery,
+    namespace: Option<String>,
+) -> Result<HttpResponse, StatusResponse> {
     if let Some(opts) = query.watch {
-        watch::<Namespace>(
+        watch::<Lease>(
             &operator,
             opts,
             query.to_field_selector()?,
             query.to_label_selector()?,
             query.resource_version,
-            None,
+            namespace,
         )
         .await
     } else {
         let field_selector = query.to_field_selector()?;
         let label_selector = query.to_label_selector()?;
-        let namespaces = operator.store.list::<Namespace>(None, None).await?;
+        let resources = operator.store.list::<Lease>(namespace, None).await?;
         Ok(ResourceList::from_serializable(
-            namespaces
+            resources
                 .into_iter()
                 .map(|d| d.apply_revision())
                 .filter_by_selector(field_selector, label_selector),

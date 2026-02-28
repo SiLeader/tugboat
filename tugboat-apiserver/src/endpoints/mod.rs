@@ -14,18 +14,27 @@
 
 use crate::data::StatusResponse;
 use crate::endpoints::selector::Selector;
+use crate::endpoints::v1_coordination::register_v1_coordination;
 use crate::endpoints::v1_core::register_v1_core;
 use serde::Deserialize;
 use utoipa::ToSchema;
 use utoipa_actix_web::service_config::ServiceConfig;
 
+mod discovery;
 mod selector;
 mod utils;
+mod v1_coordination;
 mod v1_core;
 mod watch_utils;
 
 pub(super) fn register_endpoints(config: &mut ServiceConfig) {
     register_v1_core(config);
+    register_v1_coordination(config);
+    config
+        .service(discovery::handle_api_versions)
+        .service(discovery::handle_api_v1_resources)
+        .service(discovery::handle_api_groups)
+        .service(discovery::handle_api_group_version_resources);
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -52,7 +61,7 @@ struct ListQuery {
 impl ListQuery {
     fn to_field_selector(&self) -> Result<Option<Vec<Selector>>, StatusResponse> {
         if let Some(field_selector) = &self.field_selector {
-            Selector::try_parse(&field_selector).map(Some)
+            Selector::try_parse(field_selector).map(Some)
         } else {
             Ok(None)
         }
@@ -60,7 +69,7 @@ impl ListQuery {
 
     fn to_label_selector(&self) -> Result<Option<Vec<Selector>>, StatusResponse> {
         if let Some(label_selector) = &self.label_selector {
-            Selector::try_parse(&label_selector).map(Some)
+            Selector::try_parse(label_selector).map(Some)
         } else {
             Ok(None)
         }

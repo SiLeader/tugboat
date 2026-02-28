@@ -29,16 +29,14 @@ mod operator;
 
 pub struct ApiServer {
     listen: String,
-    mount: String,
     operator: ApiOperator,
     tls: Option<TlsConfig>,
 }
 
 impl ApiServer {
-    fn new(listen: String, mount: String, operator: ApiOperator, tls: Option<TlsConfig>) -> Self {
+    fn new(listen: String, operator: ApiOperator, tls: Option<TlsConfig>) -> Self {
         Self {
             listen,
-            mount,
             operator,
             tls,
         }
@@ -52,10 +50,7 @@ impl ApiServer {
                 .app_data(data.clone())
                 .service(health_check)
                 .into_utoipa_app()
-                .service(
-                    utoipa_actix_web::scope(actix_web::web::scope(&self.mount))
-                        .configure(endpoints::register_endpoints),
-                )
+                .configure(endpoints::register_endpoints)
                 .into_app()
         });
         if let Some(tls) = self.tls {

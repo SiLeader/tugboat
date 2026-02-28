@@ -28,7 +28,7 @@ pub(super) struct ShipPatchPathParams {
 }
 
 #[utoipa::path()]
-#[patch("/v1/namespaces/{namespace}/ships/{name}/status")]
+#[patch("/api/v1/namespaces/{namespace}/ships/{name}/status")]
 pub(super) async fn handle_ship_status_patch(
     path: Path<ShipPatchPathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,

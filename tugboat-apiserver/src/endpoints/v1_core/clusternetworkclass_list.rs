@@ -22,7 +22,7 @@ use actix_web::{HttpResponse, get};
 use tugboat_resources::manifests::core::v1::ClusterNetworkClass;
 
 #[utoipa::path()]
-#[get("/v1/clusternetworkclasses")]
+#[get("/api/v1/clusternetworkclasses")]
 pub(super) async fn handle_clusternetworkclass_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,

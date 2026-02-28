@@ -27,7 +27,7 @@ pub(super) struct NetworkClassReadPathParams {
 }
 
 #[utoipa::path()]
-#[get("/v1/namespaces/{namespace}/networkclasses/{name}")]
+#[get("/api/v1/namespaces/{namespace}/networkclasses/{name}")]
 pub(super) async fn handle_networkclass_read(
     path: Path<NetworkClassReadPathParams>,
     operator: Data<ApiOperator>,

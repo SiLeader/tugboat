@@ -21,7 +21,7 @@ use tugboat_resources::Resource;
 use tugboat_resources::manifests::core::v1::Namespace;
 
 #[utoipa::path()]
-#[post("/v1/namespaces")]
+#[post("/api/v1/namespaces")]
 pub(super) async fn handle_namespace_create(
     json: Json<Namespace>,
     operator: Data<ApiOperator>,

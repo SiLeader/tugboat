@@ -42,6 +42,8 @@ fn main() {
                 "proto/meta/v1/object_meta.proto",
                 "proto/meta/v1/time.proto",
                 "proto/meta/v1/type_meta.proto",
+                // coordination/v1
+                "proto/coordination/v1/lease.proto",
             ],
             &["proto"],
         )

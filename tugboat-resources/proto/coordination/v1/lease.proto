@@ -1,0 +1,37 @@
+// Copyright 2025- SiLeader (Cerussite).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+import "meta/v1/object_meta.proto";
+import "meta/v1/time.proto";
+import "meta/v1/type_meta.proto";
+
+package tugboat.coordination.v1;
+
+message Lease {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+  LeaseSpec spec = 3;
+}
+
+message LeaseSpec {
+  meta.v1.Time acquire_time = 1;
+  string holder_identity = 2;
+  int64 lease_duration_seconds = 3;
+  int64 lease_transitions = 4;
+  string preferred_holder = 5;
+  meta.v1.Time renew_time = 6;
+  string strategy = 7;
+}
