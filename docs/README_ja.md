@@ -109,10 +109,10 @@ spec:
 - [x] tugboat-client
 - [x] tugboat-cli build (ImagefileからVMイメージのビルド)
 - [x] fieldSelectorとlabelSelector
+- [x] tugboat-scheduler
 - [ ] tugboat-agent (← イマココ)
     - [ ] ネットワーク (CNI)
     - [ ] ストレージ (CSI)
-- [ ] tugboat-scheduler
 - [ ] Fleet
 - [ ] Secret / ConfigMap
 - [ ] Live migration

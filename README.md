@@ -113,10 +113,10 @@ spec:
 - [x] tugboat-client
 - [x] tugboat-cli build (Build a VM Image from a Imagefile)
 - [x] fieldSelector and labelSelector
+- [x] tugboat‑scheduler
 - [ ] tugboat‑agent (Work in progress!!)
     - [ ] Networking (CNI)
     - [ ] Storage (CSI)
-- [ ] tugboat‑scheduler
 - [ ] Fleet
 - [ ] Secret / ConfigMap
 - [ ] Live migration
