@@ -37,6 +37,7 @@ Existing VM orchestration systems come with significant challenges:
 
 - Kubernetes‑compatible API manifests
     - Uses familiar structures such as `TypeMeta` and `ObjectMeta`
+    - Can use `kubectl`
 - Declarative cluster powered by etcd
     - The apiserver is stateless; etcd is the single source of truth
 - Lightweight control plane
@@ -47,7 +48,8 @@ Existing VM orchestration systems come with significant challenges:
     - Similar to Kubernetes’ kubelet/runtime model
 - VM images as OCI artifacts
     - `Imagefile → build → push to registry → referenced by Ship`
-- Planned CNI support
+- CNI support
+    - `NetworkClass` / `ClusterNetworkClass` based network configuration
 - Planned CRD support
 - High availability design
     - Apiserver can scale horizontally
@@ -114,8 +116,11 @@ spec:
 - [x] tugboat-cli build (Build a VM Image from a Imagefile)
 - [x] fieldSelector and labelSelector
 - [x] tugboat‑scheduler
-- [ ] tugboat‑agent (Work in progress!!)
-    - [ ] Networking (CNI)
+- [ ] tugboat‑agent (In progress)
+    - [x] Node auto-registration
+    - [x] Reconcile on Ship Added events
+    - [x] Networking (CNI, NetworkClass / ClusterNetworkClass)
+    - [ ] Reconcile on Ship Modified / Deleted events
     - [ ] Storage (CSI)
 - [ ] Fleet
 - [ ] Secret / ConfigMap

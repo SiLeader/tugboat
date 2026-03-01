@@ -33,6 +33,7 @@ Tugboatはこれらの問題を解決するために生まれました。
 
 - Kubernetes互換のAPIマニフェスト
     - TypeMeta / ObjectMetaなどKubernetesと同じ構造
+    - `kubectl`がそのまま利用可能
 - etcdベースの宣言的クラスタ
     - apiserverはstatelessでetcdが唯一の状態
 - 軽量なコントロールプレーン
@@ -43,7 +44,8 @@ Tugboatはこれらの問題を解決するために生まれました。
     - Kubernetesのkubelet / runtimeと同じ思想
 - OCIアーティファクトとしてのVMイメージ
     - Imagefile → build → registryにpush → Shipから参照
-- CNIに対応予定
+- CNIに対応
+    - `NetworkClass` / `ClusterNetworkClass`によるネットワーク設定
 - CRDに対応予定
 - HA設計
     - apiserverは水平スケール可能
@@ -111,7 +113,10 @@ spec:
 - [x] fieldSelectorとlabelSelector
 - [x] tugboat-scheduler
 - [ ] tugboat-agent (← イマココ)
-    - [ ] ネットワーク (CNI)
+    - [x] Nodeリソースの自動登録
+    - [x] Ship Addedイベントのreconcile
+    - [x] ネットワーク (CNI, NetworkClass / ClusterNetworkClass)
+    - [ ] Ship Modified / Deletedイベントのreconcile
     - [ ] ストレージ (CSI)
 - [ ] Fleet
 - [ ] Secret / ConfigMap

@@ -19,6 +19,7 @@ use tugboat_client::TugboatClient;
 
 mod cni;
 mod config;
+mod node_registration;
 mod reconciler;
 mod runtime;
 
@@ -37,6 +38,9 @@ pub async fn run() {
     let config = config::AgentConfig::load_or_panic(args.config);
 
     let client = TugboatClient::new(config.apiserver.url);
+    node_registration::ensure_node_exists(client.clone(), config.node.name.clone())
+        .await
+        .unwrap_or_else(|e| panic!("Failed to ensure node resource exists: {e}"));
     let runtime_operator = RuntimeOperator::new(
         config.runtime,
         config.image.cache_dir,
