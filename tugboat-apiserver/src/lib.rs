@@ -49,6 +49,7 @@ impl ApiServer {
                 .wrap(Logger::default().exclude("/healthz"))
                 .app_data(data.clone())
                 .service(health_check)
+                .configure(endpoints::register_openapi_endpoints)
                 .into_utoipa_app()
                 .configure(endpoints::register_endpoints)
                 .into_app()

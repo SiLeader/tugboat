@@ -27,6 +27,15 @@ mod v1_coordination;
 mod v1_core;
 mod watch_utils;
 
+pub mod openapi;
+
+pub fn register_openapi_endpoints(config: &mut actix_web::web::ServiceConfig) {
+    config
+        .service(openapi::discovery)
+        .service(openapi::core_v1)
+        .service(openapi::coordination_v1);
+}
+
 pub(super) fn register_endpoints(config: &mut ServiceConfig) {
     resource_registry::register_resource_apis(config);
     config
