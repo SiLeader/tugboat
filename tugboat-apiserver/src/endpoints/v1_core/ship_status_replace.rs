@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, StatusResponse};
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
 use actix_web::put;
 use actix_web::web::{Data, Json, Path};
@@ -34,27 +35,11 @@ pub(super) async fn handle_ship_status_replace(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, StatusResponse> {
     let path = path.into_inner();
-    let current = operator
-        .store
-        .get::<Ship>(Some(path.namespace.clone()), &path.name)
-        .await?;
-    let Some(current) = current else {
-        return Err(StatusResponse::not_found(
-            "Ship not found.",
-            Some(serde_json::json!({"name": path.name, "namespace": path.namespace})),
-        ));
-    };
-    let current = current.apply_revision();
-    let replacement = replacement.into_inner();
-
-    let replaced = if current.status == replacement.status {
-        current
-    } else {
-        let patched = Ship {
-            status: replacement.status,
-            ..current
-        };
-        operator.store.put(patched).await?.apply_revision()
-    };
-    Ok(ModifyResponse::Updated(replaced))
+    resource_handlers::status_replace_resource::<Ship>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        replacement.into_inner(),
+    )
+    .await
 }

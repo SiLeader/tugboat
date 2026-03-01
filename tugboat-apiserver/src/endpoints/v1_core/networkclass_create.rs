@@ -14,11 +14,10 @@
 
 use crate::data::{ModifyResponse, StatusResponse};
 use crate::endpoints::NamespacedPathParams;
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
-use crate::{create_object, extract_object_meta};
 use actix_web::post;
 use actix_web::web::{Data, Json, Path};
-use tugboat_resources::Resource;
 use tugboat_resources::manifests::core::v1::NetworkClass;
 
 #[utoipa::path()]
@@ -28,15 +27,6 @@ pub(super) async fn handle_networkclass_create(
     json: Json<NetworkClass>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<NetworkClass>, StatusResponse> {
-    let networkclass = json.into_inner();
-
-    let object_meta = extract_object_meta!(networkclass);
-    let object_meta = operator.apply_namespace(object_meta, path.into_inner().namespace);
-
-    create_object!(
-        operator,
-        object_meta,
-        networkclass,
-        NetworkClass::type_meta()
-    )
+    resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
+        .await
 }

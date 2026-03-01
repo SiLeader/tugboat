@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::data::{ReadResponse, StatusResponse};
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
 use actix_web::delete;
 use actix_web::web::{Data, Path};
@@ -31,14 +32,5 @@ pub(super) async fn handle_node_delete(
     path: Path<NodeDeletePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Node>, StatusResponse> {
-    let path = path.into_inner();
-    let resource = operator.store.delete::<Node>(None, &path.name).await?;
-
-    match resource {
-        Some(data) => Ok(ReadResponse::new(data.apply_revision())),
-        None => Err(StatusResponse::not_found(
-            "Node not found",
-            Some(serde_json::json!({ "name": path.name })),
-        )),
-    }
+    resource_handlers::delete_resource::<Node>(&operator, None, path.into_inner().name).await
 }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::data::{ReadResponse, StatusResponse};
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
 use actix_web::get;
 use actix_web::web::{Data, Path};
@@ -31,13 +32,5 @@ pub(super) async fn handle_shipclass_read(
     path: Path<ReadParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ShipClass>, StatusResponse> {
-    let shipclass = operator.store.get(None, &path.name).await?;
-
-    match shipclass {
-        Some(data) => Ok(ReadResponse::new(data.apply_revision())),
-        None => Err(StatusResponse::not_found(
-            "ShipClass not found",
-            Some(serde_json::json!({ "name": path.name })),
-        )),
-    }
+    resource_handlers::read_resource::<ShipClass>(&operator, None, path.into_inner().name).await
 }

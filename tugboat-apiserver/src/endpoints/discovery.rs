@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use crate::data::StatusResponse;
+use crate::endpoints::resource_registry;
 use actix_web::web::Path;
 use actix_web::{HttpResponse, get};
 use serde::{Deserialize, Serialize};
-use tugboat_resources::StaticResource;
 use utoipa::ToSchema;
 
 #[derive(Serialize)]
@@ -76,24 +76,35 @@ struct ApiResource {
     verbs: Vec<&'static str>,
 }
 
-fn resource_entry<T: StaticResource>(verbs: Vec<&'static str>) -> ApiResource {
+fn resource_entry(resource: resource_registry::ResourceApiDescriptor) -> ApiResource {
     ApiResource {
-        name: T::plural().to_string(),
-        singular_name: T::singular().to_string(),
-        namespaced: !T::is_cluster_scoped(),
-        kind: T::kind().to_string(),
-        verbs,
+        name: resource.plural.to_string(),
+        singular_name: resource.singular.to_string(),
+        namespaced: resource.namespaced,
+        kind: resource.kind.to_string(),
+        verbs: resource.operations.resource_verbs(),
     }
 }
 
-fn status_subresource_entry<T: StaticResource>(verbs: Vec<&'static str>) -> ApiResource {
+fn status_subresource_entry(resource: resource_registry::ResourceApiDescriptor) -> ApiResource {
     ApiResource {
-        name: format!("{}/status", T::plural()),
+        name: format!("{}/status", resource.plural),
         singular_name: String::new(),
-        namespaced: !T::is_cluster_scoped(),
-        kind: T::kind().to_string(),
-        verbs,
+        namespaced: resource.namespaced,
+        kind: resource.kind.to_string(),
+        verbs: resource.operations.status_verbs(),
     }
+}
+
+fn expand_resources(resources: Vec<resource_registry::ResourceApiDescriptor>) -> Vec<ApiResource> {
+    let mut entries = Vec::new();
+    for resource in resources {
+        entries.push(resource_entry(resource));
+        if resource.operations.has_status_subresource() {
+            entries.push(status_subresource_entry(resource));
+        }
+    }
+    entries
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -117,24 +128,12 @@ pub(super) async fn handle_api_versions() -> HttpResponse {
 #[utoipa::path()]
 #[get("/api/v1")]
 pub(super) async fn handle_api_v1_resources() -> HttpResponse {
-    use tugboat_resources::manifests::core::v1::*;
-
-    let default_verbs = vec!["create", "get", "list", "watch"];
-    let node_verbs = vec!["create", "delete", "get", "list", "update", "watch"];
-
+    let resources = resource_registry::resources_for("core", "v1");
     HttpResponse::Ok().json(ApiResourceList {
         kind: "APIResourceList",
         api_version: "v1",
         group_version: "v1".to_string(),
-        resources: vec![
-            resource_entry::<ClusterNetworkClass>(default_verbs.clone()),
-            resource_entry::<Namespace>(default_verbs.clone()),
-            resource_entry::<NetworkClass>(default_verbs.clone()),
-            resource_entry::<Node>(node_verbs),
-            resource_entry::<Ship>(default_verbs.clone()),
-            status_subresource_entry::<Ship>(vec!["patch", "update"]),
-            resource_entry::<ShipClass>(default_verbs),
-        ],
+        resources: expand_resources(resources),
     })
 }
 
@@ -142,19 +141,47 @@ pub(super) async fn handle_api_v1_resources() -> HttpResponse {
 #[utoipa::path()]
 #[get("/apis")]
 pub(super) async fn handle_api_groups() -> HttpResponse {
-    let coordination = GroupVersionForDiscovery {
-        group_version: "coordination/v1".to_string(),
-        version: "v1".to_string(),
-    };
+    let mut grouped =
+        std::collections::BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+    for resource in resource_registry::all_resource_apis() {
+        if resource.group.is_empty() || resource.group == "core" {
+            continue;
+        }
+        let _ = grouped
+            .entry(resource.group.to_string())
+            .or_default()
+            .insert(resource.version.to_string());
+    }
+
+    let groups = grouped
+        .into_iter()
+        .map(|(group, versions)| {
+            let versions = versions
+                .into_iter()
+                .map(|version| GroupVersionForDiscovery {
+                    group_version: format!("{group}/{version}"),
+                    version,
+                })
+                .collect::<Vec<_>>();
+            let preferred_version = versions
+                .first()
+                .cloned()
+                .unwrap_or(GroupVersionForDiscovery {
+                    group_version: format!("{group}/v1"),
+                    version: "v1".to_string(),
+                });
+            ApiGroup {
+                name: group,
+                versions,
+                preferred_version,
+            }
+        })
+        .collect();
 
     HttpResponse::Ok().json(ApiGroupList {
         kind: "APIGroupList",
         api_version: "v1",
-        groups: vec![ApiGroup {
-            name: "coordination".to_string(),
-            versions: vec![coordination.clone()],
-            preferred_version: coordination,
-        }],
+        groups,
     })
 }
 
@@ -164,24 +191,21 @@ pub(super) async fn handle_api_groups() -> HttpResponse {
 pub(super) async fn handle_api_group_version_resources(
     path: Path<GroupVersionPathParams>,
 ) -> Result<HttpResponse, StatusResponse> {
-    use tugboat_resources::manifests::coordination::v1::*;
-
     let path = path.into_inner();
-    let default_verbs = vec!["create", "get", "list", "watch"];
-
-    match (path.group.as_str(), path.version.as_str()) {
-        ("coordination", "v1") => Ok(HttpResponse::Ok().json(ApiResourceList {
-            kind: "APIResourceList",
-            api_version: "v1",
-            group_version: "coordination/v1".to_string(),
-            resources: vec![resource_entry::<Lease>(default_verbs)],
-        })),
-        _ => Err(StatusResponse::not_found(
+    let resources = resource_registry::resources_for(path.group.as_str(), path.version.as_str());
+    if resources.is_empty() {
+        return Err(StatusResponse::not_found(
             format!(
                 "the server does not have a resource type for group \"{}\" version \"{}\"",
                 path.group, path.version
             ),
             None,
-        )),
+        ));
     }
+    Ok(HttpResponse::Ok().json(ApiResourceList {
+        kind: "APIResourceList",
+        api_version: "v1",
+        group_version: format!("{}/{}", path.group, path.version),
+        resources: expand_resources(resources),
+    }))
 }

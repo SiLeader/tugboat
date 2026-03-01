@@ -14,13 +14,13 @@
 
 use crate::data::StatusResponse;
 use crate::endpoints::selector::Selector;
-use crate::endpoints::v1_coordination::register_v1_coordination;
-use crate::endpoints::v1_core::register_v1_core;
 use serde::Deserialize;
 use utoipa::ToSchema;
 use utoipa_actix_web::service_config::ServiceConfig;
 
 mod discovery;
+mod resource_handlers;
+mod resource_registry;
 mod selector;
 mod utils;
 mod v1_coordination;
@@ -28,8 +28,7 @@ mod v1_core;
 mod watch_utils;
 
 pub(super) fn register_endpoints(config: &mut ServiceConfig) {
-    register_v1_core(config);
-    register_v1_coordination(config);
+    resource_registry::register_resource_apis(config);
     config
         .service(discovery::handle_api_versions)
         .service(discovery::handle_api_v1_resources)

@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::data::{ResourceList, StatusResponse};
+use crate::data::StatusResponse;
 use crate::endpoints::ListQuery;
-use crate::endpoints::selector::FilterBySelector;
-use crate::endpoints::watch_utils::watch;
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Query};
 use actix_web::{HttpResponse, get};
@@ -27,27 +26,5 @@ pub(super) async fn handle_shipclass_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
 ) -> Result<HttpResponse, StatusResponse> {
-    let query = query.into_inner();
-    if let Some(opts) = query.watch {
-        watch::<ShipClass>(
-            &operator,
-            opts,
-            query.to_field_selector()?,
-            query.to_label_selector()?,
-            query.resource_version,
-            None,
-        )
-        .await
-    } else {
-        let field_selector = query.to_field_selector()?;
-        let label_selector = query.to_label_selector()?;
-        let shipclasses = operator.store.list::<ShipClass>(None, None).await?;
-        Ok(ResourceList::from_serializable(
-            shipclasses
-                .into_iter()
-                .map(|d| d.apply_revision())
-                .filter_by_selector(field_selector, label_selector),
-        )?
-        .into())
-    }
+    resource_handlers::list_resources::<ShipClass>(&operator, query.into_inner(), None).await
 }

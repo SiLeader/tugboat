@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, StatusResponse};
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
 use actix_web::patch;
 use actix_web::web::{Data, Json, Path};
-use json_value_merge::Merge;
 use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::Ship;
 use utoipa::ToSchema;
@@ -34,36 +34,12 @@ pub(super) async fn handle_ship_status_patch(
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, StatusResponse> {
-    let patch = patch.into_inner();
-    if !patch.keys().all(|k| k == "status") {
-        return Err(StatusResponse::bad_request(
-            "PATCH /status must contain only status field.",
-            None,
-        ));
-    }
-    let patch = serde_json::Value::Object(patch);
-
     let path = path.into_inner();
-    let current = operator
-        .store
-        .get::<Ship>(Some(path.namespace.clone()), &path.name)
-        .await?;
-    let Some(current) = current else {
-        return Err(StatusResponse::not_found(
-            "Ship not found.",
-            Some(serde_json::json!({"name": path.name, "namespace": path.namespace})),
-        ));
-    };
-    let current = current.apply_revision();
-    let patched = {
-        let mut j = serde_json::to_value(&current)?;
-        j.merge(&patch);
-        serde_json::from_value::<Ship>(j)?
-    };
-    let patched = if current != patched {
-        operator.store.put(patched).await?.apply_revision()
-    } else {
-        patched
-    };
-    Ok(ModifyResponse::Updated(patched))
+    resource_handlers::status_patch_resource::<Ship>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        patch.into_inner(),
+    )
+    .await
 }

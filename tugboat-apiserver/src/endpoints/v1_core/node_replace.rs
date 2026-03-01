@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, StatusResponse};
+use crate::endpoints::resource_handlers::{self, ReplaceOptions};
 use crate::operator::ApiOperator;
 use actix_web::put;
 use actix_web::web::{Data, Json, Path};
@@ -32,36 +33,15 @@ pub(super) async fn handle_node_replace(
     replacement: Json<Node>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Node>, StatusResponse> {
-    let path = path.into_inner();
-    let current = operator.store.get::<Node>(None, &path.name).await?;
-    let Some(current) = current else {
-        return Err(StatusResponse::not_found(
-            "Node not found.",
-            Some(serde_json::json!({"name": path.name})),
-        ));
-    };
-    let current = current.apply_revision();
-    let replacement = replacement.into_inner();
-
-    let mut replaced_meta = current.object_meta.clone().unwrap_or_default();
-    if let Some(client_rv) = replacement
-        .object_meta
-        .as_ref()
-        .and_then(|m| m.resource_version.clone())
-    {
-        replaced_meta.resource_version = Some(client_rv);
-    }
-
-    let replaced = Node {
-        object_meta: Some(replaced_meta),
-        type_meta: current.type_meta.clone(),
-        spec: replacement.spec,
-    };
-
-    let replaced = if current != replaced {
-        operator.store.put(replaced).await?.apply_revision()
-    } else {
-        replaced
-    };
-    Ok(ModifyResponse::Updated(replaced))
+    resource_handlers::replace_resource::<Node>(
+        &operator,
+        None,
+        path.into_inner().name,
+        replacement.into_inner(),
+        ReplaceOptions {
+            preserve_status: false,
+            use_client_resource_version: true,
+        },
+    )
+    .await
 }

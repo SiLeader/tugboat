@@ -38,31 +38,62 @@ mod shipclass_create;
 mod shipclass_list;
 mod shipclass_read;
 
-pub(super) fn register_v1_core(service: &mut ServiceConfig) {
+pub(super) fn register_clusternetworkclass(service: &mut ServiceConfig) {
     service
         .service(clusternetworkclass_create::handle_clusternetworkclass_create)
         .service(clusternetworkclass_list::handle_clusternetworkclass_list)
-        .service(clusternetworkclass_read::handle_clusternetworkclass_read)
+        .service(clusternetworkclass_read::handle_clusternetworkclass_read);
+}
+
+pub(super) fn register_namespace(service: &mut ServiceConfig) {
+    service
         .service(namespace_create::handle_namespace_create)
         .service(namespace_list::handle_namespace_list)
-        .service(namespace_read::handle_namespace_read)
+        .service(namespace_read::handle_namespace_read);
+}
+
+pub(super) fn register_node(service: &mut ServiceConfig) {
+    service
         .service(node_create::handle_node_create)
         .service(node_delete::handle_node_delete)
         .service(node_list::handle_node_list)
         .service(node_read::handle_node_read)
-        .service(node_replace::handle_node_replace)
+        .service(node_replace::handle_node_replace);
+}
+
+pub(super) fn register_networkclass(service: &mut ServiceConfig) {
+    service
         .service(networkclass_create::handle_networkclass_create)
         .service(networkclass_list::handle_networkclass_list)
         .service(networkclass_list::handle_networkclass_list_all)
-        .service(networkclass_read::handle_networkclass_read)
+        .service(networkclass_read::handle_networkclass_read);
+}
+
+pub(super) fn register_ship(service: &mut ServiceConfig) {
+    service
         .service(ship_create::handle_ship_create)
         .service(ship_list::handle_ship_list)
         .service(ship_list::handle_ship_list_all)
         .service(ship_read::handle_ship_read)
         .service(ship_replace::handle_ship_replace)
         .service(ship_status_patch::handle_ship_status_patch)
-        .service(ship_status_replace::handle_ship_status_replace)
+        .service(ship_status_replace::handle_ship_status_replace);
+}
+
+pub(super) fn register_shipclass(service: &mut ServiceConfig) {
+    service
         .service(shipclass_create::handle_shipclass_create)
         .service(shipclass_list::handle_shipclass_list)
         .service(shipclass_read::handle_shipclass_read);
+}
+
+#[allow(dead_code)]
+pub(super) fn register_v1_core(service: &mut ServiceConfig) {
+    service
+        .configure(register_clusternetworkclass)
+        .configure(register_namespace)
+        .configure(register_node)
+        .configure(register_networkclass)
+        .configure(register_ship)
+        .configure(register_shipclass);
 }

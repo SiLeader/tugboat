@@ -13,11 +13,10 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, StatusResponse};
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
-use crate::{check_namespace_absent, create_object, extract_object_meta};
 use actix_web::post;
 use actix_web::web::{Data, Json};
-use tugboat_resources::Resource;
 use tugboat_resources::manifests::core::v1::ClusterNetworkClass;
 
 #[utoipa::path()]
@@ -26,15 +25,5 @@ pub(super) async fn handle_clusternetworkclass_create(
     json: Json<ClusterNetworkClass>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ClusterNetworkClass>, StatusResponse> {
-    let clusternetworkclass = json.into_inner();
-
-    let object_meta = extract_object_meta!(clusternetworkclass);
-    check_namespace_absent!(object_meta);
-
-    create_object!(
-        operator,
-        object_meta,
-        clusternetworkclass,
-        ClusterNetworkClass::type_meta()
-    )
+    resource_handlers::create_cluster(json.into_inner(), operator).await
 }

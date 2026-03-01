@@ -14,11 +14,10 @@
 
 use crate::data::{ModifyResponse, StatusResponse};
 use crate::endpoints::NamespacedPathParams;
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
-use crate::{create_object, extract_object_meta};
 use actix_web::post;
 use actix_web::web::{Data, Json, Path};
-use tugboat_resources::Resource;
 use tugboat_resources::manifests::coordination::v1::Lease;
 
 #[utoipa::path()]
@@ -28,10 +27,6 @@ pub(super) async fn handle_lease_create(
     json: Json<Lease>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Lease>, StatusResponse> {
-    let lease = json.into_inner();
-
-    let object_meta = extract_object_meta!(lease);
-    let object_meta = operator.apply_namespace(object_meta, path.into_inner().namespace);
-
-    create_object!(operator, object_meta, lease, Lease::type_meta())
+    resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
+        .await
 }

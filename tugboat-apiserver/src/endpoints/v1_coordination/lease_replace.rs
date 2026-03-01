@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, StatusResponse};
+use crate::endpoints::resource_handlers::{self, ReplaceOptions};
 use crate::operator::ApiOperator;
 use actix_web::put;
 use actix_web::web::{Data, Json, Path};
@@ -34,41 +35,15 @@ pub(super) async fn handle_lease_replace(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Lease>, StatusResponse> {
     let path = path.into_inner();
-    let current = operator
-        .store
-        .get::<Lease>(Some(path.namespace.clone()), &path.name)
-        .await?;
-    let Some(current) = current else {
-        return Err(StatusResponse::not_found(
-            "Lease not found.",
-            Some(serde_json::json!({"name": path.name, "namespace": path.namespace})),
-        ));
-    };
-    let current = current.apply_revision();
-    let replacement = replacement.into_inner();
-
-    // Use the client's resource_version for optimistic concurrency control.
-    // The store's compare-and-swap will reject the update with 409 Conflict
-    // if the resource has been modified since the client last read it.
-    let mut replaced_meta = current.object_meta.clone().unwrap_or_default();
-    if let Some(client_rv) = replacement
-        .object_meta
-        .as_ref()
-        .and_then(|m| m.resource_version.clone())
-    {
-        replaced_meta.resource_version = Some(client_rv);
-    }
-
-    let replaced = Lease {
-        object_meta: Some(replaced_meta),
-        type_meta: current.type_meta.clone(),
-        spec: replacement.spec,
-    };
-
-    let replaced = if current != replaced {
-        operator.store.put(replaced).await?.apply_revision()
-    } else {
-        replaced
-    };
-    Ok(ModifyResponse::Updated(replaced))
+    resource_handlers::replace_resource::<Lease>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        replacement.into_inner(),
+        ReplaceOptions {
+            preserve_status: false,
+            use_client_resource_version: true,
+        },
+    )
+    .await
 }

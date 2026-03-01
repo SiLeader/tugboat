@@ -19,11 +19,16 @@ mod lease_list;
 mod lease_read;
 mod lease_replace;
 
-pub(super) fn register_v1_coordination(service: &mut ServiceConfig) {
+pub(super) fn register_lease(service: &mut ServiceConfig) {
     service
         .service(lease_create::handle_lease_create)
         .service(lease_list::handle_lease_list)
         .service(lease_list::handle_lease_list_all)
         .service(lease_read::handle_lease_read)
         .service(lease_replace::handle_lease_replace);
+}
+
+#[allow(dead_code)]
+pub(super) fn register_v1_coordination(service: &mut ServiceConfig) {
+    service.configure(register_lease);
 }

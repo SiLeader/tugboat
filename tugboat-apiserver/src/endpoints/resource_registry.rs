@@ -1,0 +1,176 @@
+// Copyright 2025- SiLeader (Cerussite).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::endpoints::v1_coordination;
+use crate::endpoints::v1_core;
+use tugboat_resources::StaticResource;
+use tugboat_resources::manifests::coordination::v1::Lease;
+use tugboat_resources::manifests::core::v1::{
+    ClusterNetworkClass, Namespace, NetworkClass, Node, Ship, ShipClass,
+};
+use utoipa_actix_web::service_config::ServiceConfig;
+
+#[derive(Clone, Copy)]
+pub(crate) struct ResourceOperations {
+    pub(crate) create: bool,
+    pub(crate) list: bool,
+    pub(crate) read: bool,
+    pub(crate) update: bool,
+    pub(crate) delete: bool,
+    pub(crate) status_patch: bool,
+    pub(crate) status_update: bool,
+}
+
+impl ResourceOperations {
+    pub(crate) fn has_status_subresource(self) -> bool {
+        self.status_patch || self.status_update
+    }
+
+    pub(crate) fn resource_verbs(self) -> Vec<&'static str> {
+        let mut verbs = Vec::new();
+        if self.create {
+            verbs.push("create");
+        }
+        if self.delete {
+            verbs.push("delete");
+        }
+        if self.read {
+            verbs.push("get");
+        }
+        if self.list {
+            verbs.push("list");
+        }
+        if self.update {
+            verbs.push("update");
+        }
+        if self.list {
+            verbs.push("watch");
+        }
+        verbs
+    }
+
+    pub(crate) fn status_verbs(self) -> Vec<&'static str> {
+        let mut verbs = Vec::new();
+        if self.status_patch {
+            verbs.push("patch");
+        }
+        if self.status_update {
+            verbs.push("update");
+        }
+        verbs
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ResourceApiDescriptor {
+    pub(crate) group: &'static str,
+    pub(crate) version: &'static str,
+    pub(crate) plural: &'static str,
+    pub(crate) singular: &'static str,
+    pub(crate) kind: &'static str,
+    pub(crate) namespaced: bool,
+    pub(crate) operations: ResourceOperations,
+    register: fn(&mut ServiceConfig),
+}
+
+impl ResourceApiDescriptor {
+    fn new<T: StaticResource>(
+        operations: ResourceOperations,
+        register: fn(&mut ServiceConfig),
+    ) -> Self {
+        Self {
+            group: T::group(),
+            version: T::version(),
+            plural: T::plural(),
+            singular: T::singular(),
+            kind: T::kind(),
+            namespaced: !T::is_cluster_scoped(),
+            operations,
+            register,
+        }
+    }
+
+    fn register(self, service: &mut ServiceConfig) {
+        (self.register)(service);
+    }
+}
+
+const CLUSTER_DEFAULT_OPS: ResourceOperations = ResourceOperations {
+    create: true,
+    list: true,
+    read: true,
+    update: false,
+    delete: false,
+    status_patch: false,
+    status_update: false,
+};
+
+const NAMESPACED_DEFAULT_OPS: ResourceOperations = ResourceOperations {
+    create: true,
+    list: true,
+    read: true,
+    update: false,
+    delete: false,
+    status_patch: false,
+    status_update: false,
+};
+
+const NODE_OPS: ResourceOperations = ResourceOperations {
+    update: true,
+    delete: true,
+    ..CLUSTER_DEFAULT_OPS
+};
+
+const SHIP_OPS: ResourceOperations = ResourceOperations {
+    update: true,
+    status_patch: true,
+    status_update: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
+const LEASE_OPS: ResourceOperations = ResourceOperations {
+    update: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
+pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
+    vec![
+        ResourceApiDescriptor::new::<ClusterNetworkClass>(
+            CLUSTER_DEFAULT_OPS,
+            v1_core::register_clusternetworkclass,
+        ),
+        ResourceApiDescriptor::new::<Namespace>(CLUSTER_DEFAULT_OPS, v1_core::register_namespace),
+        ResourceApiDescriptor::new::<NetworkClass>(
+            NAMESPACED_DEFAULT_OPS,
+            v1_core::register_networkclass,
+        ),
+        ResourceApiDescriptor::new::<Node>(NODE_OPS, v1_core::register_node),
+        ResourceApiDescriptor::new::<Ship>(SHIP_OPS, v1_core::register_ship),
+        ResourceApiDescriptor::new::<ShipClass>(CLUSTER_DEFAULT_OPS, v1_core::register_shipclass),
+        ResourceApiDescriptor::new::<Lease>(LEASE_OPS, v1_coordination::register_lease),
+    ]
+}
+
+pub(crate) fn resources_for(group: &str, version: &str) -> Vec<ResourceApiDescriptor> {
+    all_resource_apis()
+        .into_iter()
+        .filter(|resource| resource.group == group && resource.version == version)
+        .collect()
+}
+
+pub(crate) fn register_resource_apis(service: &mut ServiceConfig) {
+    for resource in all_resource_apis() {
+        resource.register(service);
+    }
+}

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::data::{ReadResponse, StatusResponse};
+use crate::endpoints::resource_handlers;
 use crate::operator::ApiOperator;
 use actix_web::get;
 use actix_web::web::{Data, Path};
@@ -33,16 +34,6 @@ pub(super) async fn handle_networkclass_read(
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<NetworkClass>, StatusResponse> {
     let path = path.into_inner();
-    let resource = operator
-        .store
-        .get(Some(path.namespace.clone()), &path.name)
-        .await?;
-
-    match resource {
-        Some(data) => Ok(ReadResponse::new(data.apply_revision())),
-        None => Err(StatusResponse::not_found(
-            "NetworkClass not found",
-            Some(serde_json::json!({ "namespace": path.namespace, "name": path.name })),
-        )),
-    }
+    resource_handlers::read_resource::<NetworkClass>(&operator, Some(path.namespace), path.name)
+        .await
 }
