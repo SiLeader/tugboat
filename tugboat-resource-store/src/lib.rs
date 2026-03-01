@@ -15,7 +15,9 @@
 use crate::error::Error;
 use crate::serializer::StaticSerializable;
 use crate::watch::WatchReceiver;
-use etcd_client::{Client, Compare, CompareOp, GetOptions, Txn, TxnOp, TxnOpResponse};
+use etcd_client::{
+    Client, Compare, CompareOp, DeleteOptions, GetOptions, Txn, TxnOp, TxnOpResponse,
+};
 use tracing::{debug, info};
 use tugboat_resources::manifests::meta::v1::ObjectMeta;
 use tugboat_resources::{ObjectMetaResource, StaticResource};
@@ -238,5 +240,29 @@ impl ResourceStore {
         let key = Self::create_watch_key::<T>(namespace);
         info!("Watch resources: key = {key}");
         self.watch_mux.get(&key, resource_version).await
+    }
+
+    pub async fn delete<T: StaticSerializable>(
+        &self,
+        namespace: Option<String>,
+        name: &str,
+    ) -> Result<Option<ContentData<T>>, Error> {
+        let key = Self::create_key::<T>(namespace, name);
+        info!("Delete resource: key = {key}");
+
+        let mut client = self.etcd.clone();
+        let response = client
+            .delete(key, Some(DeleteOptions::new().with_prev_key()))
+            .await?;
+
+        let Some(kv) = response.prev_kvs().first() else {
+            return Ok(None);
+        };
+
+        let value = T::deserialize(kv.value())?;
+        Ok(Some(ContentData {
+            data: value,
+            revision: response.header().map(|h| h.revision()).unwrap_or(0),
+        }))
     }
 }

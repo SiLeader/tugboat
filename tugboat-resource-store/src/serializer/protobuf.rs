@@ -21,10 +21,15 @@ pub struct ProtobufSerializer;
 
 impl Serializer for ProtobufSerializer {
     fn is_supported(&self, type_meta: &TypeMeta) -> bool {
-        !type_meta
-            .api_version
-            .as_ref()
-            .is_some_and(|v| v.contains("/")) // core
+        let Some(api_version) = &type_meta.api_version else {
+            return false;
+        };
+        let Some((group, _version)) = api_version.split_once("/") else {
+            // core
+            return true;
+        };
+        // builtin api groups are not contains '.'
+        !group.contains(".")
     }
 
     fn serialize_protobuf<T: prost::Message>(

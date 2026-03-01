@@ -70,7 +70,10 @@ impl WatchMuxAggregator {
             let mut client = client;
             loop {
                 let Ok((_watcher, mut stream)) = client
-                    .watch(key.as_str(), Some(WatchOptions::default().with_prefix()))
+                    .watch(
+                        key.as_str(),
+                        Some(WatchOptions::default().with_prefix().with_prev_key()),
+                    )
                     .await
                 else {
                     sleep(Duration::from_millis(500)).await;
@@ -102,23 +105,30 @@ impl WatchMuxAggregator {
 }
 
 fn transform_event(event: &etcd_client::Event) -> Option<WatchEvent> {
-    let kv = event.kv()?;
-    let is_added = kv.version() == 1;
-    let key = kv.key_str().ok()?.to_string();
-    let kv = KeyValue {
-        key,
-        value: kv.value().to_vec(),
-    };
-    Some(match event.event_type() {
+    match event.event_type() {
         EventType::Put => {
-            if is_added {
+            let kv = event.kv()?;
+            let is_added = kv.version() == 1;
+            let key = kv.key_str().ok()?.to_string();
+            let kv = KeyValue {
+                key,
+                value: kv.value().to_vec(),
+            };
+            Some(if is_added {
                 WatchEvent::Added(kv)
             } else {
                 WatchEvent::Modified(kv)
-            }
+            })
         }
-        EventType::Delete => WatchEvent::Deleted(kv),
-    })
+        EventType::Delete => {
+            let kv = event.prev_kv().or_else(|| event.kv())?;
+            let key = kv.key_str().ok()?.to_string();
+            Some(WatchEvent::Deleted(KeyValue {
+                key,
+                value: kv.value().to_vec(),
+            }))
+        }
+    }
 }
 
 pub(crate) struct WatchMux {

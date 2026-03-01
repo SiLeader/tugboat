@@ -23,6 +23,11 @@ mod namespace_read;
 mod networkclass_create;
 mod networkclass_list;
 mod networkclass_read;
+mod node_create;
+mod node_delete;
+mod node_list;
+mod node_read;
+mod node_replace;
 mod ship_create;
 mod ship_list;
 mod ship_read;
@@ -41,6 +46,11 @@ pub(super) fn register_v1_core(service: &mut ServiceConfig) {
         .service(namespace_create::handle_namespace_create)
         .service(namespace_list::handle_namespace_list)
         .service(namespace_read::handle_namespace_read)
+        .service(node_create::handle_node_create)
+        .service(node_delete::handle_node_delete)
+        .service(node_list::handle_node_list)
+        .service(node_read::handle_node_read)
+        .service(node_replace::handle_node_replace)
         .service(networkclass_create::handle_networkclass_create)
         .service(networkclass_list::handle_networkclass_list)
         .service(networkclass_list::handle_networkclass_list_all)

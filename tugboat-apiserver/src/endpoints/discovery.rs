@@ -120,6 +120,7 @@ pub(super) async fn handle_api_v1_resources() -> HttpResponse {
     use tugboat_resources::manifests::core::v1::*;
 
     let default_verbs = vec!["create", "get", "list", "watch"];
+    let node_verbs = vec!["create", "delete", "get", "list", "update", "watch"];
 
     HttpResponse::Ok().json(ApiResourceList {
         kind: "APIResourceList",
@@ -129,7 +130,7 @@ pub(super) async fn handle_api_v1_resources() -> HttpResponse {
             resource_entry::<ClusterNetworkClass>(default_verbs.clone()),
             resource_entry::<Namespace>(default_verbs.clone()),
             resource_entry::<NetworkClass>(default_verbs.clone()),
-            resource_entry::<Node>(default_verbs.clone()),
+            resource_entry::<Node>(node_verbs),
             resource_entry::<Ship>(default_verbs.clone()),
             status_subresource_entry::<Ship>(vec!["patch", "update"]),
             resource_entry::<ShipClass>(default_verbs),
