@@ -62,6 +62,32 @@ pub async fn run() {
     );
 
     let scheduler = scheduler::Scheduler::new(client, fw, leader_elector, config.scheduler);
+    tokio::select! {
+        _ = scheduler.run() => {}
+        _ = wait_for_shutdown_signal() => {
+            tracing::info!("Received shutdown signal. Stopping scheduler.");
+        }
+    }
+    tracing::info!("Scheduler stopped.");
+}
 
-    scheduler.run().await;
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::SignalKind;
+
+        let mut terminate = tokio::signal::unix::signal(SignalKind::terminate())
+            .expect("Failed to listen terminate signal");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen ctrl-c signal");
+    }
 }
