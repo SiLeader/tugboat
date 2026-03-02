@@ -14,6 +14,8 @@
 
 use crate::data::StatusResponse;
 use crate::endpoints::selector::Selector;
+use crate::endpoints::v1_coordination::openapi_coordination_v1;
+use crate::endpoints::v1_core::openapi_core_v1;
 use serde::Deserialize;
 use utoipa::ToSchema;
 use utoipa_actix_web::service_config::ServiceConfig;
@@ -32,8 +34,8 @@ pub mod openapi;
 pub fn register_openapi_endpoints(config: &mut actix_web::web::ServiceConfig) {
     config
         .service(openapi::discovery)
-        .service(openapi::core_v1)
-        .service(openapi::coordination_v1);
+        .service(openapi_core_v1)
+        .service(openapi_coordination_v1);
 }
 
 pub(super) fn register_endpoints(config: &mut ServiceConfig) {

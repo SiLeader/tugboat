@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use actix_web::{HttpResponse, Responder, get};
+use utoipa::OpenApi;
 use utoipa_actix_web::service_config::ServiceConfig;
 
 mod clusternetworkclass_create;
@@ -37,6 +39,54 @@ mod ship_status_replace;
 mod shipclass_create;
 mod shipclass_list;
 mod shipclass_read;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        clusternetworkclass_create::handle_clusternetworkclass_create,
+        clusternetworkclass_list::handle_clusternetworkclass_list,
+        clusternetworkclass_read::handle_clusternetworkclass_read,
+        namespace_create::handle_namespace_create,
+        namespace_list::handle_namespace_list,
+        namespace_read::handle_namespace_read,
+        node_create::handle_node_create,
+        node_delete::handle_node_delete,
+        node_list::handle_node_list,
+        node_read::handle_node_read,
+        node_replace::handle_node_replace,
+        networkclass_create::handle_networkclass_create,
+        networkclass_list::handle_networkclass_list,
+        networkclass_list::handle_networkclass_list_all,
+        networkclass_read::handle_networkclass_read,
+        ship_create::handle_ship_create,
+        ship_list::handle_ship_list,
+        ship_list::handle_ship_list_all,
+        ship_read::handle_ship_read,
+        ship_replace::handle_ship_replace,
+        ship_status_patch::handle_ship_status_patch,
+        ship_status_replace::handle_ship_status_replace,
+        shipclass_create::handle_shipclass_create,
+        shipclass_list::handle_shipclass_list,
+        shipclass_read::handle_shipclass_read,
+    ),
+    components(schemas(
+        tugboat_resources::manifests::core::v1::Namespace,
+        tugboat_resources::manifests::core::v1::Node,
+        tugboat_resources::manifests::core::v1::Ship,
+        tugboat_resources::manifests::core::v1::ShipClass,
+        tugboat_resources::manifests::core::v1::NetworkClass,
+        tugboat_resources::manifests::core::v1::ClusterNetworkClass,
+        tugboat_resources::manifests::meta::v1::ObjectMeta,
+        tugboat_resources::manifests::meta::v1::TypeMeta,
+        tugboat_resources::manifests::meta::v1::Time,
+    ))
+)]
+struct CoreV1ApiDoc;
+
+#[get("/openapi/v3/api/v1")]
+pub(crate) async fn openapi_core_v1() -> impl Responder {
+    HttpResponse::Ok().json(CoreV1ApiDoc::openapi())
+}
 
 pub(super) fn register_clusternetworkclass(service: &mut ServiceConfig) {
     service

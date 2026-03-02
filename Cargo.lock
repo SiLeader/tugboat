@@ -3337,10 +3337,12 @@ dependencies = [
 name = "tugboat-resources"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "prost",
  "prost-build",
  "regex",
  "serde",
+ "serde_json",
  "utoipa",
 ]
 

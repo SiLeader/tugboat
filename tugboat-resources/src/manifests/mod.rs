@@ -82,5 +82,65 @@ pub mod meta {
                 Time { seconds, nanos }
             }
         }
+
+        impl serde::Serialize for Time {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                if let Some(dt) =
+                    ::chrono::DateTime::from_timestamp(self.seconds, self.nanos as u32)
+                {
+                    serializer.serialize_str(&dt.to_rfc3339())
+                } else {
+                    use serde::ser::Error;
+                    Err(S::Error::custom("invalid timestamp"))
+                }
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for Time {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let s = String::deserialize(deserializer)?;
+                let dt =
+                    ::chrono::DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
+                let dt_utc = dt.with_timezone(&::chrono::Utc);
+                Ok(Time {
+                    seconds: dt_utc.timestamp(),
+                    nanos: dt_utc.timestamp_subsec_nanos() as i32,
+                })
+            }
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            #[test]
+            fn test_time_serialization() {
+                let t = Time {
+                    seconds: 1678896000, // 2023-03-15T16:00:00Z
+                    nanos: 0,
+                };
+                let json = serde_json::to_string(&t).unwrap();
+                // Depending on chrono version/timezone, output might vary slightly, but should be RFC3339
+                assert!(json.contains("2023-03-15T16:00:00"));
+
+                let t2: Time = serde_json::from_str(&json).unwrap();
+                assert_eq!(t.seconds, t2.seconds);
+                assert_eq!(t.nanos, t2.nanos);
+            }
+
+            #[test]
+            fn test_time_deserialization() {
+                let json = "\"2023-03-15T16:00:00.123456Z\"";
+                let t: Time = serde_json::from_str(json).unwrap();
+                assert_eq!(t.seconds, 1678896000);
+                assert_eq!(t.nanos, 123456000);
+            }
+        }
     }
 }

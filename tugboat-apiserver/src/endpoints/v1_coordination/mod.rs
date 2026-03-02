@@ -12,12 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use actix_web::{HttpResponse, Responder, get};
+use utoipa::OpenApi;
 use utoipa_actix_web::service_config::ServiceConfig;
 
 mod lease_create;
 mod lease_list;
 mod lease_read;
 mod lease_replace;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        lease_create::handle_lease_create,
+        lease_list::handle_lease_list,
+        lease_list::handle_lease_list_all,
+        lease_read::handle_lease_read,
+        lease_replace::handle_lease_replace,
+    ),
+    components(schemas(
+        tugboat_resources::manifests::coordination::v1::Lease,
+        tugboat_resources::manifests::meta::v1::ObjectMeta,
+        tugboat_resources::manifests::meta::v1::TypeMeta,
+        tugboat_resources::manifests::meta::v1::Time,
+    ))
+)]
+struct CoordinationV1ApiDoc;
+
+#[get("/openapi/v3/apis/coordination/v1")]
+pub(crate) async fn openapi_coordination_v1() -> impl Responder {
+    HttpResponse::Ok().json(CoordinationV1ApiDoc::openapi())
+}
 
 pub(super) fn register_lease(service: &mut ServiceConfig) {
     service

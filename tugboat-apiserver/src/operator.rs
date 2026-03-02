@@ -14,7 +14,7 @@
 
 use crate::name_generator::NameGenerator;
 use tugboat_resource_store::ResourceStore;
-use tugboat_resources::manifests::meta::v1::ObjectMeta;
+use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
 use uuid::Uuid;
 
 pub(crate) struct ApiOperator {
@@ -41,6 +41,7 @@ impl ApiOperator {
 
     pub(crate) fn apply_uid(&self, mut object_meta: ObjectMeta) -> ObjectMeta {
         object_meta.uid = Some(Uuid::new_v4().to_string());
+        object_meta.creation_timestamp = Some(Time::now());
         object_meta
     }
 }

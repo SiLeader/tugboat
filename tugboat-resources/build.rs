@@ -13,24 +13,41 @@
 // limitations under the License.
 
 fn main() {
-    prost_build::Config::default()
-        .type_attribute(
-            ".",
-            if cfg!(feature = "schema") {
-                "#[derive(::utoipa::ToSchema, ::serde::Serialize, ::serde::Deserialize)]"
-            } else {
-                "#[derive(::serde::Serialize, ::serde::Deserialize)]"
-            },
-        )
-        .message_attribute(".", "#[serde(rename_all = \"camelCase\")]")
-        .enum_attribute(".", "#[serde(rename_all = \"PascalCase\"")
-        .field_attribute("object_meta", "#[serde(rename = \"metadata\")]")
-        .field_attribute("type_meta", "#[serde(flatten)]")
-        .field_attribute(
-            ".",
-            "#[serde(default, skip_serializing_if = \"crate::manifests::default\")]",
-        )
-        .compile_protos(
+    let derives = if cfg!(feature = "schema") {
+        "#[derive(::utoipa::ToSchema, ::serde::Serialize, ::serde::Deserialize)]"
+    } else {
+        "#[derive(::serde::Serialize, ::serde::Deserialize)]"
+    };
+
+    let mut config = prost_build::Config::default();
+    
+    // Apply default field attributes
+    // Only applied to specific fields by name
+    config.field_attribute("object_meta", "#[serde(rename = \"metadata\")]");
+    config.field_attribute("type_meta", "#[serde(flatten)]");
+
+    let resources = [
+        ".tugboat.core.v1",
+        ".tugboat.coordination.v1",
+        ".tugboat.meta.v1.ObjectMeta",
+        ".tugboat.meta.v1.TypeMeta",
+    ];
+
+    for res in resources {
+        config.type_attribute(res, derives);
+        // Apply camelCase rename to struct/enum
+        config.type_attribute(res, "#[serde(rename_all = \"camelCase\")]");
+        // Apply default skip to fields within these types
+        // Note: this applies the attribute to all fields in messages matching the path
+        config.field_attribute(res, "#[serde(default, skip_serializing_if = \"crate::manifests::default\")]");
+    }
+    
+    // For Time, we only add ToSchema if needed
+    if cfg!(feature = "schema") {
+        config.type_attribute(".tugboat.meta.v1.Time", "#[derive(::utoipa::ToSchema)]");
+    }
+
+    config.compile_protos(
             &[
                 // core/v1
                 "proto/core/v1/namespace.proto",
@@ -40,8 +57,8 @@ fn main() {
                 "proto/core/v1/ship_class.proto",
                 // meta/v1
                 "proto/meta/v1/object_meta.proto",
-                "proto/meta/v1/time.proto",
                 "proto/meta/v1/type_meta.proto",
+                "proto/meta/v1/time.proto",
                 // coordination/v1
                 "proto/coordination/v1/lease.proto",
             ],

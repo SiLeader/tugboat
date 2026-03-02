@@ -26,6 +26,10 @@ prost.workspace = true
 regex.workspace = true
 
 utoipa = { workspace = true, optional = true }
+chrono = { version = "0.4.42", features = ["serde"] }
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

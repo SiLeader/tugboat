@@ -19,7 +19,7 @@ use serde::Serialize;
 use std::fmt::{Display, Formatter};
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, TypeMeta};
 
-#[derive(Debug, Serialize, thiserror::Error)]
+#[derive(Debug, Serialize, thiserror::Error, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StatusResponse {
     #[serde(flatten)]
