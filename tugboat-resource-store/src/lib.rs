@@ -152,13 +152,13 @@ impl ResourceStore {
                     // But the header revision is the global revision, which is NOT the mod_revision (unless it's the only change).
                     // Actually, mod_revision = global revision at the time of modification.
                     // So using header.revision() IS correct for the NEW revision of this key.
-                    
+
                     // Wait, if header.revision() is 100, and this key was modified, its mod_revision will be 100.
                     // So for PUT response, header.revision() matches the new mod_revision of the key.
                     // BUT for GET, we were reading header.revision() which was global revision (e.g. 105),
                     // while the key might have been last modified at 100.
                     // So we were comparing 100 (from key) vs 105 (from header).
-                    
+
                     // So, in PUT response, using header.revision() is likely correct as it represents the revision of the transaction.
                     p
                 } else {
