@@ -16,4 +16,4 @@
 pub mod operator;
 pub mod run;
 pub mod status;
-mod stop;
+pub mod stop;

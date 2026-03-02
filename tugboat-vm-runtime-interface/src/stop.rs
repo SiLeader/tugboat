@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VmStopType {
+    /// Send shutdown signal
     Shutdown,
+    /// Power Off immediately
     PowerOff,
 }
 

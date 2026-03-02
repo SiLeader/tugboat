@@ -15,7 +15,7 @@
 use crate::cmd::start;
 use crate::execute::vm::QemuVmConfig;
 use clap::{Parser, Subcommand};
-use cmd::{create, run, status};
+use cmd::{create, run, status, stop};
 use nix::errno::Errno;
 use serde::Deserialize;
 use thiserror::Error;
@@ -58,6 +58,7 @@ enum SubCommand {
     Status(status::StatusArgs),
     Create(create::CreateArgs),
     Start(start::StartArgs),
+    Stop(stop::StopArgs),
 }
 
 #[derive(Deserialize)]
@@ -78,6 +79,7 @@ pub async fn run() {
         SubCommand::Status(status_args) => status::status(config.qemu, status_args).await,
         SubCommand::Create(create_args) => create::create(config.qemu, create_args).await,
         SubCommand::Start(start_args) => start::start(start_args).await,
+        SubCommand::Stop(stop_args) => stop::stop(config.qemu, stop_args).await,
     } {
         error!("Runtime error: {e}");
         todo!();
