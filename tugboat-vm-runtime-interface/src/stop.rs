@@ -12,8 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(feature = "operator")]
-pub mod operator;
-pub mod run;
-pub mod status;
-mod stop;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum VmStopType {
+    Shutdown,
+    PowerOff,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmStopRequest {
+    pub id: String,
+    pub stop_type: VmStopType,
+}

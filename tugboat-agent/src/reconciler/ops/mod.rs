@@ -12,8 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(feature = "operator")]
-pub mod operator;
-pub mod run;
-pub mod status;
-mod stop;
+pub(crate) mod add;
+pub(crate) mod modify;

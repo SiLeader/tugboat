@@ -14,6 +14,7 @@
 
 use crate::run::VmRunRequest;
 use crate::status::VmStatusResponse;
+use crate::stop::{VmStopRequest, VmStopType};
 use serde::Serialize;
 use std::process::{ExitStatus, Stdio};
 use tokio::io::AsyncWriteExt;
@@ -106,6 +107,12 @@ impl VmRuntimeOperator {
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ))
         }
+    }
+
+    pub async fn stop(&self, args: VmStopRequest) -> Result<(), Error> {
+        let child = self.call("stop", &args).await?;
+        handle_command_response(child).await?;
+        Ok(())
     }
 }
 

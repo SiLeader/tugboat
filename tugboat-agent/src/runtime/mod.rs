@@ -48,6 +48,10 @@ impl RuntimeOperator {
             http_hosts,
         }
     }
+
+    pub(crate) async fn has_ship(&self, id: &str) -> bool {
+        self.children.read().await.contains_key(id)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

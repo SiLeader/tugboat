@@ -14,6 +14,7 @@
 
 mod error;
 mod network;
+mod ops;
 mod reconcile;
 
 use crate::cni::CniWrapper;
