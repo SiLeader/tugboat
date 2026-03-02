@@ -91,9 +91,12 @@ impl ShipReconciler {
             };
             match event {
                 Ok(event) => {
-                    if let Err(e) = self.reconcile(event).await {
-                        error!("Failed to reconcile ship: {e}");
-                    }
+                    let this = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = this.reconcile(event).await {
+                            error!("Failed to reconcile ship: {e}");
+                        }
+                    });
                 }
                 Err(err) => {
                     error!("Failed to watch ship: {err}");

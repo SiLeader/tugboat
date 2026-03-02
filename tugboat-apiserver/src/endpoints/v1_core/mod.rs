@@ -17,12 +17,15 @@ use utoipa::OpenApi;
 use utoipa_actix_web::service_config::ServiceConfig;
 
 mod clusternetworkclass_create;
+mod clusternetworkclass_delete;
 mod clusternetworkclass_list;
 mod clusternetworkclass_read;
 mod namespace_create;
+mod namespace_delete;
 mod namespace_list;
 mod namespace_read;
 mod networkclass_create;
+mod networkclass_delete;
 mod networkclass_list;
 mod networkclass_read;
 mod node_create;
@@ -31,12 +34,14 @@ mod node_list;
 mod node_read;
 mod node_replace;
 mod ship_create;
+mod ship_delete;
 mod ship_list;
 mod ship_read;
 mod ship_replace;
 mod ship_status_patch;
 mod ship_status_replace;
 mod shipclass_create;
+mod shipclass_delete;
 mod shipclass_list;
 mod shipclass_read;
 
@@ -44,9 +49,11 @@ mod shipclass_read;
 #[openapi(
     paths(
         clusternetworkclass_create::handle_clusternetworkclass_create,
+        clusternetworkclass_delete::handle_clusternetworkclass_delete,
         clusternetworkclass_list::handle_clusternetworkclass_list,
         clusternetworkclass_read::handle_clusternetworkclass_read,
         namespace_create::handle_namespace_create,
+        namespace_delete::handle_namespace_delete,
         namespace_list::handle_namespace_list,
         namespace_read::handle_namespace_read,
         node_create::handle_node_create,
@@ -55,10 +62,12 @@ mod shipclass_read;
         node_read::handle_node_read,
         node_replace::handle_node_replace,
         networkclass_create::handle_networkclass_create,
+        networkclass_delete::handle_networkclass_delete,
         networkclass_list::handle_networkclass_list,
         networkclass_list::handle_networkclass_list_all,
         networkclass_read::handle_networkclass_read,
         ship_create::handle_ship_create,
+        ship_delete::handle_ship_delete,
         ship_list::handle_ship_list,
         ship_list::handle_ship_list_all,
         ship_read::handle_ship_read,
@@ -66,6 +75,7 @@ mod shipclass_read;
         ship_status_patch::handle_ship_status_patch,
         ship_status_replace::handle_ship_status_replace,
         shipclass_create::handle_shipclass_create,
+        shipclass_delete::handle_shipclass_delete,
         shipclass_list::handle_shipclass_list,
         shipclass_read::handle_shipclass_read,
     ),
@@ -91,6 +101,7 @@ pub(crate) async fn openapi_core_v1() -> impl Responder {
 pub(super) fn register_clusternetworkclass(service: &mut ServiceConfig) {
     service
         .service(clusternetworkclass_create::handle_clusternetworkclass_create)
+        .service(clusternetworkclass_delete::handle_clusternetworkclass_delete)
         .service(clusternetworkclass_list::handle_clusternetworkclass_list)
         .service(clusternetworkclass_read::handle_clusternetworkclass_read);
 }
@@ -98,6 +109,7 @@ pub(super) fn register_clusternetworkclass(service: &mut ServiceConfig) {
 pub(super) fn register_namespace(service: &mut ServiceConfig) {
     service
         .service(namespace_create::handle_namespace_create)
+        .service(namespace_delete::handle_namespace_delete)
         .service(namespace_list::handle_namespace_list)
         .service(namespace_read::handle_namespace_read);
 }
@@ -114,6 +126,7 @@ pub(super) fn register_node(service: &mut ServiceConfig) {
 pub(super) fn register_networkclass(service: &mut ServiceConfig) {
     service
         .service(networkclass_create::handle_networkclass_create)
+        .service(networkclass_delete::handle_networkclass_delete)
         .service(networkclass_list::handle_networkclass_list)
         .service(networkclass_list::handle_networkclass_list_all)
         .service(networkclass_read::handle_networkclass_read);
@@ -122,6 +135,7 @@ pub(super) fn register_networkclass(service: &mut ServiceConfig) {
 pub(super) fn register_ship(service: &mut ServiceConfig) {
     service
         .service(ship_create::handle_ship_create)
+        .service(ship_delete::handle_ship_delete)
         .service(ship_list::handle_ship_list)
         .service(ship_list::handle_ship_list_all)
         .service(ship_read::handle_ship_read)
@@ -133,6 +147,7 @@ pub(super) fn register_ship(service: &mut ServiceConfig) {
 pub(super) fn register_shipclass(service: &mut ServiceConfig) {
     service
         .service(shipclass_create::handle_shipclass_create)
+        .service(shipclass_delete::handle_shipclass_delete)
         .service(shipclass_list::handle_shipclass_list)
         .service(shipclass_read::handle_shipclass_read);
 }
