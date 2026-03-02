@@ -20,7 +20,18 @@ use actix_web::web::{Data, Query};
 use actix_web::{HttpResponse, get};
 use tugboat_resources::manifests::core::v1::Namespace;
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "List of resources", body = [Namespace]),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("watch" = Option<String>, Query, description = "Watch for changes"),
+        ("resourceVersion" = Option<String>, Query, description = "Resource version to watch from"),
+        ("fieldSelector" = Option<String>, Query, description = "Filter by field"),
+        ("labelSelector" = Option<String>, Query, description = "Filter by label"),
+    )
+)]
 #[get("/api/v1/namespaces")]
 pub(super) async fn handle_namespace_list(
     query: Query<ListQuery>,

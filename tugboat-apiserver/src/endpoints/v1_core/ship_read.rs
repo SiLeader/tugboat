@@ -27,7 +27,17 @@ pub(super) struct ShipReadPathParams {
     name: String,
 }
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource details", body = Ship),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the resource"),
+        ("name" = String, Path, description = "Name of the resource"),
+    )
+)]
 #[get("/api/v1/namespaces/{namespace}/ships/{name}")]
 pub(super) async fn handle_ship_read(
     path: Path<ShipReadPathParams>,

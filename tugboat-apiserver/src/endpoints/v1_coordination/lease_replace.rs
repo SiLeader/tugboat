@@ -27,7 +27,18 @@ pub(super) struct LeaseReplacePathParams {
     name: String,
 }
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource updated", body = Lease),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the resource"),
+        ("name" = String, Path, description = "Name of the resource"),
+    ),
+    request_body = Lease
+)]
 #[put("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
 pub(super) async fn handle_lease_replace(
     path: Path<LeaseReplacePathParams>,

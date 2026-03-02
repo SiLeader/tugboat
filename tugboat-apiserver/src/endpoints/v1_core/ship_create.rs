@@ -20,7 +20,17 @@ use actix_web::post;
 use actix_web::web::{Data, Json, Path};
 use tugboat_resources::manifests::core::v1::Ship;
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource created", body = Ship),
+        (status = 409, description = "Resource already exists", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the resource"),
+    ),
+    request_body = Ship
+)]
 #[post("/api/v1/namespaces/{namespace}/ships")]
 pub(super) async fn handle_ship_create(
     path: Path<NamespacedPathParams>,

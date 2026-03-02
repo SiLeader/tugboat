@@ -27,7 +27,17 @@ pub(super) struct LeaseReadPathParams {
     name: String,
 }
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource details", body = Lease),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the resource"),
+        ("name" = String, Path, description = "Name of the resource"),
+    )
+)]
 #[get("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
 pub(super) async fn handle_lease_read(
     path: Path<LeaseReadPathParams>,

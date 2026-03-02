@@ -19,7 +19,14 @@ use actix_web::post;
 use actix_web::web::{Data, Json};
 use tugboat_resources::manifests::core::v1::Node;
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource created", body = Node),
+        (status = 409, description = "Resource already exists", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    request_body = Node
+)]
 #[post("/api/v1/nodes")]
 pub(super) async fn handle_node_create(
     json: Json<Node>,

@@ -27,7 +27,18 @@ pub(super) struct ShipPatchPathParams {
     name: String,
 }
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource updated", body = Ship),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the resource"),
+        ("name" = String, Path, description = "Name of the resource"),
+    ),
+    request_body = Object
+)]
 #[patch("/api/v1/namespaces/{namespace}/ships/{name}/status")]
 pub(super) async fn handle_ship_status_patch(
     path: Path<ShipPatchPathParams>,

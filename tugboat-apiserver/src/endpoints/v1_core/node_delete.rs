@@ -26,7 +26,16 @@ pub(super) struct NodeDeletePathParams {
     name: String,
 }
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource deleted", body = Node),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("name" = String, Path, description = "Name of the resource"),
+    )
+)]
 #[delete("/api/v1/nodes/{name}")]
 pub(super) async fn handle_node_delete(
     path: Path<NodeDeletePathParams>,

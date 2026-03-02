@@ -26,7 +26,16 @@ pub(super) struct ReadParams {
     name: String,
 }
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource details", body = ClusterNetworkClass),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("name" = String, Path, description = "Name of the resource"),
+    )
+)]
 #[get("/api/v1/clusternetworkclasses/{name}")]
 pub(super) async fn handle_clusternetworkclass_read(
     path: Path<ReadParams>,

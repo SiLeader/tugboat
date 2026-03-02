@@ -26,7 +26,17 @@ pub(super) struct NodeReplacePathParams {
     name: String,
 }
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource updated", body = Node),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("name" = String, Path, description = "Name of the resource"),
+    ),
+    request_body = Node
+)]
 #[put("/api/v1/nodes/{name}")]
 pub(super) async fn handle_node_replace(
     path: Path<NodeReplacePathParams>,

@@ -20,7 +20,19 @@ use actix_web::web::{Data, Path, Query};
 use actix_web::{HttpResponse, get};
 use tugboat_resources::manifests::coordination::v1::Lease;
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "List of resources", body = [Lease]),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the resource"),
+        ("watch" = Option<String>, Query, description = "Watch for changes"),
+        ("resourceVersion" = Option<String>, Query, description = "Resource version to watch from"),
+        ("fieldSelector" = Option<String>, Query, description = "Filter by field"),
+        ("labelSelector" = Option<String>, Query, description = "Filter by label"),
+    )
+)]
 #[get("/apis/coordination/v1/namespaces/{namespace}/leases")]
 pub(super) async fn handle_lease_list(
     path: Path<NamespacedPathParams>,
@@ -35,7 +47,18 @@ pub(super) async fn handle_lease_list(
     .await
 }
 
-#[utoipa::path()]
+#[utoipa::path(
+    responses(
+        (status = 200, description = "List of resources", body = [Lease]),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("watch" = Option<String>, Query, description = "Watch for changes"),
+        ("resourceVersion" = Option<String>, Query, description = "Resource version to watch from"),
+        ("fieldSelector" = Option<String>, Query, description = "Filter by field"),
+        ("labelSelector" = Option<String>, Query, description = "Filter by label"),
+    )
+)]
 #[get("/apis/coordination/v1/leases")]
 pub(super) async fn handle_lease_list_all(
     query: Query<ListQuery>,
