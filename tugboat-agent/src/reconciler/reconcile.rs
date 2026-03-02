@@ -24,11 +24,7 @@ impl ShipReconciler {
     pub(super) async fn reconcile(&self, event: WatchEvent<Ship>) -> Result<(), ReconcileError> {
         match event {
             WatchEvent::Modified(ship) => self.reconcile_modified(ship).await,
-            WatchEvent::Deleted(ship) => {
-                // TODO deleted
-                warn!("Delete Ship is not handled yet. (Ship: {ship:?})");
-                Ok(())
-            }
+            WatchEvent::Deleted(ship) => self.reconcile_deleted(ship).await,
             WatchEvent::Added(ship) => self.reconcile_added(ship).await,
         }
     }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod create;
+mod delete;
 pub(crate) mod error;
 mod inner;
 mod start;

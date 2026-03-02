@@ -22,7 +22,6 @@ use crate::reconciler::reconcile::AppendStatus;
 use crate::runtime::RuntimeOperator;
 use futures::{Stream, StreamExt};
 use std::cmp::min;
-use std::collections::HashSet;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
