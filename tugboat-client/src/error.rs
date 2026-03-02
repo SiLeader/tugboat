@@ -34,11 +34,11 @@ pub enum Error {
 
 #[derive(Debug, Deserialize, thiserror::Error)]
 pub struct ApiStatus {
-    status: String,
-    message: String,
-    reason: String,
-    code: u16,
-    details: Option<serde_json::Value>,
+    pub status: String,
+    pub message: String,
+    pub reason: String,
+    pub code: u16,
+    pub details: Option<serde_json::Value>,
 }
 
 impl Display for ApiStatus {

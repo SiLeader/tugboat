@@ -113,17 +113,35 @@ impl ResourceStore {
 
         let res = match resource_version {
             Some(rv) => {
+                debug!("Attempting conditional update for {key} with rv={rv}");
                 let txn = Txn::new()
                     .when(vec![Compare::mod_revision(
                         key.as_str(),
                         CompareOp::Equal,
                         rv,
                     )])
-                    .and_then(vec![TxnOp::put(key.as_str(), bytes, None)]);
+                    .and_then(vec![TxnOp::put(key.as_str(), bytes, None)])
+                    .or_else(vec![TxnOp::get(key.as_str(), None)]);
+
                 let res = client.txn(txn).await?;
+
                 if !res.succeeded() {
+                    let header_rev = res.header().map(|h| h.revision()).unwrap_or(-1);
+                    // Extract current mod_revision from the get response in or_else
+                    let mut current_mod_rev = -1;
+                    if let Some(op_resp) = res.op_responses().first()
+                        && let TxnOpResponse::Get(range_resp) = op_resp
+                        && let Some(kv) = range_resp.kvs().first()
+                    {
+                        current_mod_rev = kv.mod_revision();
+                    }
+
+                    info!(
+                        "Optimistic lock failed for key {key}: expected rv {rv}, actual mod_revision {current_mod_rev}, global rev {header_rev}"
+                    );
                     return Err(Error::OptimisticLockFailed(rv));
                 }
+
                 if let TxnOpResponse::Put(p) = res
                     .op_responses()
                     .first()

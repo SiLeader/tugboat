@@ -128,23 +128,64 @@ impl LeaderElector {
         self.acquire_expired_lease(lease).await
     }
 
-    async fn renew_lease(&mut self, mut lease: Lease) -> bool {
-        let now = Time::now();
-        if let Some(ref mut spec) = lease.spec {
-            spec.renew_time = Some(now);
-        }
+    async fn renew_lease(&mut self, lease: Lease) -> bool {
+        // Use JSON patch or Merge patch if possible, but here we use replace_status equivalent logic
+        // but since Lease spec is what we update, we need to be careful.
+        // Actually, the issue might be that we are doing full replace.
+        // Let's try to just update the renewTime in a loop with fresh fetching.
+        
+        let mut current_lease = lease;
+        
+        for _ in 0..5 {
+            let now = Time::now();
+            if let Some(ref mut spec) = current_lease.spec {
+                spec.renew_time = Some(now);
+            }
 
-        match self.lease_api.replace(LEASE_NAME, lease).await {
-            Ok(_) => {
-                self.is_leader = true;
-                true
-            }
-            Err(e) => {
-                tracing::warn!("Failed to renew lease: {e}");
-                self.is_leader = false;
-                false
+            match self.lease_api.replace(LEASE_NAME, current_lease.clone()).await {
+                Ok(_) => {
+                    self.is_leader = true;
+                    return true;
+                }
+                Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
+                    tracing::warn!("Failed to renew lease due to conflict, retrying...");
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    
+                    match self.lease_api.get(LEASE_NAME).await {
+                        Ok(Some(latest)) => {
+                            let spec = latest.spec.as_ref();
+                            let holder = spec.map(|s| s.holder_identity.as_str());
+                            if holder == Some(self.identity.as_str()) {
+                                current_lease = latest;
+                                continue;
+                            } else {
+                                tracing::warn!("Lost leadership during renewal retry");
+                                self.is_leader = false;
+                                return false;
+                            }
+                        }
+                        Ok(None) => {
+                             self.is_leader = false;
+                             return false;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to get lease during retry: {e}");
+                            self.is_leader = false;
+                            return false;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to renew lease: {e}");
+                    self.is_leader = false;
+                    return false;
+                }
             }
         }
+        
+        tracing::warn!("Failed to renew lease after retries");
+        self.is_leader = false;
+        false
     }
 
     async fn acquire_expired_lease(&mut self, mut lease: Lease) -> bool {
