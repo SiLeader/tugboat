@@ -148,6 +148,18 @@ impl ResourceStore {
                     .ok_or(Error::OptimisticLockFailed(rv))?
                     .clone()
                 {
+                    // For PUT, we don't get the new mod_revision directly in the response unless we ask for it.
+                    // But the header revision is the global revision, which is NOT the mod_revision (unless it's the only change).
+                    // Actually, mod_revision = global revision at the time of modification.
+                    // So using header.revision() IS correct for the NEW revision of this key.
+                    
+                    // Wait, if header.revision() is 100, and this key was modified, its mod_revision will be 100.
+                    // So for PUT response, header.revision() matches the new mod_revision of the key.
+                    // BUT for GET, we were reading header.revision() which was global revision (e.g. 105),
+                    // while the key might have been last modified at 100.
+                    // So we were comparing 100 (from key) vs 105 (from header).
+                    
+                    // So, in PUT response, using header.revision() is likely correct as it represents the revision of the transaction.
                     p
                 } else {
                     return Err(Error::OptimisticLockFailed(rv));
@@ -158,6 +170,7 @@ impl ResourceStore {
 
         Ok(ContentData {
             data: value,
+            // For simple PUT, header.revision() is the revision of this modification.
             revision: res.header().map(|h| h.revision()).unwrap_or(0),
         })
     }
@@ -192,12 +205,13 @@ impl ResourceStore {
         let mut client = self.etcd.clone();
         let res = client.txn(txn).await?;
         debug!("Txn response: {res:?}");
-        if let Some(TxnOpResponse::Put(txn_res)) = res.op_responses().first()
+        if let Some(TxnOpResponse::Put(_txn_res)) = res.op_responses().first()
             && res.succeeded()
         {
             Ok(Some(ContentData {
                 data: value,
-                revision: txn_res.header().map(|h| h.revision()).unwrap_or(0),
+                // For a new key created in this txn, revision = header.revision()
+                revision: res.header().map(|h| h.revision()).unwrap_or(0),
             }))
         } else {
             Ok(None)
@@ -221,7 +235,7 @@ impl ResourceStore {
         let value = T::deserialize(kv.value())?;
         Ok(Some(ContentData {
             data: value,
-            revision: res.header().map(|h| h.revision()).unwrap_or(0),
+            revision: kv.mod_revision(),
         }))
     }
 
@@ -244,7 +258,7 @@ impl ResourceStore {
             let value = T::deserialize(kv.value())?;
             data.push(ContentData {
                 data: value,
-                revision: res.header().map(|h| h.revision()).unwrap_or(0),
+                revision: kv.mod_revision(),
             });
         }
         Ok(data)
@@ -280,7 +294,7 @@ impl ResourceStore {
         let value = T::deserialize(kv.value())?;
         Ok(Some(ContentData {
             data: value,
-            revision: response.header().map(|h| h.revision()).unwrap_or(0),
+            revision: kv.mod_revision(),
         }))
     }
 }
