@@ -61,8 +61,12 @@ impl FieldSelector {
             FieldSelector::NotEqual(key, v) => (key, v, false),
         };
 
-        let Some(value) = follow(&value, 0, key.as_slice()) else {
-            return false;
+        let Some(value) = follow(value, 0, key.as_slice()) else {
+            return if is_equal {
+                expected.is_empty()
+            } else {
+                !expected.is_empty()
+            };
         };
 
         if is_equal {
@@ -101,15 +105,14 @@ fn follow<'a>(
     if route.len() == index {
         return Some(value);
     }
-    let Some(obj) = value.as_object() else {
-        return None;
-    };
+    let obj = value.as_object()?;
     let data = obj.get(route.get(index)?)?;
     follow(data, index + 1, route)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::FieldSelector;
     use crate::endpoints::selector::Selector;
     use crate::endpoints::selector::field_selector::FilterByFieldSelector;
     use tugboat_resources::manifests::core::v1::{Ship, ShipSpec};
@@ -176,5 +179,42 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(actual.len(), 2);
+    }
+
+    #[test]
+    fn test_missing_field_matching_logic() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                node_name: None,
+                ..ShipSpec::default()
+            }),
+            ..Ship::default()
+        };
+        let val = serde_json::to_value(&ship).unwrap();
+
+        // Case 1: field == "" (should match)
+        let s1 = FieldSelector::Equal(vec!["spec".to_string(), "nodeName".to_string()], "".to_string());
+        assert!(s1.is_match(&val), "Missing field should match == ''");
+
+        // Case 2: field == "foo" (should not match)
+        let s2 = FieldSelector::Equal(vec!["spec".to_string(), "nodeName".to_string()], "foo".to_string());
+        assert!(!s2.is_match(&val), "Missing field should NOT match == 'foo'");
+
+        // Case 3: field != "" (should not match, because "" == "")
+        let s3 = FieldSelector::NotEqual(vec!["spec".to_string(), "nodeName".to_string()], "".to_string());
+        assert!(!s3.is_match(&val), "Missing field should NOT match != ''");
+
+        // Case 4: field != "foo" (should match, because "" != "foo")
+        let s4 = FieldSelector::NotEqual(vec!["spec".to_string(), "nodeName".to_string()], "foo".to_string());
+        assert!(s4.is_match(&val), "Missing field should match != 'foo'");
+
+        // Case 5: intermediate object missing
+        let ship_no_spec = Ship {
+            spec: None,
+            ..Ship::default()
+        };
+        let val_no_spec = serde_json::to_value(&ship_no_spec).unwrap();
+        let s5 = FieldSelector::Equal(vec!["spec".to_string(), "nodeName".to_string()], "".to_string());
+        assert!(s5.is_match(&val_no_spec), "Missing intermediate field should match == ''");
     }
 }
