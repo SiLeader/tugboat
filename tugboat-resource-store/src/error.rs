@@ -28,4 +28,6 @@ pub enum Error {
     EventEmit(#[from] tokio::sync::watch::error::SendError<Vec<WatchEvent>>),
     #[error("Optimistic lock error: revision: {0}")]
     OptimisticLockFailed(i64),
+    #[error("Invalid resource version: {0}")]
+    InvalidResourceVersion(String),
 }
