@@ -17,33 +17,35 @@ syntax = "proto3";
 import "meta/v1/type_meta.proto";
 import "meta/v1/object_meta.proto";
 
+import "core/v1/secret.proto";
+
 package tugboat.core.v1;
 
-message ShipNetworkClassReference {
-  string kind = 1;
-  string name = 2;
-  string api_group = 3;
-}
-
-message NetworkClass {
+message PersistentVolume {
   meta.v1.TypeMeta type_meta = 1;
   meta.v1.ObjectMeta object_meta = 2;
-  NetworkClassSpec spec = 3;
+  PersistentVolumeSpec spec = 3;
+  PersistentVolumeStatus status = 4;
 }
 
-message ClusterNetworkClass {
-  meta.v1.TypeMeta type_meta = 1;
-  meta.v1.ObjectMeta object_meta = 2;
-  NetworkClassSpec spec = 3;
+message PersistentVolumeSpec {
+  repeated string access_modes = 1;
+  string persistent_volume_reclaim_policy = 2;
+  string storage_class_name = 3;
+  string volume_mode = 4;
+  CsiPersistentVolumeSource csi = 5;
 }
 
-message NetworkClassSpec {
-  string subnet = 1;
-  repeated NetworkClassRoute routes = 2;
-  optional bool internet_access = 3;
-  optional bool cluster_network = 4;
+message PersistentVolumeStatus {
 }
 
-message NetworkClassRoute {
-  string destination = 1;
+message CsiPersistentVolumeSource {
+  string driver = 1;
+  SecretReference controller_expand_secret_ref = 2;
+  SecretReference controller_publish_secret_ref = 3;
+  SecretReference node_expand_secret_ref = 4;
+  SecretReference node_publish_secret_ref = 5;
+  SecretReference node_stage_secret_ref = 6;
+  bool read_only = 7;
+  string volume_handle = 8;
 }

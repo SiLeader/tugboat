@@ -18,6 +18,8 @@ import "meta/v1/object_meta.proto";
 import "meta/v1/time.proto";
 import "meta/v1/type_meta.proto";
 
+import "core/v1/network_class.proto";
+
 package tugboat.core.v1;
 
 message Ship {
@@ -31,7 +33,7 @@ message ShipSpec {
   string image = 1;
   string ship_class = 2;
   optional string node_name = 3;
-  repeated ShipNetworkClassRef network_class_ref = 4;
+  repeated ShipNetworkClassReference network_class_ref = 4;
   optional ShipUefi uefi = 5;
   repeated Toleration tolerations = 6;
   optional string scheduler_name = 7;
@@ -43,12 +45,6 @@ message Toleration {
   optional string value = 3;
   string effect = 4;
   optional int64 toleration_seconds = 5;
-}
-
-message ShipNetworkClassRef {
-  string kind = 1;
-  string name = 2;
-  string api_group = 3;
 }
 
 message ShipStatus {
