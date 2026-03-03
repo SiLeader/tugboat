@@ -79,7 +79,7 @@ utoipa = "5.4.0"
 utoipa-actix-web = "0.1.2"
 
 # HTTP client
-url = "2.5.7"
+url = "2.5.8"
 
 # store
 etcd-client = "0.17.0"
