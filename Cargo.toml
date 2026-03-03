@@ -59,7 +59,7 @@ tokio = "1.48.0"
 async-trait = "0.1.89"
 futures = "0.3.32"
 async-stream = "0.3.6"
-tokio-util = "0.7.17"
+tokio-util = "0.7.18"
 
 # tls
 openssl = "0.10.75"
