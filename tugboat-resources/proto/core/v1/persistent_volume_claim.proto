@@ -22,38 +22,26 @@ import "core/v1/secret.proto";
 
 package tugboat.core.v1;
 
-message PersistentVolume {
+message PersistentVolumeClaim {
   meta.v1.TypeMeta type_meta = 1;
   meta.v1.ObjectMeta object_meta = 2;
-  PersistentVolumeSpec spec = 3;
-  PersistentVolumeStatus status = 4;
+  PersistentVolumeClaimSpec spec = 3;
+  PersistentVolumeClaimStatus status = 4;
 }
 
-message PersistentVolumeSpec {
+message PersistentVolumeClaimSpec {
   repeated string access_modes = 1;
-  optional string persistent_volume_reclaim_policy = 2;
-  optional string storage_class_name = 3;
-  optional string volume_mode = 4;
-  CsiPersistentVolumeSource csi = 5;
+  optional string storage_class_name = 2;
+  optional string volume_mode = 3;
+  optional string volume_name = 4;
 }
 
-message PersistentVolumeStatus {
-  repeated PersistentVolumeCondition conditions = 1;
+message PersistentVolumeClaimStatus {
+  repeated PersistentVolumeClaimCondition conditions = 1;
 }
 
-message PersistentVolumeCondition {
+message PersistentVolumeClaimCondition {
   string status = 1;
   string message = 2;
   meta.v1.Time timestamp = 3;
-}
-
-message CsiPersistentVolumeSource {
-  string driver = 1;
-  SecretReference controller_expand_secret_ref = 2;
-  SecretReference controller_publish_secret_ref = 3;
-  SecretReference node_expand_secret_ref = 4;
-  SecretReference node_publish_secret_ref = 5;
-  SecretReference node_stage_secret_ref = 6;
-  bool read_only = 7;
-  string volume_handle = 8;
 }

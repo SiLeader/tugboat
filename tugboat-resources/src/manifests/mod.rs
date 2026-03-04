@@ -41,6 +41,23 @@ pub mod core {
             cluster
         );
         apply_resource!(Node, "core", "v1", "nodes", "node", cluster);
+        apply_resource!(
+            PersistentVolume,
+            "core",
+            "v1",
+            "persistentvolumes",
+            "persistentvolume",
+            cluster
+        );
+        apply_resource!(
+            PersistentVolumeClaim,
+            "core",
+            "v1",
+            "persistentvolumeclaims",
+            "persistentvolume",
+            namespaced
+        );
+        apply_resource!(Secret, "core", "v1", "secrets", "secret", namespaced);
         apply_resource!(Ship, "core", "v1", "ships", "ship", namespaced);
         apply_resource!(ShipClass, "core", "v1", "shipclasses", "shipclass", cluster);
 
@@ -48,6 +65,9 @@ pub mod core {
         apply_validators!(NetworkClass, validators NameValidator);
         apply_validators!(ClusterNetworkClass, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(Node, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(PersistentVolume, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(PersistentVolumeClaim, validators NameValidator);
+        apply_validators!(Secret, validators NameValidator);
         apply_validators!(Ship, validators NameValidator);
         apply_validators!(ShipClass, validators NameValidator, NamespaceProhibitedValidator);
     }
