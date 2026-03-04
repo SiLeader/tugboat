@@ -22,6 +22,7 @@ pub struct VmRunRequest {
     pub memory: u64,
     pub id: String,
     pub networks: Vec<VmNetworkConfig>,
+    pub volumes: Vec<VmVolumeConfig>,
     pub uefi: VmUefiConfig,
     #[serde(default)]
     pub user: VmExecUser,
@@ -52,4 +53,12 @@ pub struct VmNetworkConfig {
 #[serde(rename_all = "camelCase")]
 pub struct VmUefiConfig {
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmVolumeConfig {
+    pub host_path: String,
+    pub format: String,
+    pub read_only: bool,
 }
