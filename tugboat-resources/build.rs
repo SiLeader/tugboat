@@ -20,7 +20,7 @@ fn main() {
     };
 
     let mut config = prost_build::Config::default();
-    
+
     // Apply default field attributes
     // Only applied to specific fields by name
     config.field_attribute("object_meta", "#[serde(rename = \"metadata\")]");
@@ -39,20 +39,27 @@ fn main() {
         config.type_attribute(res, "#[serde(rename_all = \"camelCase\")]");
         // Apply default skip to fields within these types
         // Note: this applies the attribute to all fields in messages matching the path
-        config.field_attribute(res, "#[serde(default, skip_serializing_if = \"crate::manifests::default\")]");
+        config.field_attribute(
+            res,
+            "#[serde(default, skip_serializing_if = \"crate::manifests::default\")]",
+        );
     }
-    
+
     // For Time, we only add ToSchema if needed
     if cfg!(feature = "schema") {
         config.type_attribute(".tugboat.meta.v1.Time", "#[derive(::utoipa::ToSchema)]");
     }
 
-    config.compile_protos(
+    config
+        .compile_protos(
             &[
                 // core/v1
                 "proto/core/v1/namespace.proto",
                 "proto/core/v1/network_class.proto",
                 "proto/core/v1/node.proto",
+                "proto/core/v1/persistent_volume.proto",
+                "proto/core/v1/persistent_volume_claim.proto",
+                "proto/core/v1/secret.proto",
                 "proto/core/v1/ship.proto",
                 "proto/core/v1/ship_class.proto",
                 // meta/v1
