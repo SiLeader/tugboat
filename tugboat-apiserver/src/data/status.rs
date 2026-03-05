@@ -126,6 +126,12 @@ impl From<tugboat_resource_store::error::Error> for StatusResponse {
                     Some(serde_json::json!({"revision": revision})),
                 )
             }
+            tugboat_resource_store::error::Error::InvalidResourceVersion(resource_version) => {
+                StatusResponse::bad_request(
+                    "Invalid resourceVersion",
+                    Some(serde_json::json!({"resourceVersion": resource_version})),
+                )
+            }
         }
     }
 }
