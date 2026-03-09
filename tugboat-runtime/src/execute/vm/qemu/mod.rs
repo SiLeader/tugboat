@@ -24,7 +24,9 @@ use std::fs::copy;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, info};
-use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest};
+use tugboat_vm_runtime_interface::run::{
+    VmCpuConfig, VmNetworkConfig, VmRunRequest, VmVolumeConfig,
+};
 
 #[derive(Debug, Clone)]
 struct QemuVm<'a> {
@@ -58,6 +60,7 @@ impl RunVm for QemuVm<'_> {
             .qemu_args(&self.args.cpu)
             .qemu_args(&SizeInBytes(self.args.memory))
             .qemu_args(&self.args.networks)
+            .qemu_args(&self.args.volumes)
             .qemu_args(&img)
             .qemu_args_with_arg_if(self.args.uefi.enabled, &self.config.uefi, &self)
             .debug_command()
@@ -119,6 +122,24 @@ impl QemuArgs<Vec<VmNetworkConfig>> for Command {
 
             let dev = format!("virtio-net-pci,netdev=net{idx},mac={}", network.mac_address);
             self.arg("-device").arg(dev);
+        }
+        self
+    }
+}
+
+impl QemuArgs<Vec<VmVolumeConfig>> for Command {
+    fn qemu_args(&mut self, value: &Vec<VmVolumeConfig>) -> &mut Self {
+        for (idx, vol) in value.iter().enumerate() {
+            // index=0 is used for BootDisk
+            let ro = if vol.read_only { "on" } else { "off" };
+            let opts = format!(
+                "if=virtio,format={},index={},media=disk,readonly={},file={}",
+                vol.format,
+                idx + 1,
+                ro,
+                vol.host_path
+            );
+            self.arg("-drive").arg(opts);
         }
         self
     }

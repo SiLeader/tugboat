@@ -70,6 +70,7 @@ impl RuntimeOperator {
             uefi: VmUefiConfig {
                 enabled: ship_spec.uefi.map(|u| u.enabled).unwrap_or(false),
             },
+            volumes: vec![], // TODO
         };
         debug!("Creating VM: {:?}", vm_config);
         let pid = self.operator.create(vm_config).await?;

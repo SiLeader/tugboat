@@ -17,7 +17,7 @@ use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use tugboat_client::Api;
 use tugboat_resources::manifests::core::v1::{
-    ClusterNetworkClass, NetworkClass, ShipNetworkClassRef, ShipSpec,
+    ClusterNetworkClass, NetworkClass, ShipNetworkClassReference, ShipSpec,
 };
 
 impl ShipReconciler {
@@ -45,7 +45,7 @@ impl ShipReconciler {
         cluster_scoped_api: &Api<ClusterNetworkClass>,
         namespaced_api: &Api<NetworkClass>,
         namespace: &str,
-        nc_ref: &ShipNetworkClassRef,
+        nc_ref: &ShipNetworkClassReference,
     ) -> Result<NetworkClassInfo, ReconcileError> {
         if nc_ref.api_group != "core" && !nc_ref.api_group.is_empty() {
             return Err(ReconcileError::InvalidNetworkClassRef(

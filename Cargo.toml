@@ -24,6 +24,7 @@ members = [
     "tugboat-vm-image",
     "tugboat-vm-runtime-interface",
     "tugboat-cni-operator",
+    "tugboat-csi-operator",
     "tugboat-scheduler",
 ]
 resolver = "3"
@@ -40,6 +41,7 @@ tugboat-client = { path = "tugboat-client" }
 tugboat-vm-image = { path = "tugboat-vm-image" }
 tugboat-vm-runtime-interface = { path = "tugboat-vm-runtime-interface" }
 tugboat-cni-operator = { path = "tugboat-cni-operator" }
+tugboat-csi-operator = { path = "tugboat-csi-operator" }
 
 # command line
 clap = "4.5.53"
@@ -51,7 +53,9 @@ serde_json = "1.0.149"
 json_value_merge = "2.0.1"
 
 # protobuf
+tonic = "0.14.5"
 prost = "0.14.1"
+tonic-prost-build = "0.14.5"
 prost-build = "0.14.1"
 
 # async

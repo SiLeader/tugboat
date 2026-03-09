@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::csi::CsiDrivers;
 use crate::reconciler::ShipReconciler;
 use crate::runtime::RuntimeOperator;
 use clap::Parser;
@@ -19,6 +20,7 @@ use tugboat_client::TugboatClient;
 
 mod cni;
 mod config;
+mod csi;
 mod node_registration;
 mod reconciler;
 mod runtime;
@@ -46,14 +48,22 @@ pub async fn run() {
         config.image.cache_dir,
         config.image.http_hosts,
     );
-    let cni_operator = tugboat_cni_operator::CniOperator::new(config.cni);
+    let csi_operator = tugboat_csi_operator::TugboatCsiOperator::default();
+    let cni_operator = tugboat_cni_operator::TugboatCniOperator::new(config.cni);
 
     cni_operator
         .initialize()
         .await
         .unwrap_or_else(|e| panic!("Failed to initialize CNI operator: {e}"));
 
-    let reconciler = ShipReconciler::new(config.node.name, client, runtime_operator, cni_operator);
+    let reconciler = ShipReconciler::new(
+        config.node.name,
+        client,
+        runtime_operator,
+        cni_operator,
+        csi_operator,
+        CsiDrivers::default(),
+    );
 
     reconciler.run().await;
 }

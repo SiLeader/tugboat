@@ -15,14 +15,14 @@
 use sha2::Digest;
 use tracing::{debug, info};
 use tugboat_cni_operator::{
-    CniConfContent, CniConfHeader, CniIpam, CniIpamRoute, CniNetConfList, CniOperator,
+    CniConfContent, CniConfHeader, CniIpam, CniIpamRoute, CniNetConfList, TugboatCniOperator,
 };
 use tugboat_resources::manifests::core::v1::NetworkClassSpec;
 use tugboat_vm_runtime_interface::run::VmNetworkConfig;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniWrapper {
-    operator: CniOperator,
+    operator: TugboatCniOperator,
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +40,7 @@ pub(crate) struct PlannedNetworkConfig {
 }
 
 impl CniWrapper {
-    pub(crate) fn new(operator: CniOperator) -> Self {
+    pub(crate) fn new(operator: TugboatCniOperator) -> Self {
         Self { operator }
     }
 
