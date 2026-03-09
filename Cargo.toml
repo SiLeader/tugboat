@@ -54,7 +54,7 @@ json_value_merge = "2.0.1"
 
 # protobuf
 tonic = "0.14.5"
-prost = "0.14.1"
+prost = "0.14.3"
 tonic-prost-build = "0.14.5"
 prost-build = "0.14.1"
 
