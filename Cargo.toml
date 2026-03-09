@@ -86,7 +86,7 @@ utoipa-actix-web = "0.1.2"
 url = "2.5.8"
 
 # store
-etcd-client = "0.17.0"
+etcd-client = "0.18.0"
 
 # OCI
 oci-distribution = "0.11.0"
