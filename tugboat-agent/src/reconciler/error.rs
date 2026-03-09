@@ -15,10 +15,10 @@
 use crate::runtime::error::RuntimeError;
 use std::fmt::{Display, Formatter};
 use thiserror::Error;
-use tugboat_resources::manifests::core::v1::ShipNetworkClassRef;
+use tugboat_resources::manifests::core::v1::ShipNetworkClassReference;
 
 #[derive(Debug)]
-pub(crate) struct NetworkClassRefForError(ShipNetworkClassRef);
+pub(crate) struct NetworkClassRefForError(ShipNetworkClassReference);
 
 #[derive(Debug, Error)]
 pub(crate) enum ReconcileError {
@@ -44,8 +44,8 @@ impl Display for NetworkClassRefForError {
     }
 }
 
-impl From<ShipNetworkClassRef> for NetworkClassRefForError {
-    fn from(value: ShipNetworkClassRef) -> Self {
+impl From<ShipNetworkClassReference> for NetworkClassRefForError {
+    fn from(value: ShipNetworkClassReference) -> Self {
         Self(value)
     }
 }

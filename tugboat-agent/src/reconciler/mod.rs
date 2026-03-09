@@ -18,10 +18,12 @@ mod ops;
 mod reconcile;
 
 use crate::cni::CniWrapper;
+use crate::csi::{CsiDrivers, CsiWrapper};
 use crate::reconciler::reconcile::AppendStatus;
 use crate::runtime::RuntimeOperator;
 use futures::{Stream, StreamExt};
 use std::cmp::min;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
@@ -31,7 +33,8 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tugboat_client::{Api, TugboatClient, WatchEvent, WatchParams};
-use tugboat_cni_operator::CniOperator;
+use tugboat_cni_operator::TugboatCniOperator;
+use tugboat_csi_operator::TugboatCsiOperator;
 use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
 
 #[derive(Clone)]
@@ -42,6 +45,7 @@ pub(crate) struct ShipReconciler {
     ship_class_api: Api<ShipClass>,
     runtime_operator: RuntimeOperator,
     cni: CniWrapper,
+    csi: CsiWrapper,
     cancellation_token: CancellationToken,
 }
 
@@ -50,7 +54,9 @@ impl ShipReconciler {
         node_name: String,
         client: TugboatClient,
         runtime_operator: RuntimeOperator,
-        cni: CniOperator,
+        cni: TugboatCniOperator,
+        csi: TugboatCsiOperator,
+        csi_drivers: CsiDrivers,
     ) -> Self {
         Self {
             node_name,
@@ -59,6 +65,7 @@ impl ShipReconciler {
             client,
             runtime_operator,
             cni: CniWrapper::new(cni),
+            csi: CsiWrapper::new(csi, csi_drivers),
             cancellation_token: CancellationToken::new(),
         }
     }

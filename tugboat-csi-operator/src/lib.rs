@@ -2,11 +2,13 @@ use crate::proto::csi::v1::node_client::NodeClient;
 use crate::proto::csi::v1::volume_capability::access_mode::Mode;
 use crate::proto::csi::v1::volume_capability::{AccessMode, AccessType, BlockVolume};
 use crate::proto::csi::v1::{NodePublishVolumeRequest, VolumeCapability};
+pub use error::Error;
 use tonic::Code;
 
 mod error;
 mod proto;
 
+#[derive(Clone, Default)]
 pub struct TugboatCsiOperator {}
 
 pub enum CsiAccessMode {

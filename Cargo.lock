@@ -3247,6 +3247,7 @@ dependencies = [
  "tracing-subscriber",
  "tugboat-client",
  "tugboat-cni-operator",
+ "tugboat-csi-operator",
  "tugboat-resources",
  "tugboat-vm-image",
  "tugboat-vm-runtime-interface",

@@ -25,13 +25,13 @@ pub use conf::*;
 pub use config::*;
 
 #[derive(Debug, Clone)]
-pub struct CniOperator {
+pub struct TugboatCniOperator {
     caller: caller::CniCaller,
     config_dir: PathBuf,
     netns: String,
 }
 
-impl CniOperator {
+impl TugboatCniOperator {
     pub fn new(config: CniOperatorConfig) -> Self {
         Self {
             caller: caller::CniCaller::new(&config.location.bin, &config.location.netns),
