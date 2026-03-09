@@ -64,11 +64,11 @@ impl StatusResponse {
 
     // Client error
     error_entry!(bad_request, "BadRequest", 400);
-    error_entry!(unauthorized, "Unauthorized", 401);
-    error_entry!(forbidden, "Forbidden", 403);
+    // error_entry!(unauthorized, "Unauthorized", 401);
+    // error_entry!(forbidden, "Forbidden", 403);
     error_entry!(not_found, "NotFound", 404);
     error_entry!(conflict, "Conflict", 409);
-    error_entry!(invalid, "Invalid", 422);
+    // error_entry!(invalid, "Invalid", 422);
 
     // Server error
     error_entry!(internal_error, "InternalError", 500);

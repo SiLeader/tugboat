@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use rand::SeedableRng;
 use rand::distr::{Alphanumeric, SampleString};
+use rand::{RngExt, SeedableRng, rng};
 use rand_xorshift::XorShiftRng;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -24,8 +24,9 @@ pub(crate) struct NameGenerator {
 
 impl NameGenerator {
     pub(crate) fn new() -> Self {
+        let seed = rng().random();
         Self {
-            rand: Arc::new(Mutex::new(XorShiftRng::from_os_rng())),
+            rand: Arc::new(Mutex::new(XorShiftRng::from_seed(seed))),
         }
     }
 
