@@ -52,21 +52,6 @@ impl ResourceList {
             items,
         }
     }
-    pub(crate) fn get_raw(&self, index: usize) -> Option<&serde_json::Value> {
-        self.items.get(index)
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.items.len()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &serde_json::Value> {
-        self.items.iter()
-    }
 }
 
 impl Responder for ResourceList {

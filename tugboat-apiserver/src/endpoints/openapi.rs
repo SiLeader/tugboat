@@ -15,7 +15,6 @@
 use actix_web::{HttpResponse, Responder, get};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use utoipa::OpenApi;
 
 #[derive(Serialize, Deserialize)]
 struct DiscoveryPath {

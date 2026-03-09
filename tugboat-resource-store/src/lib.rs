@@ -25,7 +25,6 @@ use tugboat_resources::{ObjectMetaResource, StaticResource};
 pub mod error;
 pub mod serializer;
 pub mod watch;
-mod watch_reflector;
 
 pub struct ResourceStore {
     etcd: Client,
