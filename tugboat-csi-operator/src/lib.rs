@@ -51,10 +51,10 @@ impl TugboatCsiOperator {
             secrets: Default::default(),
             volume_context: Default::default(),
             publish_context: Default::default(),
-            staging_target_path: (),
+            staging_target_path: "".to_string(),
         };
 
-        let mut client = NodeClient::connect(socket_path).await?;
+        let mut client = NodeClient::connect(socket_path.to_string()).await?;
 
         if let Err(e) = client.node_publish_volume(req).await {
             match e.code() {

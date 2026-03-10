@@ -6,6 +6,10 @@ license.workspace = true
 
 [dependencies]
 tonic.workspace = true
+prost.workspace = true
+tonic-prost.workspace = true
+prost-types.workspace = true
+
 thiserror.workspace = true
 
 [build-dependencies]

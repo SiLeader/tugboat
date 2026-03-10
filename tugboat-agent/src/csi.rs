@@ -61,7 +61,11 @@ impl CsiWrapper {
                 .ok_or(CsiError::MissingAccessMode)?,
         )?;
         let access_type = CsiAccessType::try_convert_from_string(
-            volume.volume_mode.map(|m| m.as_str()).unwrap_or("Block"),
+            volume
+                .volume_mode
+                .as_ref()
+                .map(|m| m.as_str())
+                .unwrap_or("Block"),
         )?;
         self.operator
             .publish(
@@ -77,7 +81,7 @@ impl CsiWrapper {
     }
 }
 
-trait TryConvertFromString {
+trait TryConvertFromString: Sized {
     fn try_convert_from_string(value: &str) -> Result<Self, CsiError>;
 }
 

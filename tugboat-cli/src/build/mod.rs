@@ -57,7 +57,7 @@ pub(crate) async fn run_build(args: BuildArgs) {
         .expect("Failed to read context directory");
     debug!("Disk data size: {} bytes", disk_data.len());
 
-    let client = VmImageRegistry::default();
+    let client = VmImageRegistry::new("/tmp");
     client
         .push(
             args.tag,
