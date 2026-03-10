@@ -99,7 +99,7 @@ qapi = "0.15.0"
 
 # misc
 regex = "1.12.3"
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 uuid = "1.21.0"
 base64 = "0.22.1"
 nix = "0.31.1"
