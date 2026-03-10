@@ -14,7 +14,6 @@
 
 use crate::execute::vm::qemu::QemuVm;
 use tokio::fs::copy;
-use tokio::process::Command;
 use tracing::{debug, info};
 
 pub struct BootDisk(pub String);

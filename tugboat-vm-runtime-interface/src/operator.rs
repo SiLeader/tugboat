@@ -14,7 +14,7 @@
 
 use crate::run::VmRunRequest;
 use crate::status::VmStatusResponse;
-use crate::stop::{VmStopRequest, VmStopType};
+use crate::stop::VmStopRequest;
 use serde::Serialize;
 use std::process::{ExitStatus, Stdio};
 use tokio::io::AsyncWriteExt;

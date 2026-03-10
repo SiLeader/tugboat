@@ -29,6 +29,7 @@ pub(crate) enum Selector {
 }
 
 impl Selector {
+    #[allow(clippy::result_large_err)]
     pub(crate) fn try_parse(s: &str) -> Result<Vec<Selector>, StatusResponse> {
         let mut selectors = Vec::new();
         for fragment in s.split(',') {

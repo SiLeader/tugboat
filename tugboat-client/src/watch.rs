@@ -68,15 +68,13 @@ impl TugboatClient {
                         .map(|f| ("fieldSelector".to_string(), f)),
                 ]
                 .into_iter()
-                .filter_map(|v| v),
+                .flatten(),
             )?;
             path.to_string()
         };
 
         let res = self.client.get(path).send().await?;
-        let stream = res
-            .bytes_stream()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+        let stream = res.bytes_stream().map_err(std::io::Error::other);
         let reader = StreamReader::new(stream);
         let mut lines = FramedRead::new(reader, LinesCodec::new());
 

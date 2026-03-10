@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 use tugboat_resource_store::serializer::StaticSerializable;
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta, StaticResource};
 
+#[allow(clippy::result_large_err)]
 pub(crate) async fn create_cluster<T>(
     object: T,
     operator: Data<ApiOperator>,
@@ -38,6 +39,7 @@ where
     crate::create_object!(operator, object_meta, object, T::type_meta())
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) async fn create_namespaced<T>(
     object: T,
     namespace: String,
@@ -52,6 +54,7 @@ where
     crate::create_object!(operator, object_meta, object, T::type_meta())
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) async fn list_resources<T>(
     operator: &ApiOperator,
     query: ListQuery,
@@ -84,6 +87,7 @@ where
     }
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) async fn read_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
@@ -102,6 +106,7 @@ where
     }
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) async fn delete_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
@@ -126,6 +131,7 @@ pub(crate) struct ReplaceOptions {
     pub(crate) use_client_resource_version: bool,
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) async fn replace_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
@@ -159,6 +165,7 @@ where
     Ok(ModifyResponse::Updated(replaced))
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) async fn status_patch_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
@@ -202,6 +209,7 @@ where
     Ok(ModifyResponse::Updated(patched))
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) async fn status_replace_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
@@ -243,6 +251,7 @@ where
     Ok(ModifyResponse::Updated(replaced))
 }
 
+#[allow(clippy::result_large_err)]
 fn merge_replacement<T>(
     current: &T,
     replacement: &T,
@@ -288,6 +297,7 @@ where
     ))?)
 }
 
+#[allow(clippy::result_large_err)]
 fn to_object(
     value: serde_json::Value,
     context: &str,

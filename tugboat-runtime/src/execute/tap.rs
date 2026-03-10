@@ -16,6 +16,7 @@ use crate::execute::vm::QemuVmConfig;
 use tokio::process::Command;
 use tracing::{error, info};
 
+#[allow(dead_code)]
 pub async fn setup_tap_redirect(config: &QemuVmConfig, bridge: &str) -> Result<(), crate::Error> {
     info!("Starting TAP device setup and TC redirect...");
     let ip: &str = &config.executables.ip;

@@ -46,7 +46,6 @@ pub struct QemuVmConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct QemuVmConfigExecutables {
     pub qemu: String,
-    pub qemu_img: String,
     pub ip: String,
     pub tc: String,
 }

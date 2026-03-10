@@ -33,7 +33,7 @@ impl PartialOrd for ResourceVersionRef<'_> {
 impl Ord for ResourceVersionRef<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         if self.0.len() == other.0.len() {
-            self.0.cmp(&other.0)
+            self.0.cmp(other.0)
         } else if self.0.len() < other.0.len() {
             Ordering::Less
         } else {
