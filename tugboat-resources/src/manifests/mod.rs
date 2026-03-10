@@ -54,7 +54,7 @@ pub mod core {
             "core",
             "v1",
             "persistentvolumeclaims",
-            "persistentvolume",
+            "persistentvolumeclaim",
             namespaced
         );
         apply_resource!(Secret, "core", "v1", "secrets", "secret", namespaced);

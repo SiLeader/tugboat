@@ -32,12 +32,14 @@ pub(crate) enum CsiError {
     MissingAccessMode,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct CsiWrapper {
     operator: TugboatCsiOperator,
     drivers: CsiDrivers,
 }
 
+#[allow(dead_code)]
 impl CsiWrapper {
     pub(crate) fn new(operator: TugboatCsiOperator, drivers: CsiDrivers) -> Self {
         Self { operator, drivers }
@@ -55,17 +57,17 @@ impl CsiWrapper {
             return Err(CsiError::DriverNotFound(source.driver));
         };
         let access_mode = CsiAccessMode::try_convert_from_string(
-            &claim
+            claim
                 .access_modes
-                .get(0)
+                .first()
                 .ok_or(CsiError::MissingAccessMode)?,
         )?;
         let access_type = CsiAccessType::try_convert_from_string(
-            volume.volume_mode.map(|m| m.as_str()).unwrap_or("Block"),
+            volume.volume_mode.as_deref().unwrap_or("Block"),
         )?;
         self.operator
             .publish(
-                &uds_path,
+                uds_path,
                 volume_id,
                 target_directory,
                 source.read_only,
@@ -77,7 +79,7 @@ impl CsiWrapper {
     }
 }
 
-trait TryConvertFromString {
+trait TryConvertFromString: Sized {
     fn try_convert_from_string(value: &str) -> Result<Self, CsiError>;
 }
 
@@ -108,6 +110,7 @@ pub struct CsiDrivers {
 }
 
 impl CsiDrivers {
+    #[allow(dead_code)]
     pub fn add(mut self, driver: String, socket_path: String) -> Self {
         self.drivers.insert(driver, socket_path);
         self

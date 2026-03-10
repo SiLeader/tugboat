@@ -48,3 +48,4 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 toml.workspace = true
+base64.workspace = true

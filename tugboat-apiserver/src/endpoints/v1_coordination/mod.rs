@@ -16,19 +16,16 @@ use actix_web::{HttpResponse, Responder, get};
 use utoipa::OpenApi;
 use utoipa_actix_web::service_config::ServiceConfig;
 
-mod lease_create;
-mod lease_list;
-mod lease_read;
-mod lease_replace;
+mod lease;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        lease_create::handle_lease_create,
-        lease_list::handle_lease_list,
-        lease_list::handle_lease_list_all,
-        lease_read::handle_lease_read,
-        lease_replace::handle_lease_replace,
+        lease::handle_lease_create,
+        lease::handle_lease_list,
+        lease::handle_lease_list_all,
+        lease::handle_lease_read,
+        lease::handle_lease_replace,
     ),
     components(schemas(
         tugboat_resources::manifests::coordination::v1::Lease,
@@ -46,11 +43,11 @@ pub(crate) async fn openapi_coordination_v1() -> impl Responder {
 
 pub(super) fn register_lease(service: &mut ServiceConfig) {
     service
-        .service(lease_create::handle_lease_create)
-        .service(lease_list::handle_lease_list)
-        .service(lease_list::handle_lease_list_all)
-        .service(lease_read::handle_lease_read)
-        .service(lease_replace::handle_lease_replace);
+        .service(lease::handle_lease_create)
+        .service(lease::handle_lease_list)
+        .service(lease::handle_lease_list_all)
+        .service(lease::handle_lease_read)
+        .service(lease::handle_lease_replace);
 }
 
 #[allow(dead_code)]

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::runtime::error::RuntimeError;
 use crate::runtime::RuntimeOperator;
+use crate::runtime::error::RuntimeError;
 use tracing::{debug, info};
 use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
 

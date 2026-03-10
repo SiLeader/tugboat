@@ -16,72 +16,77 @@ use actix_web::{HttpResponse, Responder, get};
 use utoipa::OpenApi;
 use utoipa_actix_web::service_config::ServiceConfig;
 
-mod clusternetworkclass_create;
-mod clusternetworkclass_delete;
-mod clusternetworkclass_list;
-mod clusternetworkclass_read;
-mod namespace_create;
-mod namespace_delete;
-mod namespace_list;
-mod namespace_read;
-mod networkclass_create;
-mod networkclass_delete;
-mod networkclass_list;
-mod networkclass_read;
-mod node_create;
-mod node_delete;
-mod node_list;
-mod node_read;
-mod node_replace;
-mod ship_create;
-mod ship_delete;
-mod ship_list;
-mod ship_read;
-mod ship_replace;
-mod ship_status_patch;
-mod ship_status_replace;
-mod shipclass_create;
-mod shipclass_delete;
-mod shipclass_list;
-mod shipclass_read;
+mod clusternetworkclass;
+mod namespace;
+mod networkclass;
+mod node;
+mod persistent_volume;
+mod persistent_volume_claim;
+mod secret;
+mod ship;
+mod shipclass;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        clusternetworkclass_create::handle_clusternetworkclass_create,
-        clusternetworkclass_delete::handle_clusternetworkclass_delete,
-        clusternetworkclass_list::handle_clusternetworkclass_list,
-        clusternetworkclass_read::handle_clusternetworkclass_read,
-        namespace_create::handle_namespace_create,
-        namespace_delete::handle_namespace_delete,
-        namespace_list::handle_namespace_list,
-        namespace_read::handle_namespace_read,
-        node_create::handle_node_create,
-        node_delete::handle_node_delete,
-        node_list::handle_node_list,
-        node_read::handle_node_read,
-        node_replace::handle_node_replace,
-        networkclass_create::handle_networkclass_create,
-        networkclass_delete::handle_networkclass_delete,
-        networkclass_list::handle_networkclass_list,
-        networkclass_list::handle_networkclass_list_all,
-        networkclass_read::handle_networkclass_read,
-        ship_create::handle_ship_create,
-        ship_delete::handle_ship_delete,
-        ship_list::handle_ship_list,
-        ship_list::handle_ship_list_all,
-        ship_read::handle_ship_read,
-        ship_replace::handle_ship_replace,
-        ship_status_patch::handle_ship_status_patch,
-        ship_status_replace::handle_ship_status_replace,
-        shipclass_create::handle_shipclass_create,
-        shipclass_delete::handle_shipclass_delete,
-        shipclass_list::handle_shipclass_list,
-        shipclass_read::handle_shipclass_read,
+        clusternetworkclass::handle_clusternetworkclass_create,
+        clusternetworkclass::handle_clusternetworkclass_delete,
+        clusternetworkclass::handle_clusternetworkclass_list,
+        clusternetworkclass::handle_clusternetworkclass_read,
+        namespace::handle_namespace_create,
+        namespace::handle_namespace_delete,
+        namespace::handle_namespace_list,
+        namespace::handle_namespace_read,
+        node::handle_node_create,
+        node::handle_node_delete,
+        node::handle_node_list,
+        node::handle_node_read,
+        node::handle_node_replace,
+        persistent_volume::handle_persistent_volume_create,
+        persistent_volume::handle_persistent_volume_delete,
+        persistent_volume::handle_persistent_volume_list,
+        persistent_volume::handle_persistent_volume_read,
+        persistent_volume::handle_persistent_volume_replace,
+        persistent_volume::handle_persistent_volume_status_patch,
+        persistent_volume::handle_persistent_volume_status_replace,
+        persistent_volume_claim::handle_persistent_volume_claim_create,
+        persistent_volume_claim::handle_persistent_volume_claim_delete,
+        persistent_volume_claim::handle_persistent_volume_claim_list,
+        persistent_volume_claim::handle_persistent_volume_claim_list_all,
+        persistent_volume_claim::handle_persistent_volume_claim_read,
+        persistent_volume_claim::handle_persistent_volume_claim_replace,
+        persistent_volume_claim::handle_persistent_volume_claim_status_patch,
+        persistent_volume_claim::handle_persistent_volume_claim_status_replace,
+        networkclass::handle_networkclass_create,
+        networkclass::handle_networkclass_delete,
+        networkclass::handle_networkclass_list,
+        networkclass::handle_networkclass_list_all,
+        networkclass::handle_networkclass_read,
+        secret::handle_secret_create,
+        secret::handle_secret_delete,
+        secret::handle_secret_list,
+        secret::handle_secret_list_all,
+        secret::handle_secret_read,
+        secret::handle_secret_replace,
+        ship::handle_ship_create,
+        ship::handle_ship_delete,
+        ship::handle_ship_list,
+        ship::handle_ship_list_all,
+        ship::handle_ship_read,
+        ship::handle_ship_replace,
+        ship::handle_ship_status_patch,
+        ship::handle_ship_status_replace,
+        shipclass::handle_shipclass_create,
+        shipclass::handle_shipclass_delete,
+        shipclass::handle_shipclass_list,
+        shipclass::handle_shipclass_read,
     ),
     components(schemas(
         tugboat_resources::manifests::core::v1::Namespace,
+        tugboat_resources::manifests::core::v1::PersistentVolume,
+        tugboat_resources::manifests::core::v1::PersistentVolumeClaim,
         tugboat_resources::manifests::core::v1::Node,
+        tugboat_resources::manifests::core::v1::Secret,
         tugboat_resources::manifests::core::v1::Ship,
         tugboat_resources::manifests::core::v1::ShipClass,
         tugboat_resources::manifests::core::v1::NetworkClass,
@@ -100,56 +105,89 @@ pub(crate) async fn openapi_core_v1() -> impl Responder {
 
 pub(super) fn register_clusternetworkclass(service: &mut ServiceConfig) {
     service
-        .service(clusternetworkclass_create::handle_clusternetworkclass_create)
-        .service(clusternetworkclass_delete::handle_clusternetworkclass_delete)
-        .service(clusternetworkclass_list::handle_clusternetworkclass_list)
-        .service(clusternetworkclass_read::handle_clusternetworkclass_read);
+        .service(clusternetworkclass::handle_clusternetworkclass_create)
+        .service(clusternetworkclass::handle_clusternetworkclass_delete)
+        .service(clusternetworkclass::handle_clusternetworkclass_list)
+        .service(clusternetworkclass::handle_clusternetworkclass_read);
 }
 
 pub(super) fn register_namespace(service: &mut ServiceConfig) {
     service
-        .service(namespace_create::handle_namespace_create)
-        .service(namespace_delete::handle_namespace_delete)
-        .service(namespace_list::handle_namespace_list)
-        .service(namespace_read::handle_namespace_read);
+        .service(namespace::handle_namespace_create)
+        .service(namespace::handle_namespace_delete)
+        .service(namespace::handle_namespace_list)
+        .service(namespace::handle_namespace_read);
 }
 
 pub(super) fn register_node(service: &mut ServiceConfig) {
     service
-        .service(node_create::handle_node_create)
-        .service(node_delete::handle_node_delete)
-        .service(node_list::handle_node_list)
-        .service(node_read::handle_node_read)
-        .service(node_replace::handle_node_replace);
+        .service(node::handle_node_create)
+        .service(node::handle_node_delete)
+        .service(node::handle_node_list)
+        .service(node::handle_node_read)
+        .service(node::handle_node_replace);
+}
+
+pub(super) fn register_persistent_volume(service: &mut ServiceConfig) {
+    service
+        .service(persistent_volume::handle_persistent_volume_create)
+        .service(persistent_volume::handle_persistent_volume_delete)
+        .service(persistent_volume::handle_persistent_volume_list)
+        .service(persistent_volume::handle_persistent_volume_read)
+        .service(persistent_volume::handle_persistent_volume_replace)
+        .service(persistent_volume::handle_persistent_volume_status_patch)
+        .service(persistent_volume::handle_persistent_volume_status_replace);
+}
+
+pub(super) fn register_persistent_volume_claim(service: &mut ServiceConfig) {
+    service
+        .service(persistent_volume_claim::handle_persistent_volume_claim_create)
+        .service(persistent_volume_claim::handle_persistent_volume_claim_delete)
+        .service(persistent_volume_claim::handle_persistent_volume_claim_list)
+        .service(persistent_volume_claim::handle_persistent_volume_claim_list_all)
+        .service(persistent_volume_claim::handle_persistent_volume_claim_read)
+        .service(persistent_volume_claim::handle_persistent_volume_claim_replace)
+        .service(persistent_volume_claim::handle_persistent_volume_claim_status_patch)
+        .service(persistent_volume_claim::handle_persistent_volume_claim_status_replace);
 }
 
 pub(super) fn register_networkclass(service: &mut ServiceConfig) {
     service
-        .service(networkclass_create::handle_networkclass_create)
-        .service(networkclass_delete::handle_networkclass_delete)
-        .service(networkclass_list::handle_networkclass_list)
-        .service(networkclass_list::handle_networkclass_list_all)
-        .service(networkclass_read::handle_networkclass_read);
+        .service(networkclass::handle_networkclass_create)
+        .service(networkclass::handle_networkclass_delete)
+        .service(networkclass::handle_networkclass_list)
+        .service(networkclass::handle_networkclass_list_all)
+        .service(networkclass::handle_networkclass_read);
+}
+
+pub(super) fn register_secret(service: &mut ServiceConfig) {
+    service
+        .service(secret::handle_secret_create)
+        .service(secret::handle_secret_delete)
+        .service(secret::handle_secret_list)
+        .service(secret::handle_secret_list_all)
+        .service(secret::handle_secret_read)
+        .service(secret::handle_secret_replace);
 }
 
 pub(super) fn register_ship(service: &mut ServiceConfig) {
     service
-        .service(ship_create::handle_ship_create)
-        .service(ship_delete::handle_ship_delete)
-        .service(ship_list::handle_ship_list)
-        .service(ship_list::handle_ship_list_all)
-        .service(ship_read::handle_ship_read)
-        .service(ship_replace::handle_ship_replace)
-        .service(ship_status_patch::handle_ship_status_patch)
-        .service(ship_status_replace::handle_ship_status_replace);
+        .service(ship::handle_ship_create)
+        .service(ship::handle_ship_delete)
+        .service(ship::handle_ship_list)
+        .service(ship::handle_ship_list_all)
+        .service(ship::handle_ship_read)
+        .service(ship::handle_ship_replace)
+        .service(ship::handle_ship_status_patch)
+        .service(ship::handle_ship_status_replace);
 }
 
 pub(super) fn register_shipclass(service: &mut ServiceConfig) {
     service
-        .service(shipclass_create::handle_shipclass_create)
-        .service(shipclass_delete::handle_shipclass_delete)
-        .service(shipclass_list::handle_shipclass_list)
-        .service(shipclass_read::handle_shipclass_read);
+        .service(shipclass::handle_shipclass_create)
+        .service(shipclass::handle_shipclass_delete)
+        .service(shipclass::handle_shipclass_list)
+        .service(shipclass::handle_shipclass_read);
 }
 
 #[allow(dead_code)]
@@ -158,7 +196,10 @@ pub(super) fn register_v1_core(service: &mut ServiceConfig) {
         .configure(register_clusternetworkclass)
         .configure(register_namespace)
         .configure(register_node)
+        .configure(register_persistent_volume)
+        .configure(register_persistent_volume_claim)
         .configure(register_networkclass)
+        .configure(register_secret)
         .configure(register_ship)
         .configure(register_shipclass);
 }

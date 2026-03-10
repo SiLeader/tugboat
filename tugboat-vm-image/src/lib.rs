@@ -14,9 +14,7 @@
 
 mod auth;
 mod compress;
-#[cfg(feature = "pull")]
 pub mod pull;
-#[cfg(feature = "push")]
 pub mod push;
 
 use oci_distribution::client::{ClientConfig, ClientProtocol};
@@ -26,21 +24,14 @@ use thiserror::Error;
 
 #[derive(Clone)]
 pub struct VmImageRegistry {
-    #[cfg(feature = "pull")]
     directory: std::path::PathBuf,
 }
 
-#[cfg(not(feature = "pull"))]
-impl Default for VmImageRegistry {
-    fn default() -> Self {
-        Self {}
-    }
-}
-
 impl VmImageRegistry {
-    #[cfg(feature = "pull")]
-    pub fn new(directory: std::path::PathBuf) -> Self {
-        Self { directory }
+    pub fn new(directory: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            directory: directory.as_ref().to_path_buf(),
+        }
     }
 
     fn get_client(&self, registry: &str, insecure: Option<bool>) -> Client {
@@ -77,11 +68,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[cfg(feature = "pull")]
     #[error("Cannot encode file location")]
     FileLocationEncode,
-    #[cfg(feature = "pull")]
     #[error("Disk image '{0}' is missing")]
     DiskImageMissing(String),
 }

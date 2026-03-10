@@ -44,7 +44,7 @@ impl RuntimeOperator {
     ) -> Self {
         Self {
             operator: VmRuntimeOperator::new(config.executable, config.args),
-            registry: VmImageRegistry::new(image_dir.as_ref().to_path_buf()),
+            registry: VmImageRegistry::new(image_dir.as_ref()),
             children: Arc::new(RwLock::new(HashMap::new())),
             http_hosts,
         }

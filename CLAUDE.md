@@ -26,7 +26,7 @@ cargo deny check
 
 Packages: `tugboat-resources`, `tugboat-apiserver`, `tugboat-agent`, `tugboat-runtime`,
 `tugboat-resource-store`, `tugboat-client`, `tugboat-cli`, `tugboat-vm-image`,
-`tugboat-vm-runtime-interface`, `tugboat-cni-operator`
+`tugboat-vm-runtime-interface`, `tugboat-cni-operator`, `tugboat-csi-operator`, `tugboat-scheduler`
 
 ## Architecture
 
@@ -46,6 +46,13 @@ tugboat-agent (node reconciler)
   ├─ tugboat-vm-image (OCI image handling)
   ├─ tugboat-vm-runtime-interface (runtime bridge)
   └─ tugboat-cni-operator (CNI networking)
+
+tugboat-scheduler (pod scheduler)
+  ├─ tugboat-client
+  └─ tugboat-resources
+
+tugboat-csi-operator (storage operator)
+  └─ tugboat-resources (implicit via proto)
 
 tugboat-runtime (QEMU executor)
   ├─ tugboat-resources
@@ -74,8 +81,8 @@ create, list, and read operations. Registration happens in `endpoints/v1_core/mo
 `endpoints/mod.rs` → mounted under the configured path in `lib.rs`.
 
 Key patterns:
-- **Cluster-scoped resources** (ShipClass, Namespace, Node): route pattern `/v1/{plural}` and `/v1/{plural}/{name}`
-- **Namespaced resources** (Ship): route pattern `/v1/namespaces/{namespace}/{plural}` and `/v1/namespaces/{namespace}/{plural}/{name}`, plus `/v1/{plural}` for list-all
+- **Cluster-scoped resources** (ShipClass, Namespace, Node, PersistentVolume, ClusterNetworkClass): route pattern `/v1/{plural}` and `/v1/{plural}/{name}`
+- **Namespaced resources** (Ship, PersistentVolumeClaim, Secret, NetworkClass, Lease): route pattern `/v1/namespaces/{namespace}/{plural}` and `/v1/namespaces/{namespace}/{plural}/{name}`, plus `/v1/{plural}` for list-all
 - Macros in `endpoints/utils.rs`: `extract_object_meta!`, `check_namespace_absent!`, `create_object!`
 - Generic handlers in `endpoints/v1_core/cluster_resources.rs` for cluster-scoped CRUD
 - `ApiOperator` (in `operator.rs`) wraps `ResourceStore` + `NameGenerator`

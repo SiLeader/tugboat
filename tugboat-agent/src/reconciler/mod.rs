@@ -23,7 +23,6 @@ use crate::reconciler::reconcile::AppendStatus;
 use crate::runtime::RuntimeOperator;
 use futures::{Stream, StreamExt};
 use std::cmp::min;
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
@@ -45,6 +44,7 @@ pub(crate) struct ShipReconciler {
     ship_class_api: Api<ShipClass>,
     runtime_operator: RuntimeOperator,
     cni: CniWrapper,
+    #[allow(dead_code)]
     csi: CsiWrapper,
     cancellation_token: CancellationToken,
 }

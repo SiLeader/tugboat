@@ -17,7 +17,8 @@ use crate::endpoints::v1_core;
 use tugboat_resources::StaticResource;
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
-    ClusterNetworkClass, Namespace, NetworkClass, Node, Ship, ShipClass,
+    ClusterNetworkClass, Namespace, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim,
+    Secret, Ship, ShipClass,
 };
 use utoipa_actix_web::service_config::ServiceConfig;
 
@@ -132,6 +133,28 @@ const NODE_OPS: ResourceOperations = ResourceOperations {
     ..CLUSTER_DEFAULT_OPS
 };
 
+const PERSISTENT_VOLUME_OPS: ResourceOperations = ResourceOperations {
+    update: true,
+    delete: true,
+    status_patch: true,
+    status_update: true,
+    ..CLUSTER_DEFAULT_OPS
+};
+
+const PERSISTENT_VOLUME_CLAIM_OPS: ResourceOperations = ResourceOperations {
+    update: true,
+    delete: true,
+    status_patch: true,
+    status_update: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
+const SECRET_OPS: ResourceOperations = ResourceOperations {
+    update: true,
+    delete: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
 const SHIP_OPS: ResourceOperations = ResourceOperations {
     update: true,
     status_patch: true,
@@ -151,11 +174,20 @@ pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
             v1_core::register_clusternetworkclass,
         ),
         ResourceApiDescriptor::new::<Namespace>(CLUSTER_DEFAULT_OPS, v1_core::register_namespace),
+        ResourceApiDescriptor::new::<Node>(NODE_OPS, v1_core::register_node),
+        ResourceApiDescriptor::new::<PersistentVolume>(
+            PERSISTENT_VOLUME_OPS,
+            v1_core::register_persistent_volume,
+        ),
         ResourceApiDescriptor::new::<NetworkClass>(
             NAMESPACED_DEFAULT_OPS,
             v1_core::register_networkclass,
         ),
-        ResourceApiDescriptor::new::<Node>(NODE_OPS, v1_core::register_node),
+        ResourceApiDescriptor::new::<PersistentVolumeClaim>(
+            PERSISTENT_VOLUME_CLAIM_OPS,
+            v1_core::register_persistent_volume_claim,
+        ),
+        ResourceApiDescriptor::new::<Secret>(SECRET_OPS, v1_core::register_secret),
         ResourceApiDescriptor::new::<Ship>(SHIP_OPS, v1_core::register_ship),
         ResourceApiDescriptor::new::<ShipClass>(CLUSTER_DEFAULT_OPS, v1_core::register_shipclass),
         ResourceApiDescriptor::new::<Lease>(LEASE_OPS, v1_coordination::register_lease),

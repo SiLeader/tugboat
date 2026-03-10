@@ -28,6 +28,7 @@ pub(crate) struct ResourceList {
 }
 
 impl ResourceList {
+    #[allow(clippy::result_large_err)]
     pub(crate) fn from_serializable<T: Serialize>(items: Vec<T>) -> Result<Self, StatusResponse> {
         match items
             .into_iter()

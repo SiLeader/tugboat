@@ -1,6 +1,5 @@
 use crate::Error;
 
-#[cfg(feature = "push")]
 pub(crate) fn compress_gzip(data: &[u8]) -> Result<Vec<u8>, Error> {
     use std::io::Write;
 
@@ -9,7 +8,6 @@ pub(crate) fn compress_gzip(data: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(e.finish()?)
 }
 
-#[cfg(feature = "pull")]
 pub(crate) fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, Error> {
     use std::io::Read;
 

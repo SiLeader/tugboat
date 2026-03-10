@@ -1,5 +1,5 @@
 use crate::execute::vm::{QemuVmBuilder, QemuVmConfig, Spawner};
-use crate::pre::{change_running_user_and_group, daemonize};
+use crate::pre::change_running_user_and_group;
 use tracing::debug;
 use tugboat_vm_runtime_interface::run::VmRunRequest;
 

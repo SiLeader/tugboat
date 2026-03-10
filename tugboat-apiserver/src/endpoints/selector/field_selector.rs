@@ -193,19 +193,34 @@ mod tests {
         let val = serde_json::to_value(&ship).unwrap();
 
         // Case 1: field == "" (should match)
-        let s1 = FieldSelector::Equal(vec!["spec".to_string(), "nodeName".to_string()], "".to_string());
+        let s1 = FieldSelector::Equal(
+            vec!["spec".to_string(), "nodeName".to_string()],
+            "".to_string(),
+        );
         assert!(s1.is_match(&val), "Missing field should match == ''");
 
         // Case 2: field == "foo" (should not match)
-        let s2 = FieldSelector::Equal(vec!["spec".to_string(), "nodeName".to_string()], "foo".to_string());
-        assert!(!s2.is_match(&val), "Missing field should NOT match == 'foo'");
+        let s2 = FieldSelector::Equal(
+            vec!["spec".to_string(), "nodeName".to_string()],
+            "foo".to_string(),
+        );
+        assert!(
+            !s2.is_match(&val),
+            "Missing field should NOT match == 'foo'"
+        );
 
         // Case 3: field != "" (should not match, because "" == "")
-        let s3 = FieldSelector::NotEqual(vec!["spec".to_string(), "nodeName".to_string()], "".to_string());
+        let s3 = FieldSelector::NotEqual(
+            vec!["spec".to_string(), "nodeName".to_string()],
+            "".to_string(),
+        );
         assert!(!s3.is_match(&val), "Missing field should NOT match != ''");
 
         // Case 4: field != "foo" (should match, because "" != "foo")
-        let s4 = FieldSelector::NotEqual(vec!["spec".to_string(), "nodeName".to_string()], "foo".to_string());
+        let s4 = FieldSelector::NotEqual(
+            vec!["spec".to_string(), "nodeName".to_string()],
+            "foo".to_string(),
+        );
         assert!(s4.is_match(&val), "Missing field should match != 'foo'");
 
         // Case 5: intermediate object missing
@@ -214,7 +229,13 @@ mod tests {
             ..Ship::default()
         };
         let val_no_spec = serde_json::to_value(&ship_no_spec).unwrap();
-        let s5 = FieldSelector::Equal(vec!["spec".to_string(), "nodeName".to_string()], "".to_string());
-        assert!(s5.is_match(&val_no_spec), "Missing intermediate field should match == ''");
+        let s5 = FieldSelector::Equal(
+            vec!["spec".to_string(), "nodeName".to_string()],
+            "".to_string(),
+        );
+        assert!(
+            s5.is_match(&val_no_spec),
+            "Missing intermediate field should match == ''"
+        );
     }
 }

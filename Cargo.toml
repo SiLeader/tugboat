@@ -36,7 +36,6 @@ license = "Apache-2.0"
 [workspace.dependencies]
 tugboat-resource-store = { path = "tugboat-resource-store" }
 tugboat-resources = { path = "tugboat-resources" }
-tugboat-runtime = { path = "tugboat-runtime" }
 tugboat-client = { path = "tugboat-client" }
 tugboat-vm-image = { path = "tugboat-vm-image" }
 tugboat-vm-runtime-interface = { path = "tugboat-vm-runtime-interface" }
@@ -55,8 +54,10 @@ json_value_merge = "2.0.1"
 # protobuf
 tonic = "0.14.5"
 prost = "0.14.3"
+tonic-prost = "0.14.5"
+prost-types = "0.14.3"
 tonic-prost-build = "0.14.5"
-prost-build = "0.14.1"
+prost-build = "0.14.3"
 
 # async
 tokio = "1.49.0"

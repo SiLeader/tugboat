@@ -14,11 +14,8 @@
 
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
-use tracing::{debug, info, warn};
-use tugboat_client::{Api, WatchEvent};
-use tugboat_resources::ObjectMetaResource;
+use tugboat_client::WatchEvent;
 use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
-use tugboat_resources::manifests::meta::v1::Time;
 
 impl ShipReconciler {
     pub(super) async fn reconcile(&self, event: WatchEvent<Ship>) -> Result<(), ReconcileError> {

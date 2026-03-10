@@ -26,17 +26,20 @@ use tugboat_resources::ObjectMetaResource;
 #[derive(Serialize)]
 #[serde(tag = "type", content = "object")]
 enum WatchEvent<T> {
-    ADDED(T),
-    MODIFIED(T),
-    DELETED(T),
+    #[serde(rename = "ADDED")]
+    Added(T),
+    #[serde(rename = "MODIFIED")]
+    Modifed(T),
+    #[serde(rename = "DELETED")]
+    Deleted(T),
 }
 
 impl<T> WatchEvent<T> {
     fn content(&self) -> Option<&T> {
         match self {
-            WatchEvent::ADDED(c) => Some(c),
-            WatchEvent::MODIFIED(c) => Some(c),
-            WatchEvent::DELETED(c) => Some(c),
+            WatchEvent::Added(c) => Some(c),
+            WatchEvent::Modifed(c) => Some(c),
+            WatchEvent::Deleted(c) => Some(c),
         }
     }
 }
@@ -96,7 +99,7 @@ where
         return true;
     };
     if let Some(field_selector) = field_selector {
-        let Ok(value) = serde_json::to_value(&content) else {
+        let Ok(value) = serde_json::to_value(content) else {
             return false;
         };
         if !field_selector.iter().all(|s| s.is_match(&value)) {
@@ -124,15 +127,15 @@ where
         match value {
             tugboat_resource_store::watch::WatchEvent::Added(value) => {
                 let value = T::deserialize(value.value.as_slice())?;
-                Ok(WatchEvent::ADDED(value))
+                Ok(WatchEvent::Added(value))
             }
             tugboat_resource_store::watch::WatchEvent::Modified(value) => {
                 let value = T::deserialize(value.value.as_slice())?;
-                Ok(WatchEvent::MODIFIED(value))
+                Ok(WatchEvent::Modifed(value))
             }
             tugboat_resource_store::watch::WatchEvent::Deleted(value) => {
                 let value = T::deserialize(value.value.as_slice())?;
-                Ok(WatchEvent::DELETED(value))
+                Ok(WatchEvent::Deleted(value))
             }
         }
     }
