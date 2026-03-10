@@ -33,6 +33,25 @@ mod node_delete;
 mod node_list;
 mod node_read;
 mod node_replace;
+mod persistent_volume_claim_create;
+mod persistent_volume_claim_delete;
+mod persistent_volume_claim_list;
+mod persistent_volume_claim_read;
+mod persistent_volume_claim_replace;
+mod persistent_volume_claim_status_patch;
+mod persistent_volume_claim_status_replace;
+mod persistent_volume_create;
+mod persistent_volume_delete;
+mod persistent_volume_list;
+mod persistent_volume_read;
+mod persistent_volume_replace;
+mod persistent_volume_status_patch;
+mod persistent_volume_status_replace;
+mod secret_create;
+mod secret_delete;
+mod secret_list;
+mod secret_read;
+mod secret_replace;
 mod ship_create;
 mod ship_delete;
 mod ship_list;
@@ -61,11 +80,32 @@ mod shipclass_read;
         node_list::handle_node_list,
         node_read::handle_node_read,
         node_replace::handle_node_replace,
+        persistent_volume_create::handle_persistent_volume_create,
+        persistent_volume_delete::handle_persistent_volume_delete,
+        persistent_volume_list::handle_persistent_volume_list,
+        persistent_volume_read::handle_persistent_volume_read,
+        persistent_volume_replace::handle_persistent_volume_replace,
+        persistent_volume_status_patch::handle_persistent_volume_status_patch,
+        persistent_volume_status_replace::handle_persistent_volume_status_replace,
+        persistent_volume_claim_create::handle_persistent_volume_claim_create,
+        persistent_volume_claim_delete::handle_persistent_volume_claim_delete,
+        persistent_volume_claim_list::handle_persistent_volume_claim_list,
+        persistent_volume_claim_list::handle_persistent_volume_claim_list_all,
+        persistent_volume_claim_read::handle_persistent_volume_claim_read,
+        persistent_volume_claim_replace::handle_persistent_volume_claim_replace,
+        persistent_volume_claim_status_patch::handle_persistent_volume_claim_status_patch,
+        persistent_volume_claim_status_replace::handle_persistent_volume_claim_status_replace,
         networkclass_create::handle_networkclass_create,
         networkclass_delete::handle_networkclass_delete,
         networkclass_list::handle_networkclass_list,
         networkclass_list::handle_networkclass_list_all,
         networkclass_read::handle_networkclass_read,
+        secret_create::handle_secret_create,
+        secret_delete::handle_secret_delete,
+        secret_list::handle_secret_list,
+        secret_list::handle_secret_list_all,
+        secret_read::handle_secret_read,
+        secret_replace::handle_secret_replace,
         ship_create::handle_ship_create,
         ship_delete::handle_ship_delete,
         ship_list::handle_ship_list,
@@ -81,7 +121,10 @@ mod shipclass_read;
     ),
     components(schemas(
         tugboat_resources::manifests::core::v1::Namespace,
+        tugboat_resources::manifests::core::v1::PersistentVolume,
+        tugboat_resources::manifests::core::v1::PersistentVolumeClaim,
         tugboat_resources::manifests::core::v1::Node,
+        tugboat_resources::manifests::core::v1::Secret,
         tugboat_resources::manifests::core::v1::Ship,
         tugboat_resources::manifests::core::v1::ShipClass,
         tugboat_resources::manifests::core::v1::NetworkClass,
@@ -123,6 +166,31 @@ pub(super) fn register_node(service: &mut ServiceConfig) {
         .service(node_replace::handle_node_replace);
 }
 
+pub(super) fn register_persistent_volume(service: &mut ServiceConfig) {
+    service
+        .service(persistent_volume_create::handle_persistent_volume_create)
+        .service(persistent_volume_delete::handle_persistent_volume_delete)
+        .service(persistent_volume_list::handle_persistent_volume_list)
+        .service(persistent_volume_read::handle_persistent_volume_read)
+        .service(persistent_volume_replace::handle_persistent_volume_replace)
+        .service(persistent_volume_status_patch::handle_persistent_volume_status_patch)
+        .service(persistent_volume_status_replace::handle_persistent_volume_status_replace);
+}
+
+pub(super) fn register_persistent_volume_claim(service: &mut ServiceConfig) {
+    service
+        .service(persistent_volume_claim_create::handle_persistent_volume_claim_create)
+        .service(persistent_volume_claim_delete::handle_persistent_volume_claim_delete)
+        .service(persistent_volume_claim_list::handle_persistent_volume_claim_list)
+        .service(persistent_volume_claim_list::handle_persistent_volume_claim_list_all)
+        .service(persistent_volume_claim_read::handle_persistent_volume_claim_read)
+        .service(persistent_volume_claim_replace::handle_persistent_volume_claim_replace)
+        .service(persistent_volume_claim_status_patch::handle_persistent_volume_claim_status_patch)
+        .service(
+            persistent_volume_claim_status_replace::handle_persistent_volume_claim_status_replace,
+        );
+}
+
 pub(super) fn register_networkclass(service: &mut ServiceConfig) {
     service
         .service(networkclass_create::handle_networkclass_create)
@@ -130,6 +198,16 @@ pub(super) fn register_networkclass(service: &mut ServiceConfig) {
         .service(networkclass_list::handle_networkclass_list)
         .service(networkclass_list::handle_networkclass_list_all)
         .service(networkclass_read::handle_networkclass_read);
+}
+
+pub(super) fn register_secret(service: &mut ServiceConfig) {
+    service
+        .service(secret_create::handle_secret_create)
+        .service(secret_delete::handle_secret_delete)
+        .service(secret_list::handle_secret_list)
+        .service(secret_list::handle_secret_list_all)
+        .service(secret_read::handle_secret_read)
+        .service(secret_replace::handle_secret_replace);
 }
 
 pub(super) fn register_ship(service: &mut ServiceConfig) {
@@ -158,7 +236,10 @@ pub(super) fn register_v1_core(service: &mut ServiceConfig) {
         .configure(register_clusternetworkclass)
         .configure(register_namespace)
         .configure(register_node)
+        .configure(register_persistent_volume)
+        .configure(register_persistent_volume_claim)
         .configure(register_networkclass)
+        .configure(register_secret)
         .configure(register_ship)
         .configure(register_shipclass);
 }

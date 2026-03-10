@@ -29,6 +29,8 @@ cargo deny check
 - `tugboat-apiserver` (Actix Web) exposes REST endpoints and persists/read resources through `tugboat-resource-store`.
 - `tugboat-resource-store` wraps etcd CRUD + watch and stores objects under `/tugboat/registry/{group}/{plural}/...`.
 - `tugboat-agent` watches `Ship` resources (field selector `spec.nodeName=<node>`), reconciles desired state, updates ship status, and orchestrates runtime + networking.
+- `tugboat-scheduler` watches for unscheduled `Ship` resources and assigns them to nodes based on resource availability and constraints.
+- `tugboat-csi-operator` manages `PersistentVolume` and `PersistentVolumeClaim` resources, handling storage operations.
 - `tugboat-vm-image` handles OCI VM image pull/push, and `tugboat-vm-runtime-interface` shells out to `tugboat-runtime`.
 - `tugboat-runtime` is the QEMU executor CLI used by the agent/runtime interface (`create`, `start`, `status` flow).
 - Kubernetes concept mapping used in code/docs: Pod -> Ship, Deployment -> Fleet (planned), container image -> VM image (OCI), Dockerfile -> Imagefile.
