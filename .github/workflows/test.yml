@@ -1,0 +1,95 @@
+# Copyright 2025- SiLeader (Cerussite).
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Run tests and lints
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Cache build
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            target
+            .cargo
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.lock') }}
+            ${{ runner.os }}-cargo-test-
+
+      - name: Run tests
+        shell: bash
+        run: |
+          cargo test --workspace
+
+  lint:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Cache build
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            target
+            .cargo
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lint-${{ hashFiles('Cargo.lock') }}
+            ${{ runner.os }}-cargo-lint-
+
+      - name: Run clippy
+        shell: bash
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace -- -D warnings
+
+  license:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Cache build
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            target
+            .cargo
+          key: ${{ runner.os }}-cargo-license-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-license-${{ hashFiles('Cargo.lock') }}
+            ${{ runner.os }}-cargo-license-
+
+      - name: Install cargo deny check
+        shell: bash
+        run: |
+          cargo install --locked cargo-deny
+
+      - name: Run cargo deny check
+        shell: bash
+        run: |
+          cargo deny check

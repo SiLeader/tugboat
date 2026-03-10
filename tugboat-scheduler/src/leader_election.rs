@@ -133,16 +133,20 @@ impl LeaderElector {
         // but since Lease spec is what we update, we need to be careful.
         // Actually, the issue might be that we are doing full replace.
         // Let's try to just update the renewTime in a loop with fresh fetching.
-        
+
         let mut current_lease = lease;
-        
+
         for _ in 0..5 {
             let now = Time::now();
             if let Some(ref mut spec) = current_lease.spec {
                 spec.renew_time = Some(now);
             }
 
-            match self.lease_api.replace(LEASE_NAME, current_lease.clone()).await {
+            match self
+                .lease_api
+                .replace(LEASE_NAME, current_lease.clone())
+                .await
+            {
                 Ok(_) => {
                     self.is_leader = true;
                     return true;
@@ -150,7 +154,7 @@ impl LeaderElector {
                 Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
                     tracing::warn!("Failed to renew lease due to conflict, retrying...");
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    
+
                     match self.lease_api.get(LEASE_NAME).await {
                         Ok(Some(latest)) => {
                             let spec = latest.spec.as_ref();
@@ -165,8 +169,8 @@ impl LeaderElector {
                             }
                         }
                         Ok(None) => {
-                             self.is_leader = false;
-                             return false;
+                            self.is_leader = false;
+                            return false;
                         }
                         Err(e) => {
                             tracing::warn!("Failed to get lease during retry: {e}");
@@ -182,7 +186,7 @@ impl LeaderElector {
                 }
             }
         }
-        
+
         tracing::warn!("Failed to renew lease after retries");
         self.is_leader = false;
         false

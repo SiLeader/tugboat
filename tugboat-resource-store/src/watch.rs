@@ -69,7 +69,7 @@ impl WatchMuxAggregator {
         tokio::spawn(async move {
             let mut client = client;
             loop {
-                let Ok((_watcher, mut stream)) = client
+                let Ok(mut stream) = client
                     .watch(
                         key.as_str(),
                         Some(WatchOptions::default().with_prefix().with_prev_key()),

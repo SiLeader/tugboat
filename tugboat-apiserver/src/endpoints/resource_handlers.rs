@@ -276,9 +276,9 @@ where
         {
             let _ = metadata.insert("resourceVersion".to_string(), client_rv);
         } else {
-             // If client didn't provide resourceVersion, remove it from metadata
-             // so that it becomes None (unconditional update).
-             let _ = metadata.remove("resourceVersion");
+            // If client didn't provide resourceVersion, remove it from metadata
+            // so that it becomes None (unconditional update).
+            let _ = metadata.remove("resourceVersion");
         }
     }
     let _ = merged.insert("metadata".to_string(), serde_json::Value::Object(metadata));
