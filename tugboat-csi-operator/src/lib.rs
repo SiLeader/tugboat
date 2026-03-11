@@ -1,9 +1,16 @@
 use crate::proto::csi::v1::node_client::NodeClient;
 use crate::proto::csi::v1::volume_capability::access_mode::Mode;
 use crate::proto::csi::v1::volume_capability::{AccessMode, AccessType, BlockVolume};
-use crate::proto::csi::v1::{NodePublishVolumeRequest, VolumeCapability};
+use crate::proto::csi::v1::{
+    NodePublishVolumeRequest, NodeUnpublishVolumeRequest, VolumeCapability,
+};
 pub use error::Error;
+use hyper_util::rt::TokioIo;
+use std::io;
+use tokio::net::UnixStream;
 use tonic::Code;
+use tonic::transport::{Channel, Endpoint, Uri};
+use tower::service_fn;
 
 mod error;
 mod proto;
@@ -54,17 +61,62 @@ impl TugboatCsiOperator {
             staging_target_path: "".to_string(),
         };
 
-        let mut client = NodeClient::connect(socket_path.to_string()).await?;
+        let mut client = connect_node_client(socket_path).await?;
+        client
+            .node_publish_volume(req)
+            .await
+            .map(|_| ())
+            .map_err(map_grpc_error)
+    }
 
-        if let Err(e) = client.node_publish_volume(req).await {
-            match e.code() {
-                Code::Ok => Ok(()),
-                Code::AlreadyExists => Err(error::Error::TargetPathAlreadyExists),
-                Code::FailedPrecondition => Err(error::Error::FailedPrecondition),
-                _ => Err(error::Error::Grpc(e)),
+    pub async fn unpublish(
+        &self,
+        socket_path: &str,
+        volume_id: String,
+        target_path: String,
+    ) -> Result<(), error::Error> {
+        let req = NodeUnpublishVolumeRequest {
+            volume_id,
+            target_path,
+        };
+
+        let mut client = connect_node_client(socket_path).await?;
+        client
+            .node_unpublish_volume(req)
+            .await
+            .map(|_| ())
+            .map_err(map_grpc_error)
+    }
+}
+
+async fn connect_node_client(socket_path: &str) -> Result<NodeClient<Channel>, error::Error> {
+    let socket_path = normalize_socket_path(socket_path);
+    let channel = Endpoint::try_from("http://[::]:50051")
+        .expect("static tonic endpoint should be valid")
+        .connect_with_connector(service_fn(move |_: Uri| {
+            let socket_path = socket_path.clone();
+            async move {
+                let stream = UnixStream::connect(socket_path).await?;
+                Ok::<_, io::Error>(TokioIo::new(stream))
             }
-        } else {
-            Ok(())
-        }
+        }))
+        .await?;
+    Ok(NodeClient::new(channel))
+}
+
+fn normalize_socket_path(socket_path: &str) -> String {
+    socket_path
+        .strip_prefix("unix://")
+        .unwrap_or(socket_path)
+        .to_string()
+}
+
+fn map_grpc_error(error: tonic::Status) -> error::Error {
+    match error.code() {
+        Code::Ok => unreachable!("successful responses are not routed through map_grpc_error"),
+        Code::AlreadyExists => error::Error::TargetPathAlreadyExists,
+        Code::NotFound => error::Error::TargetPathNotFound,
+        Code::FailedPrecondition => error::Error::FailedPrecondition,
+        _ => error::Error::Grpc(error),
     }
 }

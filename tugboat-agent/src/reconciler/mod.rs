@@ -16,6 +16,7 @@ mod error;
 mod network;
 mod ops;
 mod reconcile;
+mod volume;
 
 use crate::cni::CniWrapper;
 use crate::csi::{CsiDrivers, CsiWrapper};
@@ -44,7 +45,6 @@ pub(crate) struct ShipReconciler {
     ship_class_api: Api<ShipClass>,
     runtime_operator: RuntimeOperator,
     cni: CniWrapper,
-    #[allow(dead_code)]
     csi: CsiWrapper,
     cancellation_token: CancellationToken,
 }
@@ -57,6 +57,7 @@ impl ShipReconciler {
         cni: TugboatCniOperator,
         csi: TugboatCsiOperator,
         csi_drivers: CsiDrivers,
+        csi_publish_dir: String,
     ) -> Self {
         Self {
             node_name,
@@ -65,7 +66,7 @@ impl ShipReconciler {
             client,
             runtime_operator,
             cni: CniWrapper::new(cni),
-            csi: CsiWrapper::new(csi, csi_drivers),
+            csi: CsiWrapper::new(csi, csi_drivers, csi_publish_dir),
             cancellation_token: CancellationToken::new(),
         }
     }
@@ -122,7 +123,7 @@ impl ShipReconciler {
                     match status {
                         Ok(status) => {
                             let api: Api<Ship> = Api::namespaced(client.clone(), &status.namespace);
-                            let mut ship = match api.get(&status.id).await {
+                            let mut ship = match api.get(&status.ship_name).await {
                                 Ok(Some(s)) => s,
                                 Ok(None) => continue,
                                 Err(err) => {
@@ -132,7 +133,7 @@ impl ShipReconciler {
                             };
 
                             ship.append_status(status.condition);
-                            if let Err(e) = api.replace_status(&status.id, ship).await {
+                            if let Err(e) = api.replace_status(&status.ship_name, ship).await {
                                 error!("Failed to update ship status: {e}");
                             }
                         }

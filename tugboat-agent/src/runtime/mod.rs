@@ -20,6 +20,7 @@ mod start;
 mod status;
 
 use crate::runtime::inner::Runtime;
+pub(crate) use create::RuntimeCreateRequest;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;

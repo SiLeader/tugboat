@@ -62,7 +62,8 @@ pub async fn run() {
         runtime_operator,
         cni_operator,
         csi_operator,
-        CsiDrivers::default(),
+        CsiDrivers::from(config.csi.drivers),
+        config.csi.publish_dir,
     );
 
     reconciler.run().await;

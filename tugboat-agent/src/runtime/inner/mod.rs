@@ -14,13 +14,31 @@
 
 mod status;
 
+use crate::csi::PublishedVolume;
+
 pub(crate) struct Runtime {
     namespace: String,
+    ship_name: String,
     id: String,
+    published_volumes: Vec<PublishedVolume>,
 }
 
 impl Runtime {
-    pub(super) fn new(namespace: String, id: String) -> Self {
-        Self { namespace, id }
+    pub(super) fn new(
+        namespace: String,
+        ship_name: String,
+        id: String,
+        published_volumes: Vec<PublishedVolume>,
+    ) -> Self {
+        Self {
+            namespace,
+            ship_name,
+            id,
+            published_volumes,
+        }
+    }
+
+    pub(super) fn into_published_volumes(self) -> Vec<PublishedVolume> {
+        self.published_volumes
     }
 }

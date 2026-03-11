@@ -13,6 +13,9 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::fs::{OpenOptions, create_dir_all, remove_dir, remove_file};
+use std::io;
+use std::path::{Path, PathBuf};
 use tugboat_csi_operator::{CsiAccessMode, CsiAccessType, TugboatCsiOperator};
 use tugboat_resources::manifests::core::v1::{
     CsiPersistentVolumeSource, PersistentVolumeClaimSpec, PersistentVolumeSpec,
@@ -24,37 +27,75 @@ pub(crate) enum CsiError {
     Driver(#[from] tugboat_csi_operator::Error),
     #[error("Driver '{0}' not found")]
     DriverNotFound(String),
-    #[error("Unrecognize access mode: {0}")]
-    UnrecognizeAccessMode(String),
-    #[error("Unrecognize access type: {0}")]
-    UnrecognizeAccessType(String),
+    #[error("Unrecognized access mode: {0}")]
+    UnrecognizedAccessMode(String),
+    #[error("Unrecognized access type: {0}")]
+    UnrecognizedAccessType(String),
     #[error("Access mode is missing in claim spec")]
     MissingAccessMode,
+    #[error("CSI volume handle is missing")]
+    MissingVolumeHandle,
+    #[error("Target path '{0}' has no parent directory")]
+    TargetPathHasNoParent(String),
+    #[error("Target path '{0}' is a directory")]
+    TargetPathIsDirectory(String),
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublishedVolume {
+    pub driver: String,
+    pub volume_id: String,
+    pub target_path: String,
+}
+
 #[derive(Clone)]
 pub(crate) struct CsiWrapper {
     operator: TugboatCsiOperator,
     drivers: CsiDrivers,
+    publish_dir: PathBuf,
 }
 
-#[allow(dead_code)]
 impl CsiWrapper {
-    pub(crate) fn new(operator: TugboatCsiOperator, drivers: CsiDrivers) -> Self {
-        Self { operator, drivers }
+    pub(crate) fn new(
+        operator: TugboatCsiOperator,
+        drivers: CsiDrivers,
+        publish_dir: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            operator,
+            drivers,
+            publish_dir: publish_dir.into(),
+        }
+    }
+
+    pub(crate) fn plan_published_volume(
+        &self,
+        ship_id: &str,
+        claim_name: &str,
+        source: &CsiPersistentVolumeSource,
+    ) -> Result<PublishedVolume, CsiError> {
+        if source.volume_handle.is_empty() {
+            return Err(CsiError::MissingVolumeHandle);
+        }
+        Ok(PublishedVolume {
+            driver: source.driver.clone(),
+            volume_id: source.volume_handle.clone(),
+            target_path: self.target_path(ship_id, claim_name),
+        })
     }
 
     pub(crate) async fn publish(
         &self,
-        volume_id: String,
-        volume: PersistentVolumeSpec,
-        claim: PersistentVolumeClaimSpec,
-        source: CsiPersistentVolumeSource,
-        target_directory: String,
-    ) -> Result<(), CsiError> {
+        ship_id: &str,
+        claim_name: &str,
+        volume: &PersistentVolumeSpec,
+        claim: &PersistentVolumeClaimSpec,
+        source: &CsiPersistentVolumeSource,
+    ) -> Result<PublishedVolume, CsiError> {
         let Some(uds_path) = self.drivers.get(&source.driver) else {
-            return Err(CsiError::DriverNotFound(source.driver));
+            return Err(CsiError::DriverNotFound(source.driver.clone()));
         };
         let access_mode = CsiAccessMode::try_convert_from_string(
             claim
@@ -65,18 +106,95 @@ impl CsiWrapper {
         let access_type = CsiAccessType::try_convert_from_string(
             volume.volume_mode.as_deref().unwrap_or("Block"),
         )?;
+        let published = self.plan_published_volume(ship_id, claim_name, source)?;
+        prepare_target_path(&published.target_path, &access_type)?;
+
         self.operator
             .publish(
                 uds_path,
-                volume_id,
-                target_directory,
+                published.volume_id.clone(),
+                published.target_path.clone(),
                 source.read_only,
                 access_mode,
                 access_type,
             )
             .await?;
+        Ok(published)
+    }
+
+    pub(crate) async fn unpublish(&self, volume: &PublishedVolume) -> Result<(), CsiError> {
+        let Some(uds_path) = self.drivers.get(&volume.driver) else {
+            return Err(CsiError::DriverNotFound(volume.driver.clone()));
+        };
+
+        match self
+            .operator
+            .unpublish(
+                uds_path,
+                volume.volume_id.clone(),
+                volume.target_path.clone(),
+            )
+            .await
+        {
+            Ok(()) | Err(tugboat_csi_operator::Error::TargetPathNotFound) => {}
+            Err(err) => return Err(err.into()),
+        }
+
+        cleanup_target_path(&volume.target_path)?;
         Ok(())
     }
+
+    fn target_path(&self, ship_id: &str, claim_name: &str) -> String {
+        self.publish_dir
+            .join(ship_id)
+            .join(format!("{claim_name}.block"))
+            .display()
+            .to_string()
+    }
+}
+
+fn prepare_target_path(target_path: &str, access_type: &CsiAccessType) -> Result<(), CsiError> {
+    let path = Path::new(target_path);
+    let Some(parent) = path.parent() else {
+        return Err(CsiError::TargetPathHasNoParent(target_path.to_string()));
+    };
+    create_dir_all(parent)?;
+    match access_type {
+        CsiAccessType::Block => {
+            if path.is_dir() {
+                return Err(CsiError::TargetPathIsDirectory(target_path.to_string()));
+            }
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(path)?;
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_target_path(target_path: &str) -> Result<(), CsiError> {
+    let path = Path::new(target_path);
+    match remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    let Some(parent) = path.parent() else {
+        return Err(CsiError::TargetPathHasNoParent(target_path.to_string()));
+    };
+    match remove_dir(parent) {
+        Ok(()) => {}
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+            ) => {}
+        Err(err) => return Err(err.into()),
+    }
+    Ok(())
 }
 
 trait TryConvertFromString: Sized {
@@ -89,7 +207,7 @@ impl TryConvertFromString for CsiAccessMode {
             "ReadOnlyMany" => Ok(CsiAccessMode::ReadOnlyMany),
             "ReadWriteOnce" => Ok(CsiAccessMode::ReadWriteOnce),
             "ReadWriteMany" => Ok(CsiAccessMode::ReadWriteMany),
-            _ => Err(CsiError::UnrecognizeAccessMode(value.to_string())),
+            _ => Err(CsiError::UnrecognizedAccessMode(value.to_string())),
         }
     }
 }
@@ -98,8 +216,7 @@ impl TryConvertFromString for CsiAccessType {
     fn try_convert_from_string(value: &str) -> Result<Self, CsiError> {
         match value {
             "Block" => Ok(CsiAccessType::Block),
-            // "Filesystem" => Ok(CsiAccessType::Filesystem),
-            _ => Err(CsiError::UnrecognizeAccessType(value.to_string())),
+            _ => Err(CsiError::UnrecognizedAccessType(value.to_string())),
         }
     }
 }
@@ -110,13 +227,59 @@ pub struct CsiDrivers {
 }
 
 impl CsiDrivers {
-    #[allow(dead_code)]
-    pub fn add(mut self, driver: String, socket_path: String) -> Self {
-        self.drivers.insert(driver, socket_path);
-        self
-    }
-
     pub fn get(&self, driver: &str) -> Option<&str> {
         self.drivers.get(driver).map(|s| s.as_str())
+    }
+}
+
+impl From<HashMap<String, String>> for CsiDrivers {
+    fn from(drivers: HashMap<String, String>) -> Self {
+        Self { drivers }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CsiDrivers, CsiWrapper, TryConvertFromString};
+    use tugboat_csi_operator::{CsiAccessMode, CsiAccessType, TugboatCsiOperator};
+    use tugboat_resources::manifests::core::v1::CsiPersistentVolumeSource;
+
+    #[test]
+    fn can_convert_access_modes() {
+        assert!(matches!(
+            CsiAccessMode::try_convert_from_string("ReadWriteOnce"),
+            Ok(CsiAccessMode::ReadWriteOnce)
+        ));
+        assert!(matches!(
+            CsiAccessType::try_convert_from_string("Block"),
+            Ok(CsiAccessType::Block)
+        ));
+    }
+
+    #[test]
+    fn can_plan_publish_target_path() {
+        let wrapper = CsiWrapper::new(
+            TugboatCsiOperator::default(),
+            CsiDrivers::default(),
+            "/var/lib/tugboat-agent/csi",
+        );
+        let published = wrapper
+            .plan_published_volume(
+                "ship-uid",
+                "data-volume",
+                &CsiPersistentVolumeSource {
+                    driver: "example.csi".to_string(),
+                    volume_handle: "volume-001".to_string(),
+                    ..Default::default()
+                },
+            )
+            .expect("volume planning should succeed");
+
+        assert_eq!(published.driver, "example.csi");
+        assert_eq!(published.volume_id, "volume-001");
+        assert_eq!(
+            published.target_path,
+            "/var/lib/tugboat-agent/csi/ship-uid/data-volume.block"
+        );
     }
 }

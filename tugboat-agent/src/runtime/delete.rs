@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::csi::PublishedVolume;
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use tracing::{debug, info};
 use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
 
 impl RuntimeOperator {
-    pub(crate) async fn delete(&self, id: String) -> Result<(), RuntimeError> {
+    pub(crate) async fn delete(&self, id: String) -> Result<Vec<PublishedVolume>, RuntimeError> {
         debug!("Delete VM: {}", id);
         let req = VmStopRequest {
             id: id.clone(),
@@ -31,8 +32,19 @@ impl RuntimeOperator {
         }
 
         let mut children = self.children.write().await;
-        children.remove(&id);
+        let published_volumes = children
+            .remove(&id)
+            .map(|runtime| runtime.into_published_volumes())
+            .unwrap_or_default();
 
-        Ok(())
+        Ok(published_volumes)
+    }
+
+    pub(crate) async fn take_published_volumes(&self, id: &str) -> Vec<PublishedVolume> {
+        let mut children = self.children.write().await;
+        children
+            .remove(id)
+            .map(|runtime| runtime.into_published_volumes())
+            .unwrap_or_default()
     }
 }

@@ -22,6 +22,7 @@ use tugboat_vm_runtime_interface::status::{VmStatus, VmStatusResponse};
 pub(crate) struct RuntimeStatusChecker {
     pub id: String,
     pub namespace: String,
+    pub ship_name: String,
 }
 
 impl RuntimeStatusChecker {
@@ -39,6 +40,7 @@ impl Runtime {
         RuntimeStatusChecker {
             id: self.id.clone(),
             namespace: self.namespace.clone(),
+            ship_name: self.ship_name.clone(),
         }
     }
 }

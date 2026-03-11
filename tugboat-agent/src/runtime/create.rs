@@ -12,13 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::csi::PublishedVolume;
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::inner::Runtime;
 use tracing::{debug, info};
 use tugboat_resources::manifests::core::v1::{ShipClass, ShipSpec};
 use tugboat_resources::sized::SizedString;
-use tugboat_vm_runtime_interface::run::{VmCpuConfig, VmNetworkConfig, VmRunRequest, VmUefiConfig};
+use tugboat_vm_runtime_interface::run::{
+    VmCpuConfig, VmNetworkConfig, VmRunRequest, VmUefiConfig, VmVolumeConfig,
+};
+
+pub(crate) struct RuntimeCreateRequest<'a> {
+    pub ship_id: String,
+    pub ship_name: String,
+    pub namespace: String,
+    pub ship_spec: &'a ShipSpec,
+    pub ship_class: ShipClass,
+    pub networks: Vec<VmNetworkConfig>,
+    pub volumes: Vec<VmVolumeConfig>,
+    pub published_volumes: Vec<PublishedVolume>,
+}
 
 impl RuntimeOperator {
     fn is_http_host(&self, image: &str) -> Option<bool> {
@@ -28,12 +42,18 @@ impl RuntimeOperator {
 
     pub(crate) async fn create(
         &self,
-        ship_id: String,
-        namespace: String,
-        ship_spec: &ShipSpec,
-        ship_class: ShipClass,
-        networks: Vec<VmNetworkConfig>,
+        request: RuntimeCreateRequest<'_>,
     ) -> Result<u32, RuntimeError> {
+        let RuntimeCreateRequest {
+            ship_id,
+            ship_name,
+            namespace,
+            ship_spec,
+            ship_class,
+            networks,
+            volumes,
+            published_volumes,
+        } = request;
         let Some(ship_class_spec) = ship_class.spec else {
             return Err(RuntimeError::MissingField("v1.ShipClass.spec".to_string()));
         };
@@ -70,13 +90,16 @@ impl RuntimeOperator {
             uefi: VmUefiConfig {
                 enabled: ship_spec.uefi.map(|u| u.enabled).unwrap_or(false),
             },
-            volumes: vec![], // TODO
+            volumes,
         };
         debug!("Creating VM: {:?}", vm_config);
         let pid = self.operator.create(vm_config).await?;
         info!("Create VM '{ship_id}' called successfully",);
         let mut children = self.children.write().await;
-        children.insert(ship_id.clone(), Runtime::new(namespace, ship_id));
+        children.insert(
+            ship_id.clone(),
+            Runtime::new(namespace, ship_name, ship_id, published_volumes),
+        );
         Ok(pid)
     }
 }

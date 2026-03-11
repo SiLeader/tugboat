@@ -18,7 +18,7 @@ use tugboat_resources::manifests::core::v1::ShipCondition;
 
 pub(crate) struct ShipConditionWithId {
     pub namespace: String,
-    pub id: String,
+    pub ship_name: String,
     pub condition: ShipCondition,
 }
 
@@ -37,7 +37,7 @@ impl RuntimeOperator {
             let status = ship.check(&self.operator).await;
             result.push(status.map(|s| ShipConditionWithId {
                 namespace: ship.namespace,
-                id: ship.id,
+                ship_name: ship.ship_name,
                 condition: s,
             }))
         }

@@ -37,6 +37,11 @@ message ShipSpec {
   optional ShipUefi uefi = 5;
   repeated Toleration tolerations = 6;
   optional string scheduler_name = 7;
+  repeated ShipVolumeClaimReference volume_claim_ref = 8;
+}
+
+message ShipVolumeClaimReference {
+  string name = 1;
 }
 
 message Toleration {
