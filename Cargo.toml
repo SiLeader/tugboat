@@ -43,7 +43,7 @@ tugboat-cni-operator = { path = "tugboat-cni-operator" }
 tugboat-csi-operator = { path = "tugboat-csi-operator" }
 
 # command line
-clap = "4.5.53"
+clap = "4.5.60"
 
 # serde
 serde = "1.0.228"
