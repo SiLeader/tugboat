@@ -79,7 +79,7 @@ tracing-subscriber = "0.3.22"
 
 # HTTP server
 actix-web = "4.12.1"
-actix-web-lab = "0.24.3"
+actix-web-lab = "0.26.0"
 utoipa = "5.4.0"
 utoipa-actix-web = "0.1.2"
 
