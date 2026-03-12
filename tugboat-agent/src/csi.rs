@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::mountns;
+use nix::sched::{CloneFlags, setns};
 use std::collections::HashMap;
 use std::fs::{OpenOptions, create_dir_all, remove_dir, remove_file};
+use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use tugboat_csi_operator::{CsiAccessMode, CsiAccessType, TugboatCsiOperator};
@@ -41,6 +44,12 @@ pub(crate) enum CsiError {
     TargetPathIsDirectory(String),
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+    #[error("System call error: {0}")]
+    Syscall(#[from] nix::errno::Errno),
+    #[error("Task join error: {0}")]
+    Join(#[from] tokio::task::JoinError),
+    #[error("Mount namespace error: {0}")]
+    MountNamespace(#[from] mountns::Error),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +57,7 @@ pub(crate) struct PublishedVolume {
     pub driver: String,
     pub volume_id: String,
     pub target_path: String,
+    pub mount_namespace_path: String,
 }
 
 #[derive(Clone)]
@@ -83,7 +93,17 @@ impl CsiWrapper {
             driver: source.driver.clone(),
             volume_id: source.volume_handle.clone(),
             target_path: self.target_path(ship_id, claim_name),
+            mount_namespace_path: mountns::path_for_ship(ship_id).display().to_string(),
         })
+    }
+
+    pub(crate) fn ensure_mount_namespace(&self, ship_id: &str) -> Result<String, CsiError> {
+        Ok(mountns::ensure_for_ship(ship_id)?.display().to_string())
+    }
+
+    pub(crate) fn cleanup_mount_namespace(&self, ship_id: &str) -> Result<(), CsiError> {
+        mountns::cleanup_for_ship(ship_id)?;
+        Ok(())
     }
 
     pub(crate) async fn publish(
@@ -106,19 +126,28 @@ impl CsiWrapper {
         let access_type = CsiAccessType::try_convert_from_string(
             volume.volume_mode.as_deref().unwrap_or("Block"),
         )?;
+        self.ensure_mount_namespace(ship_id)?;
         let published = self.plan_published_volume(ship_id, claim_name, source)?;
         prepare_target_path(&published.target_path, &access_type)?;
-
-        self.operator
-            .publish(
-                uds_path,
-                published.volume_id.clone(),
-                published.target_path.clone(),
-                source.read_only,
-                access_mode,
-                access_type,
-            )
-            .await?;
+        let operator = self.operator.clone();
+        let uds_path = uds_path.to_string();
+        let volume_id = published.volume_id.clone();
+        let target_path = published.target_path.clone();
+        let mount_namespace_path = published.mount_namespace_path.clone();
+        let read_only = source.read_only;
+        run_in_mount_namespace(mount_namespace_path, move || async move {
+            operator
+                .publish(
+                    &uds_path,
+                    volume_id,
+                    target_path,
+                    read_only,
+                    access_mode,
+                    access_type,
+                )
+                .await
+        })
+        .await?;
         Ok(published)
     }
 
@@ -127,16 +156,17 @@ impl CsiWrapper {
             return Err(CsiError::DriverNotFound(volume.driver.clone()));
         };
 
-        match self
-            .operator
-            .unpublish(
-                uds_path,
-                volume.volume_id.clone(),
-                volume.target_path.clone(),
-            )
-            .await
+        let operator = self.operator.clone();
+        let uds_path = uds_path.to_string();
+        let volume_id = volume.volume_id.clone();
+        let target_path = volume.target_path.clone();
+        let mount_namespace_path = volume.mount_namespace_path.clone();
+        match run_in_mount_namespace(mount_namespace_path, move || async move {
+            operator.unpublish(&uds_path, volume_id, target_path).await
+        })
+        .await
         {
-            Ok(()) | Err(tugboat_csi_operator::Error::TargetPathNotFound) => {}
+            Ok(()) | Err(CsiError::Driver(tugboat_csi_operator::Error::TargetPathNotFound)) => {}
             Err(err) => return Err(err.into()),
         }
 
@@ -151,6 +181,41 @@ impl CsiWrapper {
             .display()
             .to_string()
     }
+}
+
+async fn run_in_mount_namespace<T, F, Fut>(
+    mount_namespace_path: String,
+    operation: F,
+) -> Result<T, CsiError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, tugboat_csi_operator::Error>> + 'static,
+{
+    tokio::task::spawn_blocking(move || -> Result<T, CsiError> {
+        let current_namespace = std::fs::File::open("/proc/self/ns/mnt")?;
+        let target_namespace = std::fs::File::open(&mount_namespace_path)?;
+        setns(&target_namespace, CloneFlags::CLONE_NEWNS)?;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let result = runtime.block_on(operation()).map_err(CsiError::from);
+        let restore_result = setns(&current_namespace, CloneFlags::CLONE_NEWNS);
+        match (result, restore_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(err), Ok(())) => Err(err),
+            (Ok(_), Err(err)) => Err(err.into()),
+            (Err(err), Err(restore_err)) => {
+                tracing::error!(
+                    "Failed to restore mount namespace after CSI operation failed: {restore_err}"
+                );
+                Err(err)
+            }
+        }
+    })
+    .await
+    .map_err(CsiError::from)?
 }
 
 fn prepare_target_path(target_path: &str, access_type: &CsiAccessType) -> Result<(), CsiError> {
@@ -280,6 +345,10 @@ mod tests {
         assert_eq!(
             published.target_path,
             "/var/lib/tugboat-agent/csi/ship-uid/data-volume.block"
+        );
+        assert_eq!(
+            published.mount_namespace_path,
+            "/var/run/tugboat/mntns/ship-uid"
         );
     }
 }

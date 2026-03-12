@@ -21,6 +21,7 @@ use tugboat_client::TugboatClient;
 mod cni;
 mod config;
 mod csi;
+mod mountns;
 mod node_registration;
 mod reconciler;
 mod runtime;

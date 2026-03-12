@@ -14,6 +14,12 @@
 
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_MOUNT_NAMESPACE_DIR: &str = "/var/run/tugboat/mntns";
+
+pub fn mount_namespace_path(id: &str) -> String {
+    format!("{DEFAULT_MOUNT_NAMESPACE_DIR}/{id}")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VmRunRequest {
@@ -61,4 +67,17 @@ pub struct VmVolumeConfig {
     pub host_path: String,
     pub format: String,
     pub read_only: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mount_namespace_path;
+
+    #[test]
+    fn can_build_mount_namespace_path() {
+        assert_eq!(
+            mount_namespace_path("ship-uid"),
+            "/var/run/tugboat/mntns/ship-uid"
+        );
+    }
 }

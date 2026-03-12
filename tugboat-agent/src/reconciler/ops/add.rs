@@ -88,6 +88,9 @@ impl ShipReconciler {
         let networks = self.cni.create_network_configs(ship_id, network_classes);
         let mut published_volumes = Vec::new();
         let mut vm_volumes = Vec::new();
+        if !volumes.is_empty() {
+            self.csi.ensure_mount_namespace(ship_id)?;
+        }
         for volume in &volumes {
             match self
                 .csi
@@ -114,6 +117,11 @@ impl ShipReconciler {
                     {
                         error!(
                             "Failed to roll back published volumes after publish error: {cleanup_err}"
+                        );
+                    }
+                    if let Err(cleanup_err) = self.csi.cleanup_mount_namespace(ship_id) {
+                        error!(
+                            "Failed to clean up mount namespace after publish error: {cleanup_err}"
                         );
                     }
                     return Err(err.into());
@@ -183,17 +191,20 @@ impl ShipReconciler {
         ship_id: &str,
         fallback_published_volumes: &[PublishedVolume],
     ) -> Result<(), ReconcileError> {
-        let runtime_published_volumes = match self
+        let (runtime_published_volumes, runtime_deleted) = match self
             .runtime_operator
             .delete(ship_id.to_string())
             .await
         {
-            Ok(published_volumes) => published_volumes,
+            Ok(published_volumes) => (published_volumes, true),
             Err(err) => {
                 error!(
                     "Failed to stop runtime while rolling back ship '{ship_id}': {err}. Continuing CSI cleanup."
                 );
-                self.runtime_operator.take_published_volumes(ship_id).await
+                (
+                    self.runtime_operator.take_published_volumes(ship_id).await,
+                    false,
+                )
             }
         };
         if runtime_published_volumes.is_empty() {
@@ -202,6 +213,9 @@ impl ShipReconciler {
         } else {
             self.cleanup_published_volumes(&runtime_published_volumes)
                 .await?;
+        }
+        if runtime_deleted {
+            self.csi.cleanup_mount_namespace(ship_id)?;
         }
         Ok(())
     }

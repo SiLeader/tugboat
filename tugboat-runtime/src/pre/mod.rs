@@ -14,13 +14,29 @@
 
 use nix::libc::umask;
 use nix::mount::{MsFlags, mount};
-use nix::sched::{CloneFlags, unshare};
+use nix::sched::{CloneFlags, setns, unshare};
 use nix::sys::signal::{SigHandler, Signal, signal};
 use nix::unistd::{Gid, Uid, chdir, fork, setgid, setsid, setuid};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use tracing::{debug, info};
 use tugboat_vm_runtime_interface::run::VmExecUser;
+use tugboat_vm_runtime_interface::run::mount_namespace_path;
+
+pub(crate) fn enter_mount_namespace(ship_id: &str) -> Result<(), crate::Error> {
+    let mountns = mount_namespace_path(ship_id);
+    if !PathBuf::from(&mountns).exists() {
+        debug!("No mount namespace found for ship '{ship_id}', skipping");
+        return Ok(());
+    }
+
+    debug!("Entering mount namespace '{mountns}'");
+    let namespace = File::open(&mountns)?;
+    setns(&namespace, CloneFlags::CLONE_NEWNS)?;
+    info!("Successfully entered mount namespace '{mountns}'");
+    Ok(())
+}
 
 pub(crate) fn create_and_enter_to_network_namespace(ship_id: &str) -> Result<(), crate::Error> {
     debug!(

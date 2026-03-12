@@ -21,13 +21,20 @@ impl ShipReconciler {
         let namespace = meta.namespace.clone().unwrap_or("default".to_string());
 
         info!("Deleting ship: {}", ship_id);
-        let mut published_volumes = match self.runtime_operator.delete(ship_id.clone()).await {
-            Ok(published_volumes) => published_volumes,
+        let (mut published_volumes, runtime_deleted) = match self
+            .runtime_operator
+            .delete(ship_id.clone())
+            .await
+        {
+            Ok(published_volumes) => (published_volumes, true),
             Err(err) => {
                 warn!(
                     "Failed to stop runtime for deleted ship '{ship_id}': {err}. Continuing CSI cleanup."
                 );
-                self.runtime_operator.take_published_volumes(ship_id).await
+                (
+                    self.runtime_operator.take_published_volumes(ship_id).await,
+                    false,
+                )
             }
         };
         if published_volumes.is_empty() {
@@ -47,6 +54,9 @@ impl ShipReconciler {
                 .collect::<Result<Vec<_>, _>>()?;
         }
         self.cleanup_published_volumes(&published_volumes).await?;
+        if runtime_deleted {
+            self.csi.cleanup_mount_namespace(ship_id)?;
+        }
         Ok(())
     }
 }
