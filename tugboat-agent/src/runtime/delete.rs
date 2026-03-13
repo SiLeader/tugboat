@@ -15,8 +15,14 @@
 use crate::csi::PublishedVolume;
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
+use tokio::time::{Duration, sleep};
 use tracing::{debug, info};
+use tugboat_vm_runtime_interface::operator::Error as VmRuntimeOperatorError;
+use tugboat_vm_runtime_interface::status::VmStatus;
 use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
+
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const SHUTDOWN_POLL_ATTEMPTS: usize = 30;
 
 impl RuntimeOperator {
     pub(crate) async fn delete(&self, id: String) -> Result<Vec<PublishedVolume>, RuntimeError> {
@@ -27,9 +33,13 @@ impl RuntimeOperator {
         };
 
         match self.operator.stop(req).await {
-            Ok(_) => info!("VM '{}' stopped successfully", id),
+            Ok(_) => info!("Shutdown requested for VM '{}'", id),
+            Err(err) if runtime_is_absent(&err) => {
+                info!("VM '{}' is already absent, continuing cleanup", id)
+            }
             Err(e) => return Err(e.into()),
         }
+        self.wait_for_stopped(&id).await?;
 
         let mut children = self.children.write().await;
         let published_volumes = children
@@ -40,11 +50,44 @@ impl RuntimeOperator {
         Ok(published_volumes)
     }
 
-    pub(crate) async fn take_published_volumes(&self, id: &str) -> Vec<PublishedVolume> {
-        let mut children = self.children.write().await;
-        children
-            .remove(id)
-            .map(|runtime| runtime.into_published_volumes())
-            .unwrap_or_default()
+    async fn wait_for_stopped(&self, id: &str) -> Result<(), RuntimeError> {
+        for attempt in 0..SHUTDOWN_POLL_ATTEMPTS {
+            match self.operator.status(id).await {
+                Ok(status) if matches!(status.status, VmStatus::Shutdown) => {
+                    info!("VM '{}' reached shutdown state", id);
+                    return Ok(());
+                }
+                Ok(status) => {
+                    debug!(
+                        "VM '{}' is still in state {:?} while waiting for shutdown (attempt {}/{})",
+                        id,
+                        status.status,
+                        attempt + 1,
+                        SHUTDOWN_POLL_ATTEMPTS
+                    );
+                }
+                Err(err) if runtime_is_absent(&err) => {
+                    info!(
+                        "VM '{}' runtime socket disappeared, assuming it is stopped",
+                        id
+                    );
+                    return Ok(());
+                }
+                Err(err) => return Err(err.into()),
+            }
+            sleep(SHUTDOWN_POLL_INTERVAL).await;
+        }
+
+        Err(RuntimeError::ShutdownTimeout(id.to_string()))
+    }
+}
+
+fn runtime_is_absent(err: &VmRuntimeOperatorError) -> bool {
+    match err {
+        VmRuntimeOperatorError::CommandFailed(_, stdout, stderr) => {
+            let combined = format!("{stdout}\n{stderr}");
+            combined.contains("Cannot open UDS") || combined.contains("No such file or directory")
+        }
+        _ => false,
     }
 }

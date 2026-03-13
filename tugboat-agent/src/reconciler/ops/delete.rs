@@ -1,6 +1,6 @@
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
-use tracing::{info, warn};
+use tracing::info;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Ship;
 
@@ -21,22 +21,10 @@ impl ShipReconciler {
         let namespace = meta.namespace.clone().unwrap_or("default".to_string());
 
         info!("Deleting ship: {}", ship_id);
-        let (mut published_volumes, runtime_deleted) = match self
-            .runtime_operator
-            .delete(ship_id.clone())
-            .await
-        {
-            Ok(published_volumes) => (published_volumes, true),
-            Err(err) => {
-                warn!(
-                    "Failed to stop runtime for deleted ship '{ship_id}': {err}. Continuing CSI cleanup."
-                );
-                (
-                    self.runtime_operator.take_published_volumes(ship_id).await,
-                    false,
-                )
-            }
-        };
+        let mut published_volumes = self.runtime_operator.delete(ship_id.clone()).await?;
+        if published_volumes.is_empty() {
+            published_volumes = self.csi.load_published_volumes(ship_id)?;
+        }
         if published_volumes.is_empty() {
             let Some(ship_spec) = &ship.spec else {
                 return Err(ReconcileError::FieldMissing(
@@ -54,9 +42,7 @@ impl ShipReconciler {
                 .collect::<Result<Vec<_>, _>>()?;
         }
         self.cleanup_published_volumes(&published_volumes).await?;
-        if runtime_deleted {
-            self.csi.cleanup_mount_namespace(ship_id)?;
-        }
+        self.csi.cleanup_mount_namespace(ship_id)?;
         Ok(())
     }
 }

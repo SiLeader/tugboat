@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::csi::PublishedVolume;
+use crate::csi::{PublishedVolume, effective_publish_settings};
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::reconcile::AppendStatus;
@@ -92,6 +92,11 @@ impl ShipReconciler {
             self.csi.ensure_mount_namespace(ship_id)?;
         }
         for volume in &volumes {
+            let (_, read_only) = effective_publish_settings(
+                &volume.claim.access_modes,
+                &volume.volume.access_modes,
+                volume.source.read_only,
+            )?;
             match self
                 .csi
                 .publish(
@@ -107,7 +112,7 @@ impl ShipReconciler {
                     vm_volumes.push(VmVolumeConfig {
                         host_path: published.target_path.clone(),
                         format: "raw".to_string(),
-                        read_only: volume.source.read_only,
+                        read_only,
                     });
                     published_volumes.push(published);
                 }
@@ -191,22 +196,11 @@ impl ShipReconciler {
         ship_id: &str,
         fallback_published_volumes: &[PublishedVolume],
     ) -> Result<(), ReconcileError> {
-        let (runtime_published_volumes, runtime_deleted) = match self
-            .runtime_operator
-            .delete(ship_id.to_string())
-            .await
-        {
-            Ok(published_volumes) => (published_volumes, true),
-            Err(err) => {
-                error!(
-                    "Failed to stop runtime while rolling back ship '{ship_id}': {err}. Continuing CSI cleanup."
-                );
-                (
-                    self.runtime_operator.take_published_volumes(ship_id).await,
-                    false,
-                )
-            }
-        };
+        let mut runtime_published_volumes =
+            self.runtime_operator.delete(ship_id.to_string()).await?;
+        if runtime_published_volumes.is_empty() {
+            runtime_published_volumes = self.csi.load_published_volumes(ship_id)?;
+        }
         if runtime_published_volumes.is_empty() {
             self.cleanup_published_volumes(fallback_published_volumes)
                 .await?;
@@ -214,9 +208,7 @@ impl ShipReconciler {
             self.cleanup_published_volumes(&runtime_published_volumes)
                 .await?;
         }
-        if runtime_deleted {
-            self.csi.cleanup_mount_namespace(ship_id)?;
-        }
+        self.csi.cleanup_mount_namespace(ship_id)?;
         Ok(())
     }
 }

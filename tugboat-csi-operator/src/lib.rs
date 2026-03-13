@@ -1,8 +1,11 @@
 use crate::proto::csi::v1::node_client::NodeClient;
+use crate::proto::csi::v1::node_service_capability;
+use crate::proto::csi::v1::node_service_capability::rpc::Type as NodeServiceCapabilityType;
 use crate::proto::csi::v1::volume_capability::access_mode::Mode;
 use crate::proto::csi::v1::volume_capability::{AccessMode, AccessType, BlockVolume};
 use crate::proto::csi::v1::{
-    NodePublishVolumeRequest, NodeUnpublishVolumeRequest, VolumeCapability,
+    NodeGetCapabilitiesRequest, NodePublishVolumeRequest, NodeUnpublishVolumeRequest,
+    VolumeCapability,
 };
 pub use error::Error;
 use hyper_util::rt::TokioIo;
@@ -18,18 +21,73 @@ mod proto;
 #[derive(Clone, Default)]
 pub struct TugboatCsiOperator {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CsiAccessMode {
     ReadOnlyMany,
     ReadWriteOnce,
     ReadWriteMany,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CsiAccessType {
     Block,
     // Filesystem,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeCapability {
+    StageUnstageVolume,
+    GetVolumeStats,
+    ExpandVolume,
+    VolumeCondition,
+    SingleNodeMultiWriter,
+    VolumeMountGroup,
+}
+
 impl TugboatCsiOperator {
+    pub async fn node_capabilities(
+        &self,
+        socket_path: &str,
+    ) -> Result<Vec<NodeCapability>, error::Error> {
+        let mut client = connect_node_client(socket_path).await?;
+        let response = client
+            .node_get_capabilities(NodeGetCapabilitiesRequest {})
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        Ok(response
+            .capabilities
+            .into_iter()
+            .filter_map(|capability| match capability.r#type {
+                Some(node_service_capability::Type::Rpc(rpc)) => {
+                    match NodeServiceCapabilityType::try_from(rpc.r#type).ok()? {
+                        NodeServiceCapabilityType::Unknown => None,
+                        NodeServiceCapabilityType::StageUnstageVolume => {
+                            Some(NodeCapability::StageUnstageVolume)
+                        }
+                        NodeServiceCapabilityType::GetVolumeStats => {
+                            Some(NodeCapability::GetVolumeStats)
+                        }
+                        NodeServiceCapabilityType::ExpandVolume => {
+                            Some(NodeCapability::ExpandVolume)
+                        }
+                        NodeServiceCapabilityType::VolumeCondition => {
+                            Some(NodeCapability::VolumeCondition)
+                        }
+                        NodeServiceCapabilityType::SingleNodeMultiWriter => {
+                            Some(NodeCapability::SingleNodeMultiWriter)
+                        }
+                        NodeServiceCapabilityType::VolumeMountGroup => {
+                            Some(NodeCapability::VolumeMountGroup)
+                        }
+                    }
+                }
+                None => None,
+            })
+            .collect())
+    }
+
     pub async fn publish(
         &self,
         socket_path: &str,
@@ -45,7 +103,7 @@ impl TugboatCsiOperator {
             volume_capability: Some(VolumeCapability {
                 access_mode: Some(AccessMode {
                     mode: match access_mode {
-                        CsiAccessMode::ReadOnlyMany => Mode::SingleNodeReaderOnly,
+                        CsiAccessMode::ReadOnlyMany => Mode::MultiNodeReaderOnly,
                         CsiAccessMode::ReadWriteOnce => Mode::SingleNodeWriter,
                         CsiAccessMode::ReadWriteMany => Mode::MultiNodeMultiWriter,
                     } as i32,

@@ -51,12 +51,41 @@ pub(crate) enum ReconcileError {
     PersistentVolumeNotFound(String),
     #[error("PersistentVolume '{0}' has no spec")]
     PersistentVolumeMissingSpec(String),
+    #[error("PersistentVolume '{0}' is not bound to a PersistentVolumeClaim")]
+    PersistentVolumeMissingClaimRef(String),
+    #[error(
+        "PersistentVolume '{volume}' is bound to PersistentVolumeClaim '{bound_namespace}/{bound_claim}', not '{claim_namespace}/{claim}'"
+    )]
+    PersistentVolumeClaimRefMismatch {
+        volume: String,
+        claim_namespace: String,
+        claim: String,
+        bound_namespace: String,
+        bound_claim: String,
+    },
     #[error("PersistentVolume '{0}' has no CSI source")]
     PersistentVolumeMissingCsi(String),
+    #[error("PersistentVolumeClaim '{0}' has no access modes")]
+    PersistentVolumeClaimMissingAccessModes(String),
+    #[error("PersistentVolume '{0}' has no access modes")]
+    PersistentVolumeMissingAccessModes(String),
+    #[error("PersistentVolumeClaim '{claim}' uses unsupported access mode '{mode}'")]
+    UnsupportedClaimAccessMode { claim: String, mode: String },
+    #[error("PersistentVolume '{volume}' uses unsupported access mode '{mode}'")]
+    UnsupportedPersistentVolumeAccessMode { volume: String, mode: String },
     #[error("PersistentVolumeClaim '{claim}' uses unsupported volume mode '{mode}'")]
     UnsupportedClaimVolumeMode { claim: String, mode: String },
     #[error("PersistentVolume '{volume}' uses unsupported volume mode '{mode}'")]
     UnsupportedPersistentVolumeMode { volume: String, mode: String },
+    #[error(
+        "PersistentVolumeClaim '{claim}' requests access modes '{claim_access_modes}', but PersistentVolume '{volume}' supports '{volume_access_modes}'"
+    )]
+    VolumeAccessModeMismatch {
+        claim: String,
+        claim_access_modes: String,
+        volume: String,
+        volume_access_modes: String,
+    },
     #[error(
         "PersistentVolumeClaim '{claim}' requests volume mode '{claim_mode}', but PersistentVolume '{volume}' uses '{volume_mode}'"
     )]
@@ -66,6 +95,8 @@ pub(crate) enum ReconcileError {
         volume: String,
         volume_mode: String,
     },
+    #[error("PersistentVolume '{volume}' uses unsupported CSI feature '{feature}'")]
+    UnsupportedPersistentVolumeCsiFeature { volume: String, feature: String },
     #[error("CNI error: {0}")]
     Cni(#[from] tugboat_cni_operator::Error),
     #[error("CSI error: {0}")]
