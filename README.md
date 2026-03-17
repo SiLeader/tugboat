@@ -122,8 +122,13 @@ spec:
     - [x] Networking (CNI, NetworkClass / ClusterNetworkClass)
     - [ ] Reconcile on Ship Modified / Deleted events
     - [ ] Storage (CSI)
-- [ ] Fleet
-- [ ] Secret / ConfigMap
+- [x] Secret
+- [ ] tugboat-controller-manager
+    - [ ] Dynamic CSI volume provisioning
+    - [ ] ReplicaSet (Maintaining the prescribed number of ships)
+    - [ ] Deployment (Deploying same configuration Ships)
+    - [ ] Fleet
+- [ ] ConfigMap
 - [ ] Live migration
 - [ ] RBAC / ServiceAccount
 - [ ] CRD

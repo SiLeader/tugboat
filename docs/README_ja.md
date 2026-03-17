@@ -122,8 +122,13 @@ CSI の Block volume を使う場合は、`volumeClaimRef` で同一 namespace �
     - [x] ネットワーク (CNI, NetworkClass / ClusterNetworkClass)
     - [ ] Ship Modified / Deletedイベントのreconcile
     - [ ] ストレージ (CSI)
-- [ ] Fleet
-- [ ] Secret / ConfigMap
+- [x] Secret
+- [ ] tugboat-controller-manager
+    - [ ] CSIの動的プロビジョニング
+    - [ ] ReplicaSet (Shipの規定数維持)
+    - [ ] Deployment (同形式のShipのデプロイ)
+    - [ ] Fleet
+- [ ] ConfigMap
 - [ ] Live migration
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
