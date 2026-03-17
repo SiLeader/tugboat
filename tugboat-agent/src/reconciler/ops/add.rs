@@ -16,6 +16,7 @@ use crate::csi::{PublishedVolume, effective_publish_settings};
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::reconcile::AppendStatus;
+use crate::reconciler::volume::VolumeInfo;
 use crate::runtime::RuntimeCreateRequest;
 use tracing::{debug, error, info};
 use tugboat_client::Api;
@@ -86,12 +87,54 @@ impl ShipReconciler {
 
         debug!("Planning network configurations for ship");
         let networks = self.cni.create_network_configs(ship_id, network_classes);
+        let (published_volumes, vm_volumes) = self.setup_volumes(ship_id, &volumes).await?;
+
+        self.with_cleanup(ship_id, published_volumes.as_slice(), || {
+            let volumes = vm_volumes;
+            let published_volumes = published_volumes.clone();
+            async move {
+                debug!("Setup virtual machine");
+                if let Err(err) = self
+                    .runtime_operator
+                    .create(RuntimeCreateRequest {
+                        ship_id: ship_id.clone(),
+                        ship_name: name.clone(),
+                        namespace,
+                        ship_spec,
+                        ship_class: class,
+                        networks: networks.iter().map(|n| n.vm.clone()).collect(),
+                        volumes,
+                        published_volumes,
+                    })
+                    .await
+                {
+                    return Err(err.into());
+                }
+                debug!("Creating network resources");
+                if let Err(err) = self.cni.add(ship_id, networks).await {
+                    return Err(err.into());
+                }
+                debug!("Starting runtime operator");
+                if let Err(err) = self.runtime_operator.start(ship_id).await {
+                    return Err(err.into());
+                }
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    async fn setup_volumes(
+        &self,
+        ship_id: &str,
+        volumes: &[VolumeInfo],
+    ) -> Result<(Vec<PublishedVolume>, Vec<VmVolumeConfig>), ReconcileError> {
         let mut published_volumes = Vec::new();
         let mut vm_volumes = Vec::new();
         if !volumes.is_empty() {
             self.csi.ensure_mount_namespace(ship_id)?;
         }
-        for volume in &volumes {
+        for volume in volumes {
             let (_, read_only) = effective_publish_settings(
                 &volume.claim.access_modes,
                 &volume.volume.access_modes,
@@ -133,52 +176,33 @@ impl ShipReconciler {
                 }
             }
         }
+        Ok((published_volumes, vm_volumes))
+    }
 
-        debug!("Setup virtual machine");
-        if let Err(err) = self
-            .runtime_operator
-            .create(RuntimeCreateRequest {
-                ship_id: ship_id.clone(),
-                ship_name: name.clone(),
-                namespace,
-                ship_spec,
-                ship_class: class,
-                networks: networks.iter().map(|n| n.vm.clone()).collect(),
-                volumes: vm_volumes,
-                published_volumes: published_volumes.clone(),
-            })
-            .await
-        {
-            if let Err(cleanup_err) = self.cleanup_published_volumes(&published_volumes).await {
-                error!("Failed to clean up published volumes after create error: {cleanup_err}");
+    async fn with_cleanup<Fut, F>(
+        &self,
+        ship_id: &str,
+        published_volumes: &[PublishedVolume],
+        f: F,
+    ) -> Result<(), ReconcileError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<(), ReconcileError>>,
+    {
+        match f().await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if let Err(cleanup_err) = self
+                    .cleanup_runtime_and_published_volumes(ship_id, published_volumes)
+                    .await
+                {
+                    error!(
+                        "Failed to clean up runtime and published volumes after start error: {cleanup_err}"
+                    );
+                }
+                Err(e)
             }
-            return Err(err.into());
         }
-        debug!("Creating network resources");
-        if let Err(err) = self.cni.add(ship_id, networks).await {
-            if let Err(cleanup_err) = self
-                .cleanup_runtime_and_published_volumes(ship_id, &published_volumes)
-                .await
-            {
-                error!(
-                    "Failed to clean up runtime and published volumes after network error: {cleanup_err}"
-                );
-            }
-            return Err(err.into());
-        }
-        debug!("Starting runtime operator");
-        if let Err(err) = self.runtime_operator.start(ship_id).await {
-            if let Err(cleanup_err) = self
-                .cleanup_runtime_and_published_volumes(ship_id, &published_volumes)
-                .await
-            {
-                error!(
-                    "Failed to clean up runtime and published volumes after start error: {cleanup_err}"
-                );
-            }
-            return Err(err.into());
-        }
-        Ok(())
     }
 
     pub(crate) async fn cleanup_published_volumes(
