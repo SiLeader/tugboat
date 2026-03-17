@@ -21,6 +21,7 @@ use tugboat_client::TugboatClient;
 mod cni;
 mod config;
 mod csi;
+mod mountns;
 mod node_registration;
 mod reconciler;
 mod runtime;
@@ -62,7 +63,8 @@ pub async fn run() {
         runtime_operator,
         cni_operator,
         csi_operator,
-        CsiDrivers::default(),
+        CsiDrivers::from(config.csi.drivers),
+        config.csi.publish_dir,
     );
 
     reconciler.run().await;

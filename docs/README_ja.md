@@ -100,7 +100,11 @@ metadata:
 spec:
   image: example.com/vm-images/ubuntu:24.04
   shipClass: lightweight
+  volumeClaimRef:
+    - name: data-disk
 ```
+
+CSI の Block volume を使う場合は、`volumeClaimRef` で同一 namespace の `PersistentVolumeClaim` を参照します。
 
 ## Roadmap
 

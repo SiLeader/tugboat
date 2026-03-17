@@ -26,3 +26,9 @@ url = "http://localhost:8080"
 cache_dir = "/tmp"
 
 [cni]
+
+[csi]
+publish_dir = "/var/lib/tugboat-agent/csi"
+
+[csi.drivers]
+# "example.csi.driver" = "/var/run/example-csi.sock"

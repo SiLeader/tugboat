@@ -26,6 +26,8 @@ pub(crate) enum RuntimeError {
     Json(#[from] serde_json::Error),
     #[error("Invalid memory size: {0}")]
     MemorySize(String),
+    #[error("Timed out waiting for VM '{0}' to stop")]
+    ShutdownTimeout(String),
     #[error("Runtime operator error: {0}")]
     RuntimeOperator(#[from] tugboat_vm_runtime_interface::operator::Error),
 }

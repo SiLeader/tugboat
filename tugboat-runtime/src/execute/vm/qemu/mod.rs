@@ -187,3 +187,33 @@ impl DebugCommand for Command {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::QemuArgs;
+    use std::process::Command;
+    use tugboat_vm_runtime_interface::run::VmVolumeConfig;
+
+    #[test]
+    fn block_volume_path_is_forwarded_to_drive_args() {
+        let mut command = Command::new("qemu-system-x86_64");
+        command.qemu_args(&vec![VmVolumeConfig {
+            host_path: "/var/lib/tugboat-agent/csi/ship-uid/data-disk.block".to_string(),
+            format: "raw".to_string(),
+            read_only: true,
+        }]);
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "-drive".to_string(),
+                "if=virtio,format=raw,index=1,media=disk,readonly=on,file=/var/lib/tugboat-agent/csi/ship-uid/data-disk.block".to_string(),
+            ]
+        );
+    }
+}

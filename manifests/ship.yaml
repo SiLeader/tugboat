@@ -20,6 +20,8 @@ metadata:
 spec:
   image: example.com/vm-images/ubuntu:24.04
   shipClass: lightweight
+  volumeClaimRef:
+    - name: data-disk
   networkClassRef:
     - name: namespaced-network
       apiGroup: core

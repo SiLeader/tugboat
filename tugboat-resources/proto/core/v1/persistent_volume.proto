@@ -35,6 +35,12 @@ message PersistentVolumeSpec {
   optional string storage_class_name = 3;
   optional string volume_mode = 4;
   CsiPersistentVolumeSource csi = 5;
+  PersistentVolumeClaimReference claim_ref = 6;
+}
+
+message PersistentVolumeClaimReference {
+  string name = 1;
+  string namespace = 2;
 }
 
 message PersistentVolumeStatus {

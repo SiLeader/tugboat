@@ -14,7 +14,7 @@
 
 use crate::runtime::RuntimeConfig;
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tugboat_cni_operator::CniOperatorConfig;
 
 #[derive(Debug, Deserialize)]
@@ -24,6 +24,8 @@ pub(crate) struct AgentConfig {
     pub apiserver: ApiserverConfig,
     pub image: ImageConfig,
     pub cni: CniOperatorConfig,
+    #[serde(default)]
+    pub csi: CsiConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,6 +43,18 @@ pub(crate) struct ImageConfig {
     pub cache_dir: String,
     #[serde(default)]
     pub http_hosts: HashSet<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct CsiConfig {
+    #[serde(default = "default_csi_publish_dir")]
+    pub publish_dir: String,
+    #[serde(default)]
+    pub drivers: HashMap<String, String>,
+}
+
+fn default_csi_publish_dir() -> String {
+    "/var/lib/tugboat-agent/csi".to_string()
 }
 
 impl AgentConfig {

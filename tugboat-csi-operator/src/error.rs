@@ -6,6 +6,8 @@ pub enum Error {
     GrpcTransport(#[from] tonic::transport::Error),
     #[error("Target path already exists")]
     TargetPathAlreadyExists,
+    #[error("Target path not found")]
+    TargetPathNotFound,
     #[error("Failed precondition")]
     FailedPrecondition,
     #[error("Grpc error: {0}")]
