@@ -11,7 +11,7 @@ tonic-prost.workspace = true
 prost-types.workspace = true
 tokio = { workspace = true, features = ["net"] }
 tower = "0.5.2"
-hyper-util = "0.1.19"
+hyper-util = "0.1.20"
 
 thiserror.workspace = true
 
