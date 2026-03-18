@@ -20,6 +20,7 @@ use url::Url;
 mod api;
 mod error;
 mod reflector;
+pub mod runtime;
 mod response;
 mod watch;
 
@@ -119,6 +120,14 @@ impl TugboatClient {
         Self::parse_response(res).await
     }
 
+    async fn delete_impl<T: StaticResource + DeserializeOwned>(
+        &self,
+        path: String,
+    ) -> Result<Option<T>, Error> {
+        let res = self.client.delete(path).send().await?;
+        Self::parse_response_opt(res).await
+    }
+
     pub(crate) async fn create_cluster_scoped<T: StaticResource + Serialize + DeserializeOwned>(
         &self,
         resource: T,
@@ -174,6 +183,14 @@ impl TugboatClient {
             data,
         )
         .await
+    }
+
+    pub(crate) async fn delete_cluster_scoped<T: StaticResource + DeserializeOwned>(
+        &self,
+        name: &str,
+    ) -> Result<Option<T>, Error> {
+        self.delete_impl(format!("{}/{}/{}", self.api_prefix::<T>(), T::plural(), name))
+            .await
     }
 
     pub(crate) async fn create_namespaced<T: StaticResource + Serialize + DeserializeOwned>(
@@ -289,6 +306,19 @@ impl TugboatClient {
             ),
             data,
         )
+        .await
+    }
+
+    pub(crate) async fn delete_namespaced<T: StaticResource + DeserializeOwned>(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<T>, Error> {
+        self.delete_impl(format!(
+            "{}/namespaces/{namespace}/{}/{name}",
+            self.api_prefix::<T>(),
+            T::plural()
+        ))
         .await
     }
 }

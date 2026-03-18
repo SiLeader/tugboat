@@ -23,6 +23,7 @@ use json_value_merge::Merge;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tugboat_resource_store::serializer::StaticSerializable;
+use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta, StaticResource};
 
 #[allow(clippy::result_large_err)]
@@ -113,8 +114,35 @@ pub(crate) async fn delete_resource<T>(
     name: String,
 ) -> Result<ReadResponse<T>, StatusResponse>
 where
-    T: StaticSerializable + ObjectMetaResource + StaticResource + Serialize,
+    T: StaticSerializable
+        + ObjectMetaResource
+        + StaticResource
+        + Serialize
+        + DeserializeOwned
+        + PartialEq
+        + Clone,
 {
+    let current = operator.store.get::<T>(namespace.clone(), &name).await?;
+    let Some(current) = current else {
+        return Err(StatusResponse::not_found(
+            format!("{} not found", T::kind()),
+            Some(resource_identity(namespace.as_deref(), &name)),
+        ));
+    };
+    let current = current.apply_revision();
+
+    if current.has_finalizers() {
+        let mut pending_delete = current.clone();
+        pending_delete.mark_for_deletion(Time::now());
+        let pending_delete = if current != pending_delete {
+            operator.store.put(pending_delete).await?.apply_revision()
+        } else {
+            pending_delete
+        };
+
+        return Ok(ReadResponse::new(pending_delete));
+    }
+
     let resource = operator.store.delete::<T>(namespace.clone(), &name).await?;
     match resource {
         Some(data) => Ok(ReadResponse::new(data.apply_revision())),

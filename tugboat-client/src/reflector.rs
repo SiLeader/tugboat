@@ -27,7 +27,7 @@ where
 {
     /// First lists existing resources (emitted as `WatchEvent::Added`),
     /// then streams subsequent watch events.
-    pub(crate) async fn reflector(
+    pub async fn reflector(
         &self,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {

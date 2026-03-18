@@ -12,22 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto3";
+mod action;
+mod backoff;
+mod controller;
+mod finalizer;
+mod reconciler;
 
-import "meta/v1/time.proto";
-
-package tugboat.meta.v1;
-
-message ObjectMeta {
-  optional string name = 1;
-  optional string generate_name = 2;
-  optional string namespace = 3;
-  optional string uid = 5;
-  optional string resource_version = 6;
-  optional int64 generation = 7;
-  optional Time creation_timestamp = 8;
-  optional Time deletion_timestamp = 9;
-  map<string, string> labels = 11;
-  map<string, string> annotations = 12;
-  repeated string finalizers = 14;
-}
+pub use action::Action;
+pub use backoff::BackoffConfig;
+pub use controller::Controller;
+pub use finalizer::{FinalizerError, FinalizerEvent, finalizer};
+pub use reconciler::{ReconcileEvent, Reconciler};
