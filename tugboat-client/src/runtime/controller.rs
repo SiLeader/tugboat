@@ -18,7 +18,10 @@ use crate::{Error, WatchEvent, WatchParams};
 use futures::{Stream, StreamExt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -30,6 +33,7 @@ pub struct Controller<T> {
     watch_params: WatchParams,
     backoff: BackoffConfig,
     cancellation_token: CancellationToken,
+    in_flight: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 impl<T> Controller<T>
@@ -49,6 +53,7 @@ where
             watch_params: WatchParams::default(),
             backoff: BackoffConfig::default(),
             cancellation_token: CancellationToken::new(),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -138,15 +143,62 @@ where
         R: Reconciler<T>,
     {
         let api = self.api.clone();
-        let cancellation_token = self.cancellation_token.clone();
+        let parent_token = self.cancellation_token.clone();
+        let in_flight = self.in_flight.clone();
+
+        let resource_key = match event.resource_key() {
+            Some(key) => key,
+            None => {
+                // No key available; fall back to spawning without deduplication.
+                let child_token = parent_token.child_token();
+                tokio::spawn(async move {
+                    match reconciler.reconcile(event.clone()).await {
+                        Ok(action) => {
+                            process_action(api, child_token, reconciler, &event, action).await;
+                        }
+                        Err(err) => {
+                            error!("failed to reconcile {}: {err}", T::kind());
+                        }
+                    }
+                });
+                return;
+            }
+        };
+
         tokio::spawn(async move {
+            // Cancel any previous reconciliation for this resource.
+            {
+                let mut map = in_flight.lock().await;
+                if let Some(prev) = map.get(&resource_key) {
+                    prev.cancel();
+                }
+                let child_token = parent_token.child_token();
+                map.insert(resource_key.clone(), child_token);
+            }
+
+            let child_token = {
+                let map = in_flight.lock().await;
+                map.get(&resource_key).cloned()
+            };
+            let Some(child_token) = child_token else {
+                return;
+            };
+
             match reconciler.reconcile(event.clone()).await {
                 Ok(action) => {
-                    process_action(api, cancellation_token, reconciler, event, action).await;
+                    process_action(api, child_token, reconciler, &event, action).await;
                 }
                 Err(err) => {
                     error!("failed to reconcile {}: {err}", T::kind());
                 }
+            }
+
+            // Clean up only if our token is still the active one (not superseded).
+            let mut map = in_flight.lock().await;
+            if let Some(token) = map.get(&resource_key)
+                && token.is_cancelled()
+            {
+                map.remove(&resource_key);
             }
         });
     }
@@ -156,7 +208,7 @@ async fn process_action<T, R>(
     api: Api<T>,
     cancellation_token: CancellationToken,
     reconciler: R,
-    event: ReconcileEvent<T>,
+    event: &ReconcileEvent<T>,
     action: Action,
 ) where
     T: StaticResource
@@ -215,6 +267,7 @@ async fn wait_or_cancel(cancellation_token: &CancellationToken, delay: Duration)
 
 trait ReconcileEventExt<T> {
     fn resource_name(&self) -> Option<&str>;
+    fn resource_key(&self) -> Option<String>;
 }
 
 impl<T> ReconcileEventExt<T> for ReconcileEvent<T>
@@ -226,6 +279,17 @@ where
             ReconcileEvent::Applied(resource) | ReconcileEvent::Deleted(resource) => {
                 resource.name()
             }
+        }
+    }
+
+    fn resource_key(&self) -> Option<String> {
+        let resource = match self {
+            ReconcileEvent::Applied(r) | ReconcileEvent::Deleted(r) => r,
+        };
+        let name = resource.name()?;
+        match resource.namespace() {
+            Some(ns) => Some(format!("{ns}/{name}")),
+            None => Some(name.to_owned()),
         }
     }
 }
@@ -276,5 +340,58 @@ mod tests {
         tokio::task::yield_now().await;
 
         assert_eq!(seen.lock().await.as_slice(), ["demo"]);
+    }
+
+    #[tokio::test]
+    async fn duplicate_events_cancel_previous_requeue() {
+        use std::time::Duration;
+
+        let api = Api::<Ship>::namespaced(TugboatClient::new("http://127.0.0.1:1"), "default");
+        let controller = Controller::new(api);
+        let call_count = Arc::new(Mutex::new(0u32));
+        let call_count_clone = call_count.clone();
+
+        // Two events for the same resource in rapid succession.
+        let make_ship = || Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-a".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let stream = stream::iter([
+            Ok(WatchEvent::Added(make_ship())),
+            Ok(WatchEvent::Modified(make_ship())),
+        ]);
+
+        // Each reconcile returns a long requeue. If deduplication works, the
+        // first requeue loop should be cancelled when the second event arrives.
+        controller
+            .run_stream(stream, move |_event: ReconcileEvent<Ship>| {
+                let count = call_count_clone.clone();
+                async move {
+                    *count.lock().await += 1;
+                    Ok::<_, Infallible>(Action::requeue(Duration::from_secs(3600)))
+                }
+            })
+            .await;
+
+        // Let spawned tasks settle.
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Both events should have triggered reconciliation.
+        let count = *call_count.lock().await;
+        assert!(count >= 1, "expected at least 1 reconcile call, got {count}");
+
+        // Verify the in-flight map has at most one entry for the resource.
+        let map = controller.in_flight.lock().await;
+        assert!(
+            map.len() <= 1,
+            "expected at most 1 in-flight entry, got {}",
+            map.len()
+        );
     }
 }
