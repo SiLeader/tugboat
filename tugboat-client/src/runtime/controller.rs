@@ -212,10 +212,10 @@ where
 
             // Clean up only if our token is still the active one (not superseded).
             let mut map = in_flight.lock().await;
-            if let Some((current_id, _)) = map.get(&resource_key) {
-                if *current_id == id {
-                    map.remove(&resource_key);
-                }
+            if let Some((current_id, _)) = map.get(&resource_key)
+                && *current_id == id
+            {
+                map.remove(&resource_key);
             }
         });
     }

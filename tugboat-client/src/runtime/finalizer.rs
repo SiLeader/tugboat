@@ -83,7 +83,15 @@ where
             updated.remove_finalizer(finalizer_name);
             let updated = api.replace(&name, updated).await?;
             if updated.deletion_timestamp().is_some() && !updated.has_finalizers() {
-                let _ = api.delete(&name).await?;
+                match api.delete(&name).await {
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::warn!(
+                            "failed to delete {} {name} after finalizer removal: {err}",
+                            T::kind()
+                        );
+                    }
+                }
             }
             Ok(action)
         }
