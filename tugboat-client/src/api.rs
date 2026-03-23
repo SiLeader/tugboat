@@ -121,7 +121,15 @@ where
         }
     }
 
-    pub(crate) async fn watch_raw(
+    pub async fn delete(&self, name: &str) -> Result<Option<T>, Error> {
+        if let Some(namespace) = &self.namespace {
+            self.client.delete_namespaced(namespace, name).await
+        } else {
+            self.client.delete_cluster_scoped(name).await
+        }
+    }
+
+    pub async fn watch_raw(
         &self,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {

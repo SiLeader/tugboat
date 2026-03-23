@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::manifests::meta::v1::{ObjectMeta, TypeMeta};
+use crate::manifests::meta::v1::{ObjectMeta, Time, TypeMeta};
 
 pub mod manifests;
 pub mod resource_version;
@@ -43,6 +43,68 @@ pub trait NamespacedResource: StaticResource {}
 pub trait ObjectMetaResource: Resource {
     fn object_meta(&self) -> &Option<ObjectMeta>;
     fn object_meta_mut(&mut self) -> &mut Option<ObjectMeta>;
+
+    fn name(&self) -> Option<&str> {
+        self.object_meta().as_ref()?.name.as_deref()
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        self.object_meta().as_ref()?.namespace.as_deref()
+    }
+
+    fn finalizers(&self) -> &[String] {
+        self.object_meta()
+            .as_ref()
+            .map(|meta| meta.finalizers.as_slice())
+            .unwrap_or_default()
+    }
+
+    fn has_finalizers(&self) -> bool {
+        !self.finalizers().is_empty()
+    }
+
+    fn has_finalizer(&self, finalizer_name: &str) -> bool {
+        self.finalizers().iter().any(|item| item == finalizer_name)
+    }
+
+    fn add_finalizer(&mut self, finalizer_name: impl Into<String>) -> bool {
+        let finalizer_name = finalizer_name.into();
+        let meta = self
+            .object_meta_mut()
+            .get_or_insert_with(ObjectMeta::default);
+        if meta.finalizers.iter().any(|item| item == &finalizer_name) {
+            return false;
+        }
+        meta.finalizers.push(finalizer_name);
+        true
+    }
+
+    fn remove_finalizer(&mut self, finalizer_name: &str) -> bool {
+        let Some(meta) = self.object_meta_mut().as_mut() else {
+            return false;
+        };
+        let original_len = meta.finalizers.len();
+        meta.finalizers.retain(|item| item != finalizer_name);
+        original_len != meta.finalizers.len()
+    }
+
+    fn deletion_timestamp(&self) -> Option<&Time> {
+        self.object_meta()
+            .as_ref()
+            .and_then(|meta| meta.deletion_timestamp.as_ref())
+    }
+
+    fn mark_for_deletion(&mut self, timestamp: Time) -> bool {
+        let meta = self
+            .object_meta_mut()
+            .get_or_insert_with(ObjectMeta::default);
+        if meta.deletion_timestamp.is_some() {
+            return false;
+        }
+        meta.deletion_timestamp = Some(timestamp);
+        true
+    }
+
     fn modify_object_meta(&mut self, f: impl FnOnce(&mut Option<ObjectMeta>)) {
         f(self.object_meta_mut());
     }
@@ -121,4 +183,35 @@ macro_rules! apply_resource {
 
         impl $crate::ClusterScopedResource for $ty {}
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ObjectMetaResource;
+    use crate::manifests::core::v1::Ship;
+    use crate::manifests::meta::v1::{ObjectMeta, Time};
+
+    #[test]
+    fn can_manage_finalizers() {
+        let mut ship = Ship {
+            object_meta: Some(ObjectMeta::default()),
+            ..Default::default()
+        };
+
+        assert!(ship.add_finalizer("example.com/finalizer"));
+        assert!(ship.has_finalizer("example.com/finalizer"));
+        assert!(!ship.add_finalizer("example.com/finalizer"));
+        assert!(ship.remove_finalizer("example.com/finalizer"));
+        assert!(!ship.has_finalizers());
+    }
+
+    #[test]
+    fn can_mark_resource_for_deletion() {
+        let mut ship = Ship::default();
+        let timestamp = Time::now();
+
+        assert!(ship.mark_for_deletion(timestamp.clone()));
+        assert!(ship.deletion_timestamp().is_some());
+        assert!(!ship.mark_for_deletion(timestamp));
+    }
 }

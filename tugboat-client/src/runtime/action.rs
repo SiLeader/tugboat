@@ -12,22 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto3";
+use std::time::Duration;
 
-import "meta/v1/time.proto";
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Action {
+    requeue_after: Option<Duration>,
+}
 
-package tugboat.meta.v1;
+impl Action {
+    pub fn await_change() -> Self {
+        Self {
+            requeue_after: None,
+        }
+    }
 
-message ObjectMeta {
-  optional string name = 1;
-  optional string generate_name = 2;
-  optional string namespace = 3;
-  optional string uid = 5;
-  optional string resource_version = 6;
-  optional int64 generation = 7;
-  optional Time creation_timestamp = 8;
-  optional Time deletion_timestamp = 9;
-  map<string, string> labels = 11;
-  map<string, string> annotations = 12;
-  repeated string finalizers = 14;
+    pub fn requeue(duration: Duration) -> Self {
+        Self {
+            requeue_after: Some(duration),
+        }
+    }
+
+    pub fn requeue_immediately() -> Self {
+        Self::requeue(Duration::ZERO)
+    }
+
+    pub fn requeue_after(&self) -> Option<Duration> {
+        self.requeue_after
+    }
 }
