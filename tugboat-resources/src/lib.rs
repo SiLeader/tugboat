@@ -69,7 +69,9 @@ pub trait ObjectMetaResource: Resource {
 
     fn add_finalizer(&mut self, finalizer_name: impl Into<String>) -> bool {
         let finalizer_name = finalizer_name.into();
-        let meta = self.object_meta_mut().get_or_insert_with(ObjectMeta::default);
+        let meta = self
+            .object_meta_mut()
+            .get_or_insert_with(ObjectMeta::default);
         if meta.finalizers.iter().any(|item| item == &finalizer_name) {
             return false;
         }
@@ -93,7 +95,9 @@ pub trait ObjectMetaResource: Resource {
     }
 
     fn mark_for_deletion(&mut self, timestamp: Time) -> bool {
-        let meta = self.object_meta_mut().get_or_insert_with(ObjectMeta::default);
+        let meta = self
+            .object_meta_mut()
+            .get_or_insert_with(ObjectMeta::default);
         if meta.deletion_timestamp.is_some() {
             return false;
         }

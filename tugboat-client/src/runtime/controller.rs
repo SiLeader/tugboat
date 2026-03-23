@@ -20,6 +20,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
@@ -33,7 +34,8 @@ pub struct Controller<T> {
     watch_params: WatchParams,
     backoff: BackoffConfig,
     cancellation_token: CancellationToken,
-    in_flight: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    in_flight: Arc<Mutex<HashMap<String, (u64, CancellationToken)>>>,
+    counter: Arc<AtomicU64>,
 }
 
 impl<T> Controller<T>
@@ -54,6 +56,7 @@ where
             backoff: BackoffConfig::default(),
             cancellation_token: CancellationToken::new(),
             in_flight: Arc::new(Mutex::new(HashMap::new())),
+            counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -145,6 +148,8 @@ where
         let api = self.api.clone();
         let parent_token = self.cancellation_token.clone();
         let in_flight = self.in_flight.clone();
+        // Capture counter for the branch that uses it
+        let counter = self.counter.clone();
 
         let resource_key = match event.resource_key() {
             Some(key) => key,
@@ -152,12 +157,19 @@ where
                 // No key available; fall back to spawning without deduplication.
                 let child_token = parent_token.child_token();
                 tokio::spawn(async move {
-                    match reconciler.reconcile(event.clone()).await {
-                        Ok(action) => {
-                            process_action(api, child_token, reconciler, &event, action).await;
-                        }
-                        Err(err) => {
-                            error!("failed to reconcile {}: {err}", T::kind());
+                    let result = tokio::select! {
+                        _ = child_token.cancelled() => None,
+                        res = reconciler.reconcile(event.clone()) => Some(res),
+                    };
+
+                    if let Some(res) = result {
+                        match res {
+                            Ok(action) => {
+                                process_action(api, child_token, reconciler, &event, action).await;
+                            }
+                            Err(err) => {
+                                error!("failed to reconcile {}: {err}", T::kind());
+                            }
                         }
                     }
                 });
@@ -165,40 +177,45 @@ where
             }
         };
 
+        let id = counter.fetch_add(1, Ordering::Relaxed);
+
         tokio::spawn(async move {
             // Cancel any previous reconciliation for this resource.
+            let child_token = parent_token.child_token();
             {
                 let mut map = in_flight.lock().await;
-                if let Some(prev) = map.get(&resource_key) {
+                if let Some((_, prev)) = map.get(&resource_key) {
                     prev.cancel();
                 }
-                let child_token = parent_token.child_token();
-                map.insert(resource_key.clone(), child_token);
+                map.insert(resource_key.clone(), (id, child_token.clone()));
             }
 
-            let child_token = {
-                let map = in_flight.lock().await;
-                map.get(&resource_key).cloned()
-            };
-            let Some(child_token) = child_token else {
+            if child_token.is_cancelled() {
                 return;
+            }
+
+            let result = tokio::select! {
+                _ = child_token.cancelled() => None,
+                res = reconciler.reconcile(event.clone()) => Some(res),
             };
 
-            match reconciler.reconcile(event.clone()).await {
-                Ok(action) => {
-                    process_action(api, child_token, reconciler, &event, action).await;
-                }
-                Err(err) => {
-                    error!("failed to reconcile {}: {err}", T::kind());
+            if let Some(res) = result {
+                match res {
+                    Ok(action) => {
+                        process_action(api, child_token, reconciler, &event, action).await;
+                    }
+                    Err(err) => {
+                        error!("failed to reconcile {}: {err}", T::kind());
+                    }
                 }
             }
 
             // Clean up only if our token is still the active one (not superseded).
             let mut map = in_flight.lock().await;
-            if let Some(token) = map.get(&resource_key)
-                && token.is_cancelled()
-            {
-                map.remove(&resource_key);
+            if let Some((current_id, _)) = map.get(&resource_key) {
+                if *current_id == id {
+                    map.remove(&resource_key);
+                }
             }
         });
     }
@@ -384,7 +401,10 @@ mod tests {
 
         // Both events should have triggered reconciliation.
         let count = *call_count.lock().await;
-        assert!(count >= 1, "expected at least 1 reconcile call, got {count}");
+        assert!(
+            count >= 1,
+            "expected at least 1 reconcile call, got {count}"
+        );
 
         // Verify the in-flight map has at most one entry for the resource.
         let map = controller.in_flight.lock().await;
