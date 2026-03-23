@@ -20,8 +20,8 @@ use url::Url;
 mod api;
 mod error;
 mod reflector;
-pub mod runtime;
 mod response;
+pub mod runtime;
 mod watch;
 
 pub use api::*;
@@ -189,8 +189,13 @@ impl TugboatClient {
         &self,
         name: &str,
     ) -> Result<Option<T>, Error> {
-        self.delete_impl(format!("{}/{}/{}", self.api_prefix::<T>(), T::plural(), name))
-            .await
+        self.delete_impl(format!(
+            "{}/{}/{}",
+            self.api_prefix::<T>(),
+            T::plural(),
+            name
+        ))
+        .await
     }
 
     pub(crate) async fn create_namespaced<T: StaticResource + Serialize + DeserializeOwned>(

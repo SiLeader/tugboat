@@ -19,7 +19,6 @@ use futures::{Stream, StreamExt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::time::Duration;
-use tokio::select;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -35,7 +34,14 @@ pub struct Controller<T> {
 
 impl<T> Controller<T>
 where
-    T: StaticResource + ObjectMetaResource + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    T: StaticResource
+        + ObjectMetaResource
+        + Serialize
+        + DeserializeOwned
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     pub fn new(api: Api<T>) -> Self {
         Self {
@@ -92,7 +98,7 @@ where
                     error!("failed to create {} watch stream: {err}", T::kind());
                     let delay = self.backoff.delay_for(attempts);
                     attempts = attempts.saturating_add(1);
-                    select! {
+                    tokio::select! {
                         _ = self.cancellation_token.cancelled() => return None,
                         _ = sleep(delay) => {}
                     }
@@ -109,13 +115,15 @@ where
         futures::pin_mut!(stream);
 
         loop {
-            let next = select! {
+            let next = tokio::select! {
                 _ = self.cancellation_token.cancelled() => return false,
                 event = stream.next() => event,
             };
 
             match next {
-                Some(Ok(event)) => self.spawn_reconcile(event.into(), reconciler.clone()),
+                Some(Ok(event)) => {
+                    self.spawn_reconcile(ReconcileEvent::from(event), reconciler.clone())
+                }
                 Some(Err(err)) => {
                     error!("{} watch stream failed: {err}", T::kind());
                     return true;
@@ -151,7 +159,14 @@ async fn process_action<T, R>(
     event: ReconcileEvent<T>,
     action: Action,
 ) where
-    T: StaticResource + ObjectMetaResource + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    T: StaticResource
+        + ObjectMetaResource
+        + Serialize
+        + DeserializeOwned
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     R: Reconciler<T>,
 {
     let Some(mut delay) = action.requeue_after() else {
@@ -192,7 +207,7 @@ async fn process_action<T, R>(
 }
 
 async fn wait_or_cancel(cancellation_token: &CancellationToken, delay: Duration) {
-    select! {
+    tokio::select! {
         _ = cancellation_token.cancelled() => {}
         _ = sleep(delay) => {}
     }
@@ -208,7 +223,9 @@ where
 {
     fn resource_name(&self) -> Option<&str> {
         match self {
-            ReconcileEvent::Applied(resource) | ReconcileEvent::Deleted(resource) => resource.name(),
+            ReconcileEvent::Applied(resource) | ReconcileEvent::Deleted(resource) => {
+                resource.name()
+            }
         }
     }
 }
