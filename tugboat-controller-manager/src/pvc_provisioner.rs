@@ -161,7 +161,7 @@ impl PvcProvisionerReconciler {
                 reclaim_policy,
                 spec.access_modes.clone(),
                 spec.volume_mode.clone(),
-                provisioned_volume.volume_id,
+                provisioned_volume.volume_id.clone(),
             );
 
             match pv_api.create(persistent_volume).await {
@@ -187,7 +187,19 @@ impl PvcProvisionerReconciler {
                         });
                     }
                 }
-                Err(err) => return Err(err.into()),
+                Err(err) => {
+                    if let Err(cleanup_err) = self
+                        .csi_operator
+                        .delete_volume(
+                            &provisioner_config.socket_path,
+                            provisioned_volume.volume_id,
+                        )
+                        .await
+                    {
+                        tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
+                    }
+                    return Err(err.into());
+                }
             }
         }
 
