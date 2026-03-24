@@ -36,8 +36,6 @@ pub(crate) enum ControllerError {
         name: String,
         mode: String,
     },
-    #[error("CSI provisioner '{name}' is not configured in tugboat-controller-manager")]
-    UnconfiguredProvisioner { name: String },
     #[error(
         "PersistentVolume '{name}' already exists but does not match managed claim '{namespace}/{claim}'"
     )]

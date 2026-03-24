@@ -130,14 +130,15 @@ impl PvcProvisionerReconciler {
         let pv_name = dynamic_volume_name(&namespace, &name, uid.as_deref());
 
         let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
+        let mut created_pv = false;
         if let Some(existing) = pv_api.get(&pv_name).await? {
             if existing_pv_matches_claim(&existing, &namespace, &name, &storage_class_name)? {
                 // PV already exists and matches this claim; skip volume creation.
             } else {
                 return Err(ControllerError::ExistingVolumeConflict {
                     name: pv_name.clone(),
-                    namespace,
-                    claim: name,
+                    namespace: namespace.clone(),
+                    claim: name.clone(),
                 });
             }
         } else {
@@ -151,6 +152,7 @@ impl PvcProvisionerReconciler {
                     access_type,
                 )
                 .await?;
+            let provisioned_volume_id = provisioned_volume.volume_id.clone();
 
             let persistent_volume = build_persistent_volume(
                 &pv_name,
@@ -161,17 +163,29 @@ impl PvcProvisionerReconciler {
                 reclaim_policy,
                 spec.access_modes.clone(),
                 spec.volume_mode.clone(),
-                provisioned_volume.volume_id.clone(),
+                provisioned_volume_id.clone(),
             );
 
             match pv_api.create(persistent_volume).await {
-                Ok(_) => {}
+                Ok(_) => {
+                    created_pv = true;
+                }
                 Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
                     let Some(existing) = pv_api.get(&pv_name).await? else {
+                        if let Err(cleanup_err) = self
+                            .csi_operator
+                            .delete_volume(
+                                &provisioner_config.socket_path,
+                                provisioned_volume_id.clone(),
+                            )
+                            .await
+                        {
+                            tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
+                        }
                         return Err(ControllerError::ExistingVolumeConflict {
                             name: pv_name.clone(),
-                            namespace,
-                            claim: name,
+                            namespace: namespace.clone(),
+                            claim: name.clone(),
                         });
                     };
                     if !existing_pv_matches_claim(
@@ -180,20 +194,27 @@ impl PvcProvisionerReconciler {
                         &name,
                         &storage_class_name,
                     )? {
+                        if let Err(cleanup_err) = self
+                            .csi_operator
+                            .delete_volume(
+                                &provisioner_config.socket_path,
+                                provisioned_volume_id.clone(),
+                            )
+                            .await
+                        {
+                            tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
+                        }
                         return Err(ControllerError::ExistingVolumeConflict {
                             name: pv_name.clone(),
-                            namespace,
-                            claim: name,
+                            namespace: namespace.clone(),
+                            claim: name.clone(),
                         });
                     }
                 }
                 Err(err) => {
                     if let Err(cleanup_err) = self
                         .csi_operator
-                        .delete_volume(
-                            &provisioner_config.socket_path,
-                            provisioned_volume.volume_id,
-                        )
+                        .delete_volume(&provisioner_config.socket_path, provisioned_volume_id)
                         .await
                     {
                         tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
@@ -205,9 +226,39 @@ impl PvcProvisionerReconciler {
 
         let pvc_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), &namespace);
         let Some(mut latest) = pvc_api.get(&name).await? else {
+            if created_pv {
+                tracing::warn!(
+                    "PersistentVolumeClaim '{}/{}' no longer exists; cleaning up orphaned PersistentVolume '{}'",
+                    namespace,
+                    name,
+                    pv_name
+                );
+                if let Err(cleanup_err) = pv_api.delete(&pv_name).await {
+                    tracing::warn!(
+                        "Failed to clean up orphaned PersistentVolume '{}': {}",
+                        pv_name,
+                        cleanup_err
+                    );
+                }
+            }
             return Ok(Action::await_change());
         };
         if latest.deletion_timestamp().is_some() {
+            if created_pv {
+                tracing::warn!(
+                    "PersistentVolumeClaim '{}/{}' is being deleted; cleaning up orphaned PersistentVolume '{}'",
+                    namespace,
+                    name,
+                    pv_name
+                );
+                if let Err(cleanup_err) = pv_api.delete(&pv_name).await {
+                    tracing::warn!(
+                        "Failed to clean up orphaned PersistentVolume '{}': {}",
+                        pv_name,
+                        cleanup_err
+                    );
+                }
+            }
             return Ok(Action::await_change());
         }
 
@@ -217,14 +268,30 @@ impl PvcProvisionerReconciler {
                 name: name.clone(),
             }
         })?;
-        if latest_spec.volume_name.as_deref() == Some(pv_name.as_str()) {
-            return Ok(Action::await_change());
-        }
-        if latest_spec
+        if let Some(existing_volume_name) = latest_spec
             .volume_name
             .as_deref()
-            .is_some_and(|value| !value.is_empty())
+            .filter(|value| !value.is_empty())
         {
+            if existing_volume_name == pv_name.as_str() {
+                return Ok(Action::await_change());
+            }
+            if created_pv {
+                tracing::warn!(
+                    "PersistentVolumeClaim '{}/{}' is already bound to '{}'; cleaning up orphaned PersistentVolume '{}'",
+                    namespace,
+                    name,
+                    existing_volume_name,
+                    pv_name
+                );
+                if let Err(cleanup_err) = pv_api.delete(&pv_name).await {
+                    tracing::warn!(
+                        "Failed to clean up orphaned PersistentVolume '{}': {}",
+                        pv_name,
+                        cleanup_err
+                    );
+                }
+            }
             return Ok(Action::await_change());
         }
 

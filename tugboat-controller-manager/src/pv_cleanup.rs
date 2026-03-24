@@ -129,7 +129,16 @@ impl PersistentVolumeCleanupReconciler {
     ) -> Result<Action, ControllerError> {
         let provisioner = pv_provisioner(&persistent_volume)?;
         let Some(provisioner_config) = provisioner_config(&self.config, &provisioner) else {
-            return Err(ControllerError::UnconfiguredProvisioner { name: provisioner });
+            let name = persistent_volume
+                .name()
+                .ok_or(ControllerError::MissingName("PersistentVolume"))?
+                .to_string();
+            tracing::warn!(
+                "Provisioner '{}' for managed PersistentVolume '{}' is not configured; skipping CSI volume cleanup",
+                provisioner,
+                name
+            );
+            return Ok(Action::await_change());
         };
 
         let name = persistent_volume
