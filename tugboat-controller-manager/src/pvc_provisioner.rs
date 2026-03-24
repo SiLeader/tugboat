@@ -3,8 +3,8 @@ use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use crate::provisioning::{
     build_persistent_volume, claim_access_modes, claim_access_type, dynamic_volume_name,
-    existing_pv_matches_claim, is_managed_pv, provisioner_config, pvc_identity,
-    reclaim_policy_from_storage_class, should_delete_backing_volume, storage_class_provisioner,
+    existing_pv_matches_claim, provisioner_config, pvc_identity, reclaim_policy_from_storage_class,
+    storage_class_provisioner,
 };
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
@@ -129,49 +129,66 @@ impl PvcProvisionerReconciler {
         let access_type = claim_access_type(&namespace, &name, spec.volume_mode.as_deref())?;
         let pv_name = dynamic_volume_name(&namespace, &name, uid.as_deref());
 
-        let provisioned_volume = self
-            .csi_operator
-            .create_volume(
-                &provisioner_config.socket_path,
-                pv_name.clone(),
-                parameters,
-                access_modes,
-                access_type,
-            )
-            .await?;
-
-        let persistent_volume = build_persistent_volume(
-            &pv_name,
-            &namespace,
-            &name,
-            storage_class_name.clone(),
-            provisioner,
-            reclaim_policy,
-            spec.access_modes.clone(),
-            spec.volume_mode.clone(),
-            provisioned_volume.volume_id,
-        );
-
         let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
-        match pv_api.create(persistent_volume).await {
-            Ok(_) => {}
-            Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
-                let Some(existing) = pv_api.get(&pv_name).await? else {
-                    return Err(ControllerError::ExistingVolumeConflict {
-                        name: pv_name.clone(),
-                        namespace,
-                        claim: name,
-                    });
-                };
-                if !existing_pv_matches_claim(&existing, &namespace, &name, &storage_class_name)? {
-                    return Err(ControllerError::ExistingVolumeConflict {
-                        name: pv_name.clone(),
-                        namespace,
-                        claim: name,
-                    });
-                }
+        if let Some(existing) = pv_api.get(&pv_name).await? {
+            if existing_pv_matches_claim(&existing, &namespace, &name, &storage_class_name)? {
+                // PV already exists and matches this claim; skip volume creation.
+            } else {
+                return Err(ControllerError::ExistingVolumeConflict {
+                    name: pv_name.clone(),
+                    namespace,
+                    claim: name,
+                });
             }
-            Err(err) => return Err(err.into()),
+        } else {
+            let provisioned_volume = self
+                .csi_operator
+                .create_volume(
+                    &provisioner_config.socket_path,
+                    pv_name.clone(),
+                    parameters,
+                    access_modes,
+                    access_type,
+                )
+                .await?;
+
+            let persistent_volume = build_persistent_volume(
+                &pv_name,
+                &namespace,
+                &name,
+                storage_class_name.clone(),
+                provisioner,
+                reclaim_policy,
+                spec.access_modes.clone(),
+                spec.volume_mode.clone(),
+                provisioned_volume.volume_id,
+            );
+
+            match pv_api.create(persistent_volume).await {
+                Ok(_) => {}
+                Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
+                    let Some(existing) = pv_api.get(&pv_name).await? else {
+                        return Err(ControllerError::ExistingVolumeConflict {
+                            name: pv_name.clone(),
+                            namespace,
+                            claim: name,
+                        });
+                    };
+                    if !existing_pv_matches_claim(
+                        &existing,
+                        &namespace,
+                        &name,
+                        &storage_class_name,
+                    )? {
+                        return Err(ControllerError::ExistingVolumeConflict {
+                            name: pv_name.clone(),
+                            namespace,
+                            claim: name,
+                        });
+                    }
+                }
+                Err(err) => return Err(err.into()),
+            }
         }
 
         let pvc_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), &namespace);
@@ -206,26 +223,11 @@ impl PvcProvisionerReconciler {
 
     async fn reconcile_deleted(
         &self,
-        pvc: PersistentVolumeClaim,
+        _pvc: PersistentVolumeClaim,
     ) -> Result<Action, ControllerError> {
-        let spec = match pvc.spec.as_ref() {
-            Some(spec) => spec,
-            None => return Ok(Action::await_change()),
-        };
-        let Some(volume_name) = spec.volume_name.clone().filter(|value| !value.is_empty()) else {
-            return Ok(Action::await_change());
-        };
-
-        let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
-        let Some(persistent_volume) = pv_api.get(&volume_name).await? else {
-            return Ok(Action::await_change());
-        };
-        if !is_managed_pv(&persistent_volume) || !should_delete_backing_volume(&persistent_volume)?
-        {
-            return Ok(Action::await_change());
-        }
-
-        pv_api.delete(&volume_name).await?;
+        // PV deletion is handled by PV Cleanup Controller, which detects
+        // that the bound claim no longer exists and cleans up the PV and
+        // its backing CSI volume via its finalizer.
         Ok(Action::await_change())
     }
 }
