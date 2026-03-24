@@ -25,6 +25,7 @@ mod persistent_volume_claim;
 mod secret;
 mod ship;
 mod shipclass;
+mod storage_class;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -68,6 +69,10 @@ mod shipclass;
         secret::handle_secret_list_all,
         secret::handle_secret_read,
         secret::handle_secret_replace,
+        storage_class::handle_storage_class_create,
+        storage_class::handle_storage_class_delete,
+        storage_class::handle_storage_class_list,
+        storage_class::handle_storage_class_read,
         ship::handle_ship_create,
         ship::handle_ship_delete,
         ship::handle_ship_list,
@@ -87,6 +92,7 @@ mod shipclass;
         tugboat_resources::manifests::core::v1::PersistentVolumeClaim,
         tugboat_resources::manifests::core::v1::Node,
         tugboat_resources::manifests::core::v1::Secret,
+        tugboat_resources::manifests::core::v1::StorageClass,
         tugboat_resources::manifests::core::v1::Ship,
         tugboat_resources::manifests::core::v1::ShipClass,
         tugboat_resources::manifests::core::v1::NetworkClass,
@@ -170,6 +176,14 @@ pub(super) fn register_secret(service: &mut ServiceConfig) {
         .service(secret::handle_secret_replace);
 }
 
+pub(super) fn register_storage_class(service: &mut ServiceConfig) {
+    service
+        .service(storage_class::handle_storage_class_create)
+        .service(storage_class::handle_storage_class_delete)
+        .service(storage_class::handle_storage_class_list)
+        .service(storage_class::handle_storage_class_read);
+}
+
 pub(super) fn register_ship(service: &mut ServiceConfig) {
     service
         .service(ship::handle_ship_create)
@@ -200,6 +214,7 @@ pub(super) fn register_v1_core(service: &mut ServiceConfig) {
         .configure(register_persistent_volume_claim)
         .configure(register_networkclass)
         .configure(register_secret)
+        .configure(register_storage_class)
         .configure(register_ship)
         .configure(register_shipclass);
 }

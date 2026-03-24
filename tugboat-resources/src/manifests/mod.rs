@@ -58,6 +58,14 @@ pub mod core {
             namespaced
         );
         apply_resource!(Secret, "core", "v1", "secrets", "secret", namespaced);
+        apply_resource!(
+            StorageClass,
+            "core",
+            "v1",
+            "storageclasses",
+            "storageclass",
+            cluster
+        );
         apply_resource!(Ship, "core", "v1", "ships", "ship", namespaced);
         apply_resource!(ShipClass, "core", "v1", "shipclasses", "shipclass", cluster);
 
@@ -68,6 +76,7 @@ pub mod core {
         apply_validators!(PersistentVolume, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(PersistentVolumeClaim, validators NameValidator);
         apply_validators!(Secret, validators NameValidator);
+        apply_validators!(StorageClass, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(Ship, validators NameValidator);
         apply_validators!(ShipClass, validators NameValidator, NamespaceProhibitedValidator);
     }

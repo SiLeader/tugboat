@@ -12,6 +12,13 @@ impl TugboatControllerManager {
         }
     }
 
+    pub(crate) fn add_controller<T>(&mut self, controller: T)
+    where
+        T: TugboatController + 'static,
+    {
+        self.controllers.push(Box::new(controller));
+    }
+
     pub(crate) async fn setup(&mut self) {
         info!("Setting up controllers");
         for controller in self.controllers.iter_mut() {

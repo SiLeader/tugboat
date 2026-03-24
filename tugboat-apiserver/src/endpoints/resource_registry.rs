@@ -18,7 +18,7 @@ use tugboat_resources::StaticResource;
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, Namespace, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim,
-    Secret, Ship, ShipClass,
+    Secret, Ship, ShipClass, StorageClass,
 };
 use utoipa_actix_web::service_config::ServiceConfig;
 
@@ -155,6 +155,11 @@ const SECRET_OPS: ResourceOperations = ResourceOperations {
     ..NAMESPACED_DEFAULT_OPS
 };
 
+const STORAGE_CLASS_OPS: ResourceOperations = ResourceOperations {
+    delete: true,
+    ..CLUSTER_DEFAULT_OPS
+};
+
 const SHIP_OPS: ResourceOperations = ResourceOperations {
     update: true,
     status_patch: true,
@@ -190,6 +195,10 @@ pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
         ResourceApiDescriptor::new::<Secret>(SECRET_OPS, v1_core::register_secret),
         ResourceApiDescriptor::new::<Ship>(SHIP_OPS, v1_core::register_ship),
         ResourceApiDescriptor::new::<ShipClass>(CLUSTER_DEFAULT_OPS, v1_core::register_shipclass),
+        ResourceApiDescriptor::new::<StorageClass>(
+            STORAGE_CLASS_OPS,
+            v1_core::register_storage_class,
+        ),
         ResourceApiDescriptor::new::<Lease>(LEASE_OPS, v1_coordination::register_lease),
     ]
 }

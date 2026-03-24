@@ -3332,9 +3332,16 @@ name = "tugboat-controller-manager"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "clap",
+ "serde",
+ "thiserror 2.0.18",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
+ "tugboat-client",
+ "tugboat-csi-operator",
+ "tugboat-resources",
 ]
 
 [[package]]

@@ -8,6 +8,12 @@ pub enum Error {
     TargetPathAlreadyExists,
     #[error("Target path not found")]
     TargetPathNotFound,
+    #[error("Volume already exists")]
+    VolumeAlreadyExists,
+    #[error("Volume not found")]
+    VolumeNotFound,
+    #[error("CreateVolume response is missing volume details")]
+    MissingVolume,
     #[error("Failed precondition")]
     FailedPrecondition,
     #[error("Grpc error: {0}")]
