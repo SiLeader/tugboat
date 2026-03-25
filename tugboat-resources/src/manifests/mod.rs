@@ -18,7 +18,10 @@ fn default<T: Default + PartialEq>(t: &T) -> bool {
 
 pub mod core {
     pub mod v1 {
-        use crate::validators::{NameValidator, NamespaceProhibitedValidator};
+        use crate::validators::{
+            HasReclaimPolicy, NameValidator, NamespaceProhibitedValidator,
+            ReclaimPolicyValidator,
+        };
         use crate::{apply_resource, apply_validators};
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.core.v1.rs"));
@@ -76,7 +79,13 @@ pub mod core {
         apply_validators!(PersistentVolume, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(PersistentVolumeClaim, validators NameValidator);
         apply_validators!(Secret, validators NameValidator);
-        apply_validators!(StorageClass, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(StorageClass, validators NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator);
+
+        impl HasReclaimPolicy for StorageClass {
+            fn reclaim_policy_value(&self) -> Option<&str> {
+                self.spec.as_ref()?.reclaim_policy.as_deref()
+            }
+        }
         apply_validators!(Ship, validators NameValidator);
         apply_validators!(ShipClass, validators NameValidator, NamespaceProhibitedValidator);
     }

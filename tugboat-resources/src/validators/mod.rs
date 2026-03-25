@@ -14,9 +14,11 @@
 
 mod name;
 mod namespace;
+mod reclaim_policy;
 
 pub use name::*;
 pub use namespace::*;
+pub use reclaim_policy::*;
 
 pub trait Validator<T> {
     fn validate(&self, value: &T) -> bool;

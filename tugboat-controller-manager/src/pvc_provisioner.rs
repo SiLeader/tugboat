@@ -131,6 +131,7 @@ impl PvcProvisionerReconciler {
 
         let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
         let mut created_pv = false;
+        let mut provisioned_volume_id: Option<String> = None;
         if let Some(existing) = pv_api.get(&pv_name).await? {
             if existing_pv_matches_claim(&existing, &namespace, &name, &storage_class_name)? {
                 // PV already exists and matches this claim; skip volume creation.
@@ -152,7 +153,8 @@ impl PvcProvisionerReconciler {
                     access_type,
                 )
                 .await?;
-            let provisioned_volume_id = provisioned_volume.volume_id.clone();
+            let volume_id = provisioned_volume.volume_id.clone();
+            provisioned_volume_id = Some(volume_id.clone());
 
             let persistent_volume = build_persistent_volume(
                 &pv_name,
@@ -163,7 +165,7 @@ impl PvcProvisionerReconciler {
                 reclaim_policy,
                 spec.access_modes.clone(),
                 spec.volume_mode.clone(),
-                provisioned_volume_id.clone(),
+                volume_id.clone(),
             );
 
             match pv_api.create(persistent_volume).await {
@@ -176,7 +178,7 @@ impl PvcProvisionerReconciler {
                             .csi_operator
                             .delete_volume(
                                 &provisioner_config.socket_path,
-                                provisioned_volume_id.clone(),
+                                volume_id.clone(),
                             )
                             .await
                         {
@@ -198,7 +200,7 @@ impl PvcProvisionerReconciler {
                             .csi_operator
                             .delete_volume(
                                 &provisioner_config.socket_path,
-                                provisioned_volume_id.clone(),
+                                volume_id.clone(),
                             )
                             .await
                         {
@@ -214,7 +216,7 @@ impl PvcProvisionerReconciler {
                 Err(err) => {
                     if let Err(cleanup_err) = self
                         .csi_operator
-                        .delete_volume(&provisioner_config.socket_path, provisioned_volume_id)
+                        .delete_volume(&provisioner_config.socket_path, volume_id)
                         .await
                     {
                         tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
@@ -233,13 +235,13 @@ impl PvcProvisionerReconciler {
                     name,
                     pv_name
                 );
-                if let Err(cleanup_err) = pv_api.delete(&pv_name).await {
-                    tracing::warn!(
-                        "Failed to clean up orphaned PersistentVolume '{}': {}",
-                        pv_name,
-                        cleanup_err
-                    );
-                }
+                self.cleanup_orphaned_volume(
+                    &provisioner_config.socket_path,
+                    provisioned_volume_id.as_deref(),
+                    &pv_api,
+                    &pv_name,
+                )
+                .await;
             }
             return Ok(Action::await_change());
         };
@@ -251,13 +253,13 @@ impl PvcProvisionerReconciler {
                     name,
                     pv_name
                 );
-                if let Err(cleanup_err) = pv_api.delete(&pv_name).await {
-                    tracing::warn!(
-                        "Failed to clean up orphaned PersistentVolume '{}': {}",
-                        pv_name,
-                        cleanup_err
-                    );
-                }
+                self.cleanup_orphaned_volume(
+                    &provisioner_config.socket_path,
+                    provisioned_volume_id.as_deref(),
+                    &pv_api,
+                    &pv_name,
+                )
+                .await;
             }
             return Ok(Action::await_change());
         }
@@ -284,13 +286,13 @@ impl PvcProvisionerReconciler {
                     existing_volume_name,
                     pv_name
                 );
-                if let Err(cleanup_err) = pv_api.delete(&pv_name).await {
-                    tracing::warn!(
-                        "Failed to clean up orphaned PersistentVolume '{}': {}",
-                        pv_name,
-                        cleanup_err
-                    );
-                }
+                self.cleanup_orphaned_volume(
+                    &provisioner_config.socket_path,
+                    provisioned_volume_id.as_deref(),
+                    &pv_api,
+                    &pv_name,
+                )
+                .await;
             }
             return Ok(Action::await_change());
         }
@@ -308,5 +310,33 @@ impl PvcProvisionerReconciler {
         // that the bound claim no longer exists and cleans up the PV and
         // its backing CSI volume via its finalizer.
         Ok(Action::await_change())
+    }
+
+    async fn cleanup_orphaned_volume(
+        &self,
+        socket_path: &str,
+        volume_id: Option<&str>,
+        pv_api: &Api<PersistentVolume>,
+        pv_name: &str,
+    ) {
+        if let Some(volume_id) = volume_id
+            && let Err(cleanup_err) = self
+                .csi_operator
+                .delete_volume(socket_path, volume_id.to_string())
+                .await
+        {
+            tracing::warn!(
+                "Failed to clean up orphaned CSI volume '{}': {}",
+                volume_id,
+                cleanup_err
+            );
+        }
+        if let Err(cleanup_err) = pv_api.delete(pv_name).await {
+            tracing::warn!(
+                "Failed to clean up orphaned PersistentVolume '{}': {}",
+                pv_name,
+                cleanup_err
+            );
+        }
     }
 }
