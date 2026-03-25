@@ -14,9 +14,12 @@
 
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
+use crate::reconciler::reconcile::AppendStatus;
 use tracing::{info, warn};
+use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::Ship;
+use tugboat_resources::manifests::core::v1::{Ship, ShipCondition};
+use tugboat_resources::manifests::meta::v1::Time;
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_modified(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -32,6 +35,16 @@ impl ShipReconciler {
                 "metadata.uid".to_string(),
             ));
         };
+        let Some(name) = &ship_metadata.name else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let namespace = ship_metadata
+            .namespace
+            .clone()
+            .unwrap_or("default".to_string());
 
         if !self.runtime_operator.has_ship(ship_id).await {
             info!(
@@ -41,8 +54,34 @@ impl ShipReconciler {
             return self.reconcile_added(ship).await;
         }
 
-        // TODO modified
-        warn!("Modify Ship is not handled yet. (Ship: {ship:?})");
+        let Some(ship_spec) = &ship.spec else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+        let spec_fingerprint = super::spec_fingerprint(ship_spec)?;
+        if self
+            .runtime_operator
+            .matches_spec(ship_id, &spec_fingerprint)
+            .await
+        {
+            info!("Ship modified but desired spec is unchanged: {}", ship_id);
+            return Ok(());
+        }
+
+        warn!(
+            "Ship '{}' spec changed while running; live mutation is not supported, setting condition",
+            ship_id
+        );
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+        let mut status_ship = ship.clone();
+        status_ship.append_status(ShipCondition {
+            status: "SpecChangeRequiresRecreate".to_string(),
+            message: "Ship spec changed while running; live mutation is not supported — recreate the ship to apply the new spec".to_string(),
+            timestamp: Some(Time::now()),
+        });
+        api.replace_status(name, status_ship).await?;
         Ok(())
     }
 }

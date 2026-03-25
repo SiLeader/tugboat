@@ -65,8 +65,51 @@ pub struct VmUefiConfig {
 #[serde(rename_all = "camelCase")]
 pub struct VmVolumeConfig {
     pub host_path: String,
+    #[serde(default)]
+    pub kind: VmVolumeKind,
+    #[serde(default = "default_vm_volume_format")]
     pub format: String,
     pub read_only: bool,
+    #[serde(default)]
+    pub mount_tag: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VmVolumeKind {
+    #[default]
+    Block,
+    Filesystem,
+}
+
+impl VmVolumeConfig {
+    pub fn block(host_path: impl Into<String>, format: impl Into<String>, read_only: bool) -> Self {
+        Self {
+            host_path: host_path.into(),
+            kind: VmVolumeKind::Block,
+            format: format.into(),
+            read_only,
+            mount_tag: String::new(),
+        }
+    }
+
+    pub fn filesystem(
+        host_path: impl Into<String>,
+        mount_tag: impl Into<String>,
+        read_only: bool,
+    ) -> Self {
+        Self {
+            host_path: host_path.into(),
+            kind: VmVolumeKind::Filesystem,
+            format: default_vm_volume_format(),
+            read_only,
+            mount_tag: mount_tag.into(),
+        }
+    }
+}
+
+fn default_vm_volume_format() -> String {
+    "raw".to_string()
 }
 
 #[cfg(test)]

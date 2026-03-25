@@ -41,7 +41,7 @@ pub(super) async fn handle_secret_create(
     path: Path<NamespacedPathParams>,
     json: Json<Secret>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Secret>, StatusResponse> {
+) -> Result<ModifyResponse<Secret>, Box<StatusResponse>> {
     let json = json.into_inner();
     let mut data = json.data;
     data.extend(
@@ -84,7 +84,7 @@ pub(super) struct SecretDeletePathParams {
 pub(super) async fn handle_secret_delete(
     path: Path<SecretDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Secret>, StatusResponse> {
+) -> Result<ReadResponse<Secret>, Box<StatusResponse>> {
     let params = path.into_inner();
     resource_handlers::delete_resource::<Secret>(&operator, Some(params.namespace), params.name)
         .await
@@ -108,7 +108,7 @@ pub(super) async fn handle_secret_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<Secret>(
         &operator,
         query.into_inner(),
@@ -133,7 +133,7 @@ pub(super) async fn handle_secret_list(
 pub(super) async fn handle_secret_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<Secret>(&operator, query.into_inner(), None).await
 }
 
@@ -158,7 +158,7 @@ pub(super) struct SecretReadPathParams {
 pub(super) async fn handle_secret_read(
     path: Path<SecretReadPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Secret>, StatusResponse> {
+) -> Result<ReadResponse<Secret>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<Secret>(&operator, Some(path.namespace), path.name).await
 }
@@ -186,7 +186,7 @@ pub(super) async fn handle_secret_replace(
     path: Path<SecretReplacePathParams>,
     replacement: Json<Secret>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Secret>, StatusResponse> {
+) -> Result<ModifyResponse<Secret>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::replace_resource::<Secret>(
         &operator,

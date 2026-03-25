@@ -18,28 +18,11 @@ impl ShipReconciler {
                 "metadata.uid".to_string(),
             ));
         };
-        let namespace = meta.namespace.clone().unwrap_or("default".to_string());
 
         info!("Deleting ship: {}", ship_id);
         let mut published_volumes = self.runtime_operator.delete(ship_id.clone()).await?;
         if published_volumes.is_empty() {
             published_volumes = self.csi.load_published_volumes(ship_id)?;
-        }
-        if published_volumes.is_empty() {
-            let Some(ship_spec) = &ship.spec else {
-                return Err(ReconcileError::FieldMissing(
-                    "v1.Ship".to_string(),
-                    "spec".to_string(),
-                ));
-            };
-            let resolved_volumes = self.get_related_volumes(&namespace, ship_spec).await?;
-            published_volumes = resolved_volumes
-                .into_iter()
-                .map(|volume| {
-                    self.csi
-                        .plan_published_volume(ship_id, &volume.claim_name, &volume.source)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
         }
         self.cleanup_published_volumes(&published_volumes).await?;
         self.csi.cleanup_mount_namespace(ship_id)?;

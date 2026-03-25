@@ -33,7 +33,7 @@ use utoipa::ToSchema;
 pub(super) async fn handle_clusternetworkclass_create(
     json: Json<ClusterNetworkClass>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<ClusterNetworkClass>, StatusResponse> {
+) -> Result<ModifyResponse<ClusterNetworkClass>, Box<StatusResponse>> {
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
@@ -56,7 +56,7 @@ pub(super) struct ClusterNetworkClassDeletePathParams {
 pub(super) async fn handle_clusternetworkclass_delete(
     path: Path<ClusterNetworkClassDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<ClusterNetworkClass>, StatusResponse> {
+) -> Result<ReadResponse<ClusterNetworkClass>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<ClusterNetworkClass>(
         &operator,
         None,
@@ -81,7 +81,7 @@ pub(super) async fn handle_clusternetworkclass_delete(
 pub(super) async fn handle_clusternetworkclass_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<ClusterNetworkClass>(&operator, query.into_inner(), None)
         .await
 }
@@ -104,7 +104,7 @@ pub(super) struct ReadParams {
 pub(super) async fn handle_clusternetworkclass_read(
     path: Path<ReadParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<ClusterNetworkClass>, StatusResponse> {
+) -> Result<ReadResponse<ClusterNetworkClass>, Box<StatusResponse>> {
     resource_handlers::read_resource::<ClusterNetworkClass>(&operator, None, path.into_inner().name)
         .await
 }

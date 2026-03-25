@@ -12,19 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::csi::is_supported_access_mode;
+use crate::csi::{ResolvedNodeSecrets, is_supported_access_mode};
 use crate::reconciler::ShipReconciler;
-use crate::reconciler::error::ReconcileError;
+use crate::reconciler::error::{InvalidCsiSecretDataError, ReconcileError};
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use std::collections::HashSet;
 use tugboat_client::Api;
 use tugboat_resources::manifests::core::v1::{
     CsiPersistentVolumeSource, PersistentVolume, PersistentVolumeClaim,
-    PersistentVolumeClaimReference, PersistentVolumeClaimSpec, PersistentVolumeSpec, ShipSpec,
+    PersistentVolumeClaimReference, PersistentVolumeClaimSpec, PersistentVolumeSpec, Secret,
+    SecretReference, ShipSpec,
 };
 
 #[derive(Debug, Clone)]
 pub(crate) struct VolumeInfo {
     pub claim_name: String,
+    pub volume_name: String,
     pub claim: PersistentVolumeClaimSpec,
     pub volume: PersistentVolumeSpec,
     pub source: CsiPersistentVolumeSource,
@@ -87,8 +91,8 @@ impl ShipReconciler {
                     volume_mode: volume_mode.to_string(),
                 });
             }
-            ensure_block_claim_mode(&claim_ref.name, claim_mode)?;
-            ensure_block_persistent_volume_mode(&volume_name, volume_mode)?;
+            ensure_supported_claim_mode(&claim_ref.name, claim_mode)?;
+            ensure_supported_persistent_volume_mode(&volume_name, volume_mode)?;
             ensure_volume_claim_binding(
                 &volume_name,
                 volume_spec.claim_ref.as_ref(),
@@ -110,6 +114,7 @@ impl ShipReconciler {
 
             volumes.push(VolumeInfo {
                 claim_name: claim_ref.name.clone(),
+                volume_name: volume_name.clone(),
                 claim: claim_spec,
                 volume: volume_spec,
                 source,
@@ -117,6 +122,65 @@ impl ShipReconciler {
         }
 
         Ok(volumes)
+    }
+}
+
+impl ShipReconciler {
+    pub(crate) async fn resolve_node_secrets(
+        &self,
+        volume: &VolumeInfo,
+    ) -> Result<ResolvedNodeSecrets, ReconcileError> {
+        Ok(ResolvedNodeSecrets {
+            node_publish: self
+                .load_secret_reference(
+                    &volume.volume_name,
+                    "node_publish_secret_ref",
+                    volume.source.node_publish_secret_ref.as_ref(),
+                )
+                .await?,
+            node_stage: self
+                .load_secret_reference(
+                    &volume.volume_name,
+                    "node_stage_secret_ref",
+                    volume.source.node_stage_secret_ref.as_ref(),
+                )
+                .await?,
+        })
+    }
+
+    async fn load_secret_reference(
+        &self,
+        volume_name: &str,
+        field: &str,
+        reference: Option<&SecretReference>,
+    ) -> Result<std::collections::HashMap<String, String>, ReconcileError> {
+        let Some(reference) = reference else {
+            return Ok(Default::default());
+        };
+        if reference.name.is_empty() || reference.namespace.is_empty() {
+            return Err(ReconcileError::InvalidCsiSecretReference {
+                volume: volume_name.to_string(),
+                field: field.to_string(),
+            });
+        }
+
+        let api: Api<Secret> = Api::namespaced(self.client.clone(), &reference.namespace);
+        let Some(secret) = api.get(&reference.name).await? else {
+            return Err(ReconcileError::CsiSecretNotFound {
+                volume: volume_name.to_string(),
+                field: field.to_string(),
+                namespace: reference.namespace.clone(),
+                name: reference.name.clone(),
+            });
+        };
+
+        decode_secret_data(
+            volume_name,
+            field,
+            &reference.namespace,
+            &reference.name,
+            secret,
+        )
     }
 }
 
@@ -219,14 +283,6 @@ fn ensure_supported_csi_source(
             "node_expand_secret_ref",
             source.node_expand_secret_ref.as_ref(),
         ),
-        (
-            "node_publish_secret_ref",
-            source.node_publish_secret_ref.as_ref(),
-        ),
-        (
-            "node_stage_secret_ref",
-            source.node_stage_secret_ref.as_ref(),
-        ),
     ];
 
     for (feature, reference) in unsupported_features {
@@ -241,8 +297,8 @@ fn ensure_supported_csi_source(
     Ok(())
 }
 
-fn ensure_block_claim_mode(claim_name: &str, mode: &str) -> Result<(), ReconcileError> {
-    if mode == "Block" {
+fn ensure_supported_claim_mode(claim_name: &str, mode: &str) -> Result<(), ReconcileError> {
+    if matches!(mode, "Block" | "Filesystem") {
         Ok(())
     } else {
         Err(ReconcileError::UnsupportedClaimVolumeMode {
@@ -252,11 +308,11 @@ fn ensure_block_claim_mode(claim_name: &str, mode: &str) -> Result<(), Reconcile
     }
 }
 
-fn ensure_block_persistent_volume_mode(
+fn ensure_supported_persistent_volume_mode(
     volume_name: &str,
     mode: &str,
 ) -> Result<(), ReconcileError> {
-    if mode == "Block" {
+    if matches!(mode, "Block" | "Filesystem") {
         Ok(())
     } else {
         Err(ReconcileError::UnsupportedPersistentVolumeMode {
@@ -266,15 +322,68 @@ fn ensure_block_persistent_volume_mode(
     }
 }
 
+fn decode_secret_data(
+    volume_name: &str,
+    field: &str,
+    namespace: &str,
+    secret_name: &str,
+    secret: Secret,
+) -> Result<std::collections::HashMap<String, String>, ReconcileError> {
+    let mut data = std::collections::HashMap::new();
+    for (key, value) in secret.data {
+        let decoded = BASE64_STANDARD.decode(value).map_err(|err| {
+            invalid_csi_secret_data(
+                volume_name,
+                field,
+                namespace,
+                secret_name,
+                &key,
+                err.to_string(),
+            )
+        })?;
+        let decoded = String::from_utf8(decoded).map_err(|err| {
+            invalid_csi_secret_data(
+                volume_name,
+                field,
+                namespace,
+                secret_name,
+                &key,
+                err.to_string(),
+            )
+        })?;
+        data.insert(key, decoded);
+    }
+    data.extend(secret.string_data);
+    Ok(data)
+}
+
+fn invalid_csi_secret_data(
+    volume_name: &str,
+    field: &str,
+    namespace: &str,
+    secret_name: &str,
+    key: &str,
+    reason: String,
+) -> ReconcileError {
+    ReconcileError::InvalidCsiSecretData(Box::new(InvalidCsiSecretDataError {
+        volume: volume_name.to_string(),
+        field: field.to_string(),
+        namespace: namespace.to_string(),
+        name: secret_name.to_string(),
+        key: key.to_string(),
+        reason,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        effective_volume_mode, ensure_access_modes_compatible, ensure_block_claim_mode,
-        ensure_block_persistent_volume_mode, ensure_supported_csi_source,
-        ensure_volume_claim_binding,
+        decode_secret_data, effective_volume_mode, ensure_access_modes_compatible,
+        ensure_supported_claim_mode, ensure_supported_csi_source,
+        ensure_supported_persistent_volume_mode, ensure_volume_claim_binding,
     };
     use tugboat_resources::manifests::core::v1::{
-        CsiPersistentVolumeSource, PersistentVolumeClaimReference, SecretReference,
+        CsiPersistentVolumeSource, PersistentVolumeClaimReference, Secret, SecretReference,
     };
 
     #[test]
@@ -283,9 +392,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_block_modes() {
-        assert!(ensure_block_claim_mode("claim", "Filesystem").is_err());
-        assert!(ensure_block_persistent_volume_mode("volume", "Filesystem").is_err());
+    fn allows_supported_volume_modes() {
+        assert!(ensure_supported_claim_mode("claim", "Filesystem").is_ok());
+        assert!(ensure_supported_persistent_volume_mode("volume", "Filesystem").is_ok());
     }
 
     #[test]
@@ -316,7 +425,7 @@ mod tests {
     #[test]
     fn rejects_secret_backed_csi_fields() {
         let source = CsiPersistentVolumeSource {
-            node_publish_secret_ref: Some(SecretReference {
+            controller_publish_secret_ref: Some(SecretReference {
                 name: "publish-secret".to_string(),
                 namespace: "alpha".to_string(),
             }),
@@ -324,5 +433,35 @@ mod tests {
         };
 
         assert!(ensure_supported_csi_source("pv", &source).is_err());
+    }
+
+    #[test]
+    fn allows_node_publish_and_stage_secrets() {
+        let source = CsiPersistentVolumeSource {
+            node_publish_secret_ref: Some(SecretReference {
+                name: "publish-secret".to_string(),
+                namespace: "alpha".to_string(),
+            }),
+            node_stage_secret_ref: Some(SecretReference {
+                name: "stage-secret".to_string(),
+                namespace: "alpha".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        assert!(ensure_supported_csi_source("pv", &source).is_ok());
+    }
+
+    #[test]
+    fn decodes_base64_secret_data() {
+        let secret = Secret {
+            data: std::collections::HashMap::from([("token".to_string(), "c2VjcmV0".to_string())]),
+            ..Default::default()
+        };
+
+        let decoded =
+            decode_secret_data("pv", "node_publish_secret_ref", "alpha", "publish", secret)
+                .expect("secret decoding should succeed");
+        assert_eq!(decoded.get("token"), Some(&"secret".to_string()));
     }
 }

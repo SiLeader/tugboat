@@ -19,8 +19,7 @@ fn default<T: Default + PartialEq>(t: &T) -> bool {
 pub mod core {
     pub mod v1 {
         use crate::validators::{
-            HasReclaimPolicy, NameValidator, NamespaceProhibitedValidator,
-            ReclaimPolicyValidator,
+            HasReclaimPolicy, NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator,
         };
         use crate::{apply_resource, apply_validators};
 

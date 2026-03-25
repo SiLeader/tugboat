@@ -26,11 +26,10 @@ use tugboat_resource_store::serializer::StaticSerializable;
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta, StaticResource};
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn create_cluster<T>(
     object: T,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<T>, StatusResponse>
+) -> Result<ModifyResponse<T>, Box<StatusResponse>>
 where
     T: Resource + StaticSerializable + ObjectMetaResource + SetTypeMeta + Clone,
 {
@@ -40,12 +39,11 @@ where
     crate::create_object!(operator, object_meta, object, T::type_meta())
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn create_namespaced<T>(
     object: T,
     namespace: String,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<T>, StatusResponse>
+) -> Result<ModifyResponse<T>, Box<StatusResponse>>
 where
     T: Resource + StaticSerializable + ObjectMetaResource + SetTypeMeta + Clone,
 {
@@ -55,12 +53,11 @@ where
     crate::create_object!(operator, object_meta, object, T::type_meta())
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn list_resources<T>(
     operator: &ApiOperator,
     query: ListQuery,
     namespace: Option<String>,
-) -> Result<HttpResponse, StatusResponse>
+) -> Result<HttpResponse, Box<StatusResponse>>
 where
     T: 'static + StaticSerializable + ObjectMetaResource + Serialize,
 {
@@ -77,7 +74,11 @@ where
     } else {
         let field_selector = query.to_field_selector()?;
         let label_selector = query.to_label_selector()?;
-        let resources = operator.store.list::<T>(namespace, None).await?;
+        let resources = operator
+            .store
+            .list::<T>(namespace, None)
+            .await
+            .map_err(|e| Box::new(e.into()))?;
         Ok(ResourceList::from_serializable(
             resources
                 .into_iter()
@@ -88,31 +89,33 @@ where
     }
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn read_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
     name: String,
-) -> Result<ReadResponse<T>, StatusResponse>
+) -> Result<ReadResponse<T>, Box<StatusResponse>>
 where
     T: StaticSerializable + ObjectMetaResource + StaticResource + Serialize,
 {
-    let resource = operator.store.get::<T>(namespace.clone(), &name).await?;
+    let resource = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     match resource {
         Some(data) => Ok(ReadResponse::new(data.apply_revision())),
-        None => Err(StatusResponse::not_found(
+        None => Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
             Some(resource_identity(namespace.as_deref(), &name)),
-        )),
+        ))),
     }
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn delete_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
     name: String,
-) -> Result<ReadResponse<T>, StatusResponse>
+) -> Result<ReadResponse<T>, Box<StatusResponse>>
 where
     T: StaticSerializable
         + ObjectMetaResource
@@ -122,12 +125,16 @@ where
         + PartialEq
         + Clone,
 {
-    let current = operator.store.get::<T>(namespace.clone(), &name).await?;
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let Some(current) = current else {
-        return Err(StatusResponse::not_found(
+        return Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
             Some(resource_identity(namespace.as_deref(), &name)),
-        ));
+        )));
     };
     let current = current.apply_revision();
 
@@ -135,7 +142,12 @@ where
         let mut pending_delete = current.clone();
         pending_delete.mark_for_deletion(Time::now());
         let pending_delete = if current != pending_delete {
-            operator.store.put(pending_delete).await?.apply_revision()
+            operator
+                .store
+                .put(pending_delete)
+                .await
+                .map_err(|e| Box::new(e.into()))?
+                .apply_revision()
         } else {
             pending_delete
         };
@@ -143,13 +155,17 @@ where
         return Ok(ReadResponse::new(pending_delete));
     }
 
-    let resource = operator.store.delete::<T>(namespace.clone(), &name).await?;
+    let resource = operator
+        .store
+        .delete::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     match resource {
         Some(data) => Ok(ReadResponse::new(data.apply_revision())),
-        None => Err(StatusResponse::not_found(
+        None => Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
             Some(resource_identity(namespace.as_deref(), &name)),
-        )),
+        ))),
     }
 }
 
@@ -159,14 +175,13 @@ pub(crate) struct ReplaceOptions {
     pub(crate) use_client_resource_version: bool,
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn replace_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
     name: String,
     replacement: T,
     options: ReplaceOptions,
-) -> Result<ModifyResponse<T>, StatusResponse>
+) -> Result<ModifyResponse<T>, Box<StatusResponse>>
 where
     T: StaticSerializable
         + ObjectMetaResource
@@ -175,31 +190,39 @@ where
         + DeserializeOwned
         + PartialEq,
 {
-    let current = operator.store.get::<T>(namespace.clone(), &name).await?;
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let Some(current) = current else {
-        return Err(StatusResponse::not_found(
+        return Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
             Some(resource_identity(namespace.as_deref(), &name)),
-        ));
+        )));
     };
     let current = current.apply_revision();
     let replaced = merge_replacement(&current, &replacement, options)?;
 
     let replaced = if current != replaced {
-        operator.store.put(replaced).await?.apply_revision()
+        operator
+            .store
+            .put(replaced)
+            .await
+            .map_err(|e| Box::new(e.into()))?
+            .apply_revision()
     } else {
         replaced
     };
     Ok(ModifyResponse::Updated(replaced))
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn status_patch_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
     name: String,
     patch: serde_json::Map<String, serde_json::Value>,
-) -> Result<ModifyResponse<T>, StatusResponse>
+) -> Result<ModifyResponse<T>, Box<StatusResponse>>
 where
     T: StaticSerializable
         + ObjectMetaResource
@@ -209,41 +232,49 @@ where
         + PartialEq,
 {
     if !patch.keys().all(|key| key == "status") {
-        return Err(StatusResponse::bad_request(
+        return Err(Box::new(StatusResponse::bad_request(
             "PATCH /status must contain only status field.",
             None,
-        ));
+        )));
     }
     let patch = serde_json::Value::Object(patch);
 
-    let current = operator.store.get::<T>(namespace.clone(), &name).await?;
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let Some(current) = current else {
-        return Err(StatusResponse::not_found(
+        return Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
             Some(resource_identity(namespace.as_deref(), &name)),
-        ));
+        )));
     };
     let current = current.apply_revision();
 
-    let mut patched = serde_json::to_value(&current)?;
+    let mut patched = serde_json::to_value(&current).map_err(|e| Box::new(e.into()))?;
     patched.merge(&patch);
-    let patched = serde_json::from_value::<T>(patched)?;
+    let patched = serde_json::from_value::<T>(patched).map_err(|e| Box::new(e.into()))?;
 
     let patched = if current != patched {
-        operator.store.put(patched).await?.apply_revision()
+        operator
+            .store
+            .put(patched)
+            .await
+            .map_err(|e| Box::new(e.into()))?
+            .apply_revision()
     } else {
         patched
     };
     Ok(ModifyResponse::Updated(patched))
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn status_replace_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
     name: String,
     replacement: T,
-) -> Result<ModifyResponse<T>, StatusResponse>
+) -> Result<ModifyResponse<T>, Box<StatusResponse>>
 where
     T: StaticSerializable
         + ObjectMetaResource
@@ -252,44 +283,62 @@ where
         + DeserializeOwned
         + PartialEq,
 {
-    let current = operator.store.get::<T>(namespace.clone(), &name).await?;
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let Some(current) = current else {
-        return Err(StatusResponse::not_found(
+        return Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
             Some(resource_identity(namespace.as_deref(), &name)),
-        ));
+        )));
     };
     let current = current.apply_revision();
 
-    let replacement = serde_json::to_value(replacement)?;
+    let replacement = serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
     let status = replacement
         .as_object()
         .and_then(|obj| obj.get("status").cloned())
         .unwrap_or(serde_json::Value::Null);
 
-    let mut replaced = to_object(serde_json::to_value(&current)?, "current resource")?;
+    let mut replaced = to_object(
+        serde_json::to_value(&current).map_err(|e| Box::new(e.into()))?,
+        "current resource",
+    )?;
     replaced.insert("status".to_string(), status);
-    let replaced = serde_json::from_value::<T>(serde_json::Value::Object(replaced))?;
+    let replaced = serde_json::from_value::<T>(serde_json::Value::Object(replaced))
+        .map_err(|e| Box::new(e.into()))?;
 
     let replaced = if current != replaced {
-        operator.store.put(replaced).await?.apply_revision()
+        operator
+            .store
+            .put(replaced)
+            .await
+            .map_err(|e| Box::new(e.into()))?
+            .apply_revision()
     } else {
         replaced
     };
     Ok(ModifyResponse::Updated(replaced))
 }
 
-#[allow(clippy::result_large_err)]
 fn merge_replacement<T>(
     current: &T,
     replacement: &T,
     options: ReplaceOptions,
-) -> Result<T, StatusResponse>
+) -> Result<T, Box<StatusResponse>>
 where
     T: Serialize + DeserializeOwned,
 {
-    let mut merged = to_object(serde_json::to_value(current)?, "current resource")?;
-    let replacement = to_object(serde_json::to_value(replacement)?, "replacement resource")?;
+    let mut merged = to_object(
+        serde_json::to_value(current).map_err(|e| Box::new(e.into()))?,
+        "current resource",
+    )?;
+    let replacement = to_object(
+        serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?,
+        "replacement resource",
+    )?;
 
     for (key, value) in &replacement {
         if key == "metadata" || key == "apiVersion" || key == "kind" {
@@ -320,22 +369,19 @@ where
     }
     let _ = merged.insert("metadata".to_string(), serde_json::Value::Object(metadata));
 
-    Ok(serde_json::from_value::<T>(serde_json::Value::Object(
-        merged,
-    ))?)
+    serde_json::from_value::<T>(serde_json::Value::Object(merged)).map_err(|e| Box::new(e.into()))
 }
 
-#[allow(clippy::result_large_err)]
 fn to_object(
     value: serde_json::Value,
     context: &str,
-) -> Result<serde_json::Map<String, serde_json::Value>, StatusResponse> {
+) -> Result<serde_json::Map<String, serde_json::Value>, Box<StatusResponse>> {
     match value {
         serde_json::Value::Object(map) => Ok(map),
-        _ => Err(StatusResponse::internal_error(
+        _ => Err(Box::new(StatusResponse::internal_error(
             format!("{context} is not a JSON object"),
             None,
-        )),
+        ))),
     }
 }
 

@@ -39,7 +39,7 @@ pub(super) async fn handle_lease_create(
     path: Path<NamespacedPathParams>,
     json: Json<Lease>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Lease>, StatusResponse> {
+) -> Result<ModifyResponse<Lease>, Box<StatusResponse>> {
     resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
         .await
 }
@@ -62,7 +62,7 @@ pub(super) async fn handle_lease_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<Lease>(
         &operator,
         query.into_inner(),
@@ -87,7 +87,7 @@ pub(super) async fn handle_lease_list(
 pub(super) async fn handle_lease_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<Lease>(&operator, query.into_inner(), None).await
 }
 
@@ -112,7 +112,7 @@ pub(super) struct LeaseReadPathParams {
 pub(super) async fn handle_lease_read(
     path: Path<LeaseReadPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Lease>, StatusResponse> {
+) -> Result<ReadResponse<Lease>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<Lease>(&operator, Some(path.namespace), path.name).await
 }
@@ -140,7 +140,7 @@ pub(super) async fn handle_lease_replace(
     path: Path<LeaseReplacePathParams>,
     replacement: Json<Lease>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Lease>, StatusResponse> {
+) -> Result<ModifyResponse<Lease>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::replace_resource::<Lease>(
         &operator,

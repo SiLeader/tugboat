@@ -24,6 +24,19 @@ pub(crate) struct NetworkClassRefForError(ShipNetworkClassReference);
 pub(crate) struct VolumeClaimRefForError(ShipVolumeClaimReference);
 
 #[derive(Debug, Error)]
+#[error(
+    "Secret '{namespace}/{name}' referenced by PersistentVolume '{volume}' field '{field}' has invalid data for key '{key}': {reason}"
+)]
+pub(crate) struct InvalidCsiSecretDataError {
+    pub(crate) volume: String,
+    pub(crate) field: String,
+    pub(crate) namespace: String,
+    pub(crate) name: String,
+    pub(crate) key: String,
+    pub(crate) reason: String,
+}
+
+#[derive(Debug, Error)]
 pub(crate) enum ReconcileError {
     #[error("API error: {0}")]
     Api(#[from] tugboat_client::Error),
@@ -33,6 +46,8 @@ pub(crate) enum ReconcileError {
     ShipClassNotFound(String),
     #[error("Runtime error: {0}")]
     Runtime(#[from] RuntimeError),
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("Invalid NetworkClassRef: {0}")]
     InvalidNetworkClassRef(NetworkClassRefForError),
     #[error("NetworkClass '{0}' not found")]
@@ -95,8 +110,31 @@ pub(crate) enum ReconcileError {
         volume: String,
         volume_mode: String,
     },
+    #[error(
+        "Running ship '{0}' has attached volumes but no persisted CSI published volume state to recover"
+    )]
+    MissingRecoveredPublishedVolumeState(String),
+    #[error(
+        "Running ship '{0}' has persisted CSI published volume state that does not match the desired volume plan"
+    )]
+    RecoveredPublishedVolumeStateMismatch(String),
     #[error("PersistentVolume '{volume}' uses unsupported CSI feature '{feature}'")]
     UnsupportedPersistentVolumeCsiFeature { volume: String, feature: String },
+    #[error("PersistentVolume '{volume}' has an invalid CSI secret reference in field '{field}'")]
+    InvalidCsiSecretReference { volume: String, field: String },
+    #[error(
+        "Secret '{namespace}/{name}' referenced by PersistentVolume '{volume}' field '{field}' was not found"
+    )]
+    CsiSecretNotFound {
+        volume: String,
+        field: String,
+        namespace: String,
+        name: String,
+    },
+    #[error(transparent)]
+    InvalidCsiSecretData(Box<InvalidCsiSecretDataError>),
+    #[error("Failed to clean up one or more published CSI volumes: {0}")]
+    PublishedVolumeCleanupFailed(String),
     #[error("CNI error: {0}")]
     Cni(#[from] tugboat_cni_operator::Error),
     #[error("CSI error: {0}")]

@@ -215,6 +215,7 @@ pub(crate) fn existing_pv_matches_claim(
         && spec.storage_class_name.as_deref() == Some(storage_class_name))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_persistent_volume(
     pv_name: &str,
     claim_namespace: &str,

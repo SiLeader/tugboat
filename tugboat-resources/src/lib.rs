@@ -210,7 +210,7 @@ mod tests {
         let mut ship = Ship::default();
         let timestamp = Time::now();
 
-        assert!(ship.mark_for_deletion(timestamp.clone()));
+        assert!(ship.mark_for_deletion(timestamp));
         assert!(ship.deletion_timestamp().is_some());
         assert!(!ship.mark_for_deletion(timestamp));
     }

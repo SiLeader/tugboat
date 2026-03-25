@@ -54,6 +54,35 @@ impl RuntimeOperator {
     pub(crate) async fn has_ship(&self, id: &str) -> bool {
         self.children.read().await.contains_key(id)
     }
+
+    pub(crate) async fn matches_spec(&self, id: &str, spec_fingerprint: &str) -> bool {
+        self.children
+            .read()
+            .await
+            .get(id)
+            .is_some_and(|runtime| runtime.matches_spec(spec_fingerprint))
+    }
+
+    pub(crate) async fn register_existing(
+        &self,
+        namespace: String,
+        ship_name: String,
+        id: String,
+        spec_fingerprint: String,
+        published_volumes: Vec<crate::csi::PublishedVolume>,
+    ) {
+        let mut children = self.children.write().await;
+        children.insert(
+            id.clone(),
+            Runtime::new(
+                namespace,
+                ship_name,
+                id,
+                spec_fingerprint,
+                published_volumes,
+            ),
+        );
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

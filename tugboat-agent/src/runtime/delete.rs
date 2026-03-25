@@ -25,6 +25,14 @@ const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const SHUTDOWN_POLL_ATTEMPTS: usize = 30;
 
 impl RuntimeOperator {
+    pub(crate) async fn is_present(&self, id: &str) -> Result<bool, RuntimeError> {
+        match self.operator.status(id).await {
+            Ok(_) => Ok(true),
+            Err(err) if runtime_is_absent(&err) => Ok(false),
+            Err(err) => Err(err.into()),
+        }
+    }
+
     pub(crate) async fn delete(&self, id: String) -> Result<Vec<PublishedVolume>, RuntimeError> {
         debug!("Delete VM: {}", id);
         let req = VmStopRequest {

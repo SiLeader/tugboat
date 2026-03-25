@@ -9,7 +9,7 @@ tonic.workspace = true
 prost.workspace = true
 tonic-prost.workspace = true
 prost-types.workspace = true
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tower = "0.5.3"
 hyper-util = "0.1.20"
 
@@ -17,3 +17,6 @@ thiserror.workspace = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true
+
+[dev-dependencies]
+tokio-stream = { version = "0.1.17", features = ["net"] }

@@ -34,7 +34,7 @@ use utoipa::ToSchema;
 pub(super) async fn handle_node_create(
     json: Json<Node>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Node>, StatusResponse> {
+) -> Result<ModifyResponse<Node>, Box<StatusResponse>> {
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
@@ -57,7 +57,7 @@ pub(super) struct NodeDeletePathParams {
 pub(super) async fn handle_node_delete(
     path: Path<NodeDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Node>, StatusResponse> {
+) -> Result<ReadResponse<Node>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<Node>(&operator, None, path.into_inner().name).await
 }
 
@@ -77,7 +77,7 @@ pub(super) async fn handle_node_delete(
 pub(super) async fn handle_node_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<Node>(&operator, query.into_inner(), None).await
 }
 
@@ -100,7 +100,7 @@ pub(super) struct ReadParams {
 pub(super) async fn handle_node_read(
     path: Path<ReadParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Node>, StatusResponse> {
+) -> Result<ReadResponse<Node>, Box<StatusResponse>> {
     resource_handlers::read_resource::<Node>(&operator, None, path.into_inner().name).await
 }
 
@@ -125,7 +125,7 @@ pub(super) async fn handle_node_replace(
     path: Path<NodeReplacePathParams>,
     replacement: Json<Node>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Node>, StatusResponse> {
+) -> Result<ModifyResponse<Node>, Box<StatusResponse>> {
     resource_handlers::replace_resource::<Node>(
         &operator,
         None,

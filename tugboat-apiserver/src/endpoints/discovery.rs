@@ -190,17 +190,17 @@ pub(super) async fn handle_api_groups() -> HttpResponse {
 #[get("/apis/{group}/{version}")]
 pub(super) async fn handle_api_group_version_resources(
     path: Path<GroupVersionPathParams>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     let path = path.into_inner();
     let resources = resource_registry::resources_for(path.group.as_str(), path.version.as_str());
     if resources.is_empty() {
-        return Err(StatusResponse::not_found(
+        return Err(Box::new(StatusResponse::not_found(
             format!(
                 "the server does not have a resource type for group \"{}\" version \"{}\"",
                 path.group, path.version
             ),
             None,
-        ));
+        )));
     }
     Ok(HttpResponse::Ok().json(ApiResourceList {
         kind: "APIResourceList",

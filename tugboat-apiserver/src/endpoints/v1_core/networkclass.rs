@@ -37,7 +37,7 @@ pub(super) async fn handle_networkclass_create(
     path: Path<NamespacedPathParams>,
     json: Json<NetworkClass>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<NetworkClass>, StatusResponse> {
+) -> Result<ModifyResponse<NetworkClass>, Box<StatusResponse>> {
     resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
         .await
 }
@@ -63,7 +63,7 @@ pub(super) struct NetworkClassDeletePathParams {
 pub(super) async fn handle_networkclass_delete(
     path: Path<NetworkClassDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<NetworkClass>, StatusResponse> {
+) -> Result<ReadResponse<NetworkClass>, Box<StatusResponse>> {
     let params = path.into_inner();
     resource_handlers::delete_resource::<NetworkClass>(
         &operator,
@@ -91,7 +91,7 @@ pub(super) async fn handle_networkclass_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<NetworkClass>(
         &operator,
         query.into_inner(),
@@ -116,7 +116,7 @@ pub(super) async fn handle_networkclass_list(
 pub(super) async fn handle_networkclass_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<NetworkClass>(&operator, query.into_inner(), None).await
 }
 
@@ -141,7 +141,7 @@ pub(super) struct NetworkClassReadPathParams {
 pub(super) async fn handle_networkclass_read(
     path: Path<NetworkClassReadPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<NetworkClass>, StatusResponse> {
+) -> Result<ReadResponse<NetworkClass>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<NetworkClass>(&operator, Some(path.namespace), path.name)
         .await

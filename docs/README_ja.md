@@ -104,7 +104,19 @@ spec:
     - name: data-disk
 ```
 
-CSI の Block volume を使う場合は、`volumeClaimRef` で同一 namespace の `PersistentVolumeClaim` を参照します。
+CSI volume を使う場合は、`volumeClaimRef` で同一 namespace の `PersistentVolumeClaim` を参照します。
+
+現時点の node-side CSI サポート範囲:
+
+- [x] `Block` volumeMode
+- [x] `Filesystem` volumeMode
+- [x] `NodeStageVolume` / `NodeUnstageVolume` を要求する driver
+- [x] `nodePublishSecretRef` / `nodeStageSecretRef`
+- [x] agent restart 後の publish state からの復旧
+- [ ] `NodeExpandVolume` / volume expansion
+- [ ] 明示的な `fs_type`、`volume_attributes`、controller publish context を必須とする driver
+
+`Filesystem` volume は guest へ 9p share として公開され、mount tag には `volumeClaimRef[].name` が使われます。
 
 ## Roadmap
 
@@ -121,7 +133,7 @@ CSI の Block volume を使う場合は、`volumeClaimRef` で同一 namespace �
     - [x] Ship Addedイベントのreconcile
     - [x] ネットワーク (CNI, NetworkClass / ClusterNetworkClass)
     - [ ] Ship Modified / Deletedイベントのreconcile
-    - [ ] ストレージ (CSI)
+    - [ ] ストレージ (CSI, node-side attach は一部対応)
 - [x] Secret
 - [ ] tugboat-controller-manager
     - [ ] CSIの動的プロビジョニング

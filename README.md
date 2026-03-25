@@ -106,6 +106,22 @@ spec:
   shipClass: lightweight
 ```
 
+### CSI support
+
+CSI-backed volumes are referenced through `volumeClaimRef`.
+
+Current node-side support matrix:
+
+- [x] `Block` volumeMode
+- [x] `Filesystem` volumeMode
+- [x] drivers that require `NodeStageVolume` / `NodeUnstageVolume`
+- [x] `nodePublishSecretRef` / `nodeStageSecretRef`
+- [x] agent restart recovery from persisted publish state
+- [ ] `NodeExpandVolume` / volume expansion
+- [ ] drivers that require explicit `fs_type`, `volume_attributes`, or controller publish context
+
+`Filesystem` volumes are exposed to the guest as a 9p share. The mount tag is the referenced `volumeClaimRef[].name`.
+
 ## Roadmap
 
 - [x] tugboat-runtime
@@ -121,7 +137,7 @@ spec:
     - [x] Reconcile on Ship Added events
     - [x] Networking (CNI, NetworkClass / ClusterNetworkClass)
     - [ ] Reconcile on Ship Modified / Deleted events
-    - [ ] Storage (CSI)
+    - [ ] Storage (CSI, node-side attach partially supported)
 - [x] Secret
 - [ ] tugboat-controller-manager
     - [ ] Dynamic CSI volume provisioning

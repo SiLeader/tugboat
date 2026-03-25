@@ -33,7 +33,7 @@ use utoipa::ToSchema;
 pub(super) async fn handle_namespace_create(
     json: Json<Namespace>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Namespace>, StatusResponse> {
+) -> Result<ModifyResponse<Namespace>, Box<StatusResponse>> {
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 #[derive(Deserialize, ToSchema)]
@@ -55,7 +55,7 @@ pub(super) struct NamespaceDeletePathParams {
 pub(super) async fn handle_namespace_delete(
     path: Path<NamespaceDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Namespace>, StatusResponse> {
+) -> Result<ReadResponse<Namespace>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<Namespace>(&operator, None, path.into_inner().name).await
 }
 #[utoipa::path(
@@ -74,7 +74,7 @@ pub(super) async fn handle_namespace_delete(
 pub(super) async fn handle_namespace_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<Namespace>(&operator, query.into_inner(), None).await
 }
 #[derive(Deserialize, ToSchema)]
@@ -96,6 +96,6 @@ pub(super) struct ReadParams {
 pub(super) async fn handle_namespace_read(
     path: Path<ReadParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Namespace>, StatusResponse> {
+) -> Result<ReadResponse<Namespace>, Box<StatusResponse>> {
     resource_handlers::read_resource::<Namespace>(&operator, None, path.into_inner().name).await
 }
