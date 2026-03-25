@@ -65,7 +65,7 @@ impl ShipReconciler {
             .namespace
             .clone()
             .unwrap_or("default".to_string());
-        let spec_fingerprint = serde_json::to_string(ship_spec)?;
+        let spec_fingerprint = super::spec_fingerprint(ship_spec)?;
 
         if self.runtime_operator.is_present(ship_id).await? {
             let volumes = self.get_related_volumes(&namespace, ship_spec).await?;

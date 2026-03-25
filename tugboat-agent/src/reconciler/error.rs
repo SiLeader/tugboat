@@ -111,10 +111,6 @@ pub(crate) enum ReconcileError {
         volume_mode: String,
     },
     #[error(
-        "Running ship '{0}' received a spec change that requires explicit recreate; live mutation is not supported"
-    )]
-    UnsupportedRunningShipModification(String),
-    #[error(
         "Running ship '{0}' has attached volumes but no persisted CSI published volume state to recover"
     )]
     MissingRecoveredPublishedVolumeState(String),

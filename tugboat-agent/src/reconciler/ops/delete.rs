@@ -1,4 +1,3 @@
-use crate::csi::{PublishedAccessType, access_type_from_volume_mode};
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use tracing::info;
@@ -19,39 +18,11 @@ impl ShipReconciler {
                 "metadata.uid".to_string(),
             ));
         };
-        let namespace = meta.namespace.clone().unwrap_or("default".to_string());
 
         info!("Deleting ship: {}", ship_id);
         let mut published_volumes = self.runtime_operator.delete(ship_id.clone()).await?;
         if published_volumes.is_empty() {
             published_volumes = self.csi.load_published_volumes(ship_id)?;
-        }
-        if published_volumes.is_empty() {
-            let Some(ship_spec) = &ship.spec else {
-                return Err(ReconcileError::FieldMissing(
-                    "v1.Ship".to_string(),
-                    "spec".to_string(),
-                ));
-            };
-            let resolved_volumes = self.get_related_volumes(&namespace, ship_spec).await?;
-            let mut planned = Vec::with_capacity(resolved_volumes.len());
-            for volume in resolved_volumes {
-                let access_type = PublishedAccessType::from(access_type_from_volume_mode(
-                    volume.volume.volume_mode.as_deref(),
-                )?);
-                let requires_staging = self
-                    .csi
-                    .driver_requires_staging(&volume.source.driver)
-                    .await?;
-                planned.push(self.csi.plan_published_volume(
-                    ship_id,
-                    &volume.claim_name,
-                    &volume.source,
-                    access_type,
-                    requires_staging,
-                )?);
-            }
-            published_volumes = planned;
         }
         self.cleanup_published_volumes(&published_volumes).await?;
         self.csi.cleanup_mount_namespace(ship_id)?;

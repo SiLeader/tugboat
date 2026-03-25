@@ -15,3 +15,14 @@
 pub(crate) mod add;
 pub(crate) mod delete;
 pub(crate) mod modify;
+
+/// Compute a stable SHA-256 fingerprint for a serializable spec value.
+/// Uses JSON as the canonical byte representation and returns a lowercase hex string.
+pub(super) fn spec_fingerprint<T: serde::Serialize>(
+    spec: &T,
+) -> Result<String, serde_json::Error> {
+    use sha2::Digest;
+    let json = serde_json::to_string(spec)?;
+    let hash = sha2::Sha256::digest(json.as_bytes());
+    Ok(format!("{hash:x}"))
+}
