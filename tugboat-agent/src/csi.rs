@@ -209,15 +209,15 @@ impl CsiWrapper {
             let operator = self.operator.clone();
             let uds_path = uds_path.to_string();
             let volume_id = published.volume_id.clone();
-            let staging_target_path = staging_target_path.clone();
+            let staging_target_path_for_rpc = staging_target_path.clone();
             let mount_namespace_path = published.mount_namespace_path.clone();
             let node_stage_secrets = secrets.node_stage.clone();
-            run_in_mount_namespace(mount_namespace_path, move || async move {
+            match run_in_mount_namespace(mount_namespace_path, move || async move {
                 operator
                     .stage(
                         &uds_path,
                         volume_id,
-                        staging_target_path,
+                        staging_target_path_for_rpc,
                         access_mode,
                         access_type,
                         node_stage_secrets,
@@ -226,7 +226,14 @@ impl CsiWrapper {
                     )
                     .await
             })
-            .await?;
+            .await
+            {
+                Ok(_) => {}
+                Err(err) => {
+                    let _ = cleanup_directory_path(staging_target_path);
+                    return Err(err);
+                }
+            }
             staged = true;
         }
         if let Err(err) = prepare_target_path(&published.target_path, published.access_type) {
