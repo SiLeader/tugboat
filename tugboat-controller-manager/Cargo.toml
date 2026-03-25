@@ -6,7 +6,15 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
+toml.workspace = true
 
+thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+tugboat-client.workspace = true
+tugboat-csi-operator.workspace = true
+tugboat-resources.workspace = true

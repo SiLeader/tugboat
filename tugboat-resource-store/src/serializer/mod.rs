@@ -19,7 +19,7 @@ use crate::serializer::protobuf::ProtobufSerializer;
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, Namespace, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim,
-    Secret, Ship, ShipClass,
+    Secret, Ship, ShipClass, StorageClass,
 };
 use tugboat_resources::manifests::meta::v1::TypeMeta;
 use tugboat_resources::{Resource, StaticResource};
@@ -73,6 +73,7 @@ protobuf_serializable!(NetworkClass);
 protobuf_serializable!(Node);
 protobuf_serializable!(Ship);
 protobuf_serializable!(ShipClass);
+protobuf_serializable!(StorageClass);
 protobuf_serializable!(Secret);
 protobuf_serializable!(PersistentVolume);
 protobuf_serializable!(PersistentVolumeClaim);

@@ -12,30 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod name;
-mod namespace;
-mod reclaim_policy;
+syntax = "proto3";
 
-pub use name::*;
-pub use namespace::*;
-pub use reclaim_policy::*;
+import "meta/v1/object_meta.proto";
+import "meta/v1/type_meta.proto";
 
-pub trait Validator<T> {
-    fn validate(&self, value: &T) -> bool;
+package tugboat.core.v1;
+
+message StorageClass {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+  StorageClassSpec spec = 3;
 }
 
-pub trait Validatable {
-    fn validate(&self) -> bool;
-}
-
-#[macro_export]
-macro_rules! apply_validators {
-    ($ty:ident, validators $($validator:expr),+ $(,)?) => {
-        impl $crate::validators::Validatable for $ty {
-            fn validate(&self) -> bool {
-                $($crate::validators::Validator::validate(&$validator, self) &&)+
-                true
-            }
-        }
-    };
+message StorageClassSpec {
+  string provisioner = 1;
+  map<string, string> parameters = 2;
+  optional string reclaim_policy = 3;
 }
