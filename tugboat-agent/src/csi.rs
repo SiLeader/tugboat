@@ -641,7 +641,8 @@ mod tests {
     use super::{
         CsiDrivers, CsiWrapper, PublishedAccessType, PublishedVolume, TryConvertFromString,
         access_type_from_volume_mode, cleanup_directory_path, cleanup_target_path,
-        effective_publish_settings, prepare_directory_path, prepare_target_path, select_access_mode,
+        effective_publish_settings, prepare_directory_path, prepare_target_path,
+        select_access_mode,
     };
     use tugboat_csi_operator::{CsiAccessMode, CsiAccessType, TugboatCsiOperator};
     use tugboat_resources::manifests::core::v1::CsiPersistentVolumeSource;
