@@ -152,6 +152,7 @@ impl TugboatCsiOperator {
             .collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn publish(
         &self,
         socket_path: &str,
@@ -184,6 +185,7 @@ impl TugboatCsiOperator {
             .map_err(map_grpc_error)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn stage(
         &self,
         socket_path: &str,

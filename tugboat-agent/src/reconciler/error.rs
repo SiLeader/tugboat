@@ -24,6 +24,19 @@ pub(crate) struct NetworkClassRefForError(ShipNetworkClassReference);
 pub(crate) struct VolumeClaimRefForError(ShipVolumeClaimReference);
 
 #[derive(Debug, Error)]
+#[error(
+    "Secret '{namespace}/{name}' referenced by PersistentVolume '{volume}' field '{field}' has invalid data for key '{key}': {reason}"
+)]
+pub(crate) struct InvalidCsiSecretDataError {
+    pub(crate) volume: String,
+    pub(crate) field: String,
+    pub(crate) namespace: String,
+    pub(crate) name: String,
+    pub(crate) key: String,
+    pub(crate) reason: String,
+}
+
+#[derive(Debug, Error)]
 pub(crate) enum ReconcileError {
     #[error("API error: {0}")]
     Api(#[from] tugboat_client::Error),
@@ -114,17 +127,8 @@ pub(crate) enum ReconcileError {
         namespace: String,
         name: String,
     },
-    #[error(
-        "Secret '{namespace}/{name}' referenced by PersistentVolume '{volume}' field '{field}' has invalid data for key '{key}': {reason}"
-    )]
-    InvalidCsiSecretData {
-        volume: String,
-        field: String,
-        namespace: String,
-        name: String,
-        key: String,
-        reason: String,
-    },
+    #[error(transparent)]
+    InvalidCsiSecretData(Box<InvalidCsiSecretDataError>),
     #[error("CNI error: {0}")]
     Cni(#[from] tugboat_cni_operator::Error),
     #[error("CSI error: {0}")]

@@ -14,7 +14,7 @@
 
 use crate::csi::{ResolvedNodeSecrets, is_supported_access_mode};
 use crate::reconciler::ShipReconciler;
-use crate::reconciler::error::ReconcileError;
+use crate::reconciler::error::{InvalidCsiSecretDataError, ReconcileError};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use std::collections::HashSet;
@@ -331,30 +331,48 @@ fn decode_secret_data(
 ) -> Result<std::collections::HashMap<String, String>, ReconcileError> {
     let mut data = std::collections::HashMap::new();
     for (key, value) in secret.data {
-        let decoded =
-            BASE64_STANDARD
-                .decode(value)
-                .map_err(|err| ReconcileError::InvalidCsiSecretData {
-                    volume: volume_name.to_string(),
-                    field: field.to_string(),
-                    namespace: namespace.to_string(),
-                    name: secret_name.to_string(),
-                    key: key.clone(),
-                    reason: err.to_string(),
-                })?;
-        let decoded =
-            String::from_utf8(decoded).map_err(|err| ReconcileError::InvalidCsiSecretData {
-                volume: volume_name.to_string(),
-                field: field.to_string(),
-                namespace: namespace.to_string(),
-                name: secret_name.to_string(),
-                key: key.clone(),
-                reason: err.to_string(),
-            })?;
+        let decoded = BASE64_STANDARD.decode(value).map_err(|err| {
+            invalid_csi_secret_data(
+                volume_name,
+                field,
+                namespace,
+                secret_name,
+                &key,
+                err.to_string(),
+            )
+        })?;
+        let decoded = String::from_utf8(decoded).map_err(|err| {
+            invalid_csi_secret_data(
+                volume_name,
+                field,
+                namespace,
+                secret_name,
+                &key,
+                err.to_string(),
+            )
+        })?;
         data.insert(key, decoded);
     }
     data.extend(secret.string_data);
     Ok(data)
+}
+
+fn invalid_csi_secret_data(
+    volume_name: &str,
+    field: &str,
+    namespace: &str,
+    secret_name: &str,
+    key: &str,
+    reason: String,
+) -> ReconcileError {
+    ReconcileError::InvalidCsiSecretData(Box::new(InvalidCsiSecretDataError {
+        volume: volume_name.to_string(),
+        field: field.to_string(),
+        namespace: namespace.to_string(),
+        name: secret_name.to_string(),
+        key: key.to_string(),
+        reason,
+    }))
 }
 
 #[cfg(test)]

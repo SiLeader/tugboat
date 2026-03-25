@@ -64,7 +64,8 @@ where
     let watch = operator
         .store
         .watch::<T>(resource_version, namespace)
-        .await.map_err(|e| Box::new(e.into()))?;
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let stream = stream! {
         let mut watch = watch;
         loop {
@@ -126,15 +127,18 @@ where
     fn try_from(value: tugboat_resource_store::watch::WatchEvent) -> Result<Self, Self::Error> {
         match value {
             tugboat_resource_store::watch::WatchEvent::Added(value) => {
-                let value = T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+                let value =
+                    T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
                 Ok(WatchEvent::Added(value))
             }
             tugboat_resource_store::watch::WatchEvent::Modified(value) => {
-                let value = T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+                let value =
+                    T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
                 Ok(WatchEvent::Modifed(value))
             }
             tugboat_resource_store::watch::WatchEvent::Deleted(value) => {
-                let value = T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+                let value =
+                    T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
                 Ok(WatchEvent::Deleted(value))
             }
         }

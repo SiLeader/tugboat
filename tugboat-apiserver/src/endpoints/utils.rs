@@ -52,7 +52,12 @@ macro_rules! create_object {
                 &mut object,
                 Some(object_meta),
             );
-            return if let Some(data) = $operator.store.put_if_not_exists(object).await.map_err(|e| Box::new(e.into()))? {
+            return if let Some(data) = $operator
+                .store
+                .put_if_not_exists(object)
+                .await
+                .map_err(|e| Box::new(e.into()))?
+            {
                 Ok($crate::data::ModifyResponse::Created(data.apply_revision()))
             } else {
                 Err(Box::new(StatusResponse::conflict(
@@ -81,10 +86,18 @@ macro_rules! create_object {
                 );
                 obj
             };
-            if let Some(data) = $operator.store.put_if_not_exists(object).await.map_err(|e| Box::new(e.into()))? {
+            if let Some(data) = $operator
+                .store
+                .put_if_not_exists(object)
+                .await
+                .map_err(|e| Box::new(e.into()))?
+            {
                 return Ok($crate::data::ModifyResponse::Created(data.apply_revision()));
             }
         }
-        Err(Box::new(StatusResponse::conflict("Generate name failed", None)))
+        Err(Box::new(StatusResponse::conflict(
+            "Generate name failed",
+            None,
+        )))
     }};
 }

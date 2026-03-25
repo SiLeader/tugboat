@@ -28,7 +28,9 @@ pub(crate) struct ResourceList {
 }
 
 impl ResourceList {
-    pub(crate) fn from_serializable<T: Serialize>(items: Vec<T>) -> Result<Self, Box<StatusResponse>> {
+    pub(crate) fn from_serializable<T: Serialize>(
+        items: Vec<T>,
+    ) -> Result<Self, Box<StatusResponse>> {
         match items
             .into_iter()
             .map(|v| serde_json::to_value(v))

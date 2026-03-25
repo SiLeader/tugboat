@@ -74,7 +74,11 @@ where
     } else {
         let field_selector = query.to_field_selector()?;
         let label_selector = query.to_label_selector()?;
-        let resources = operator.store.list::<T>(namespace, None).await.map_err(|e| Box::new(e.into()))?;
+        let resources = operator
+            .store
+            .list::<T>(namespace, None)
+            .await
+            .map_err(|e| Box::new(e.into()))?;
         Ok(ResourceList::from_serializable(
             resources
                 .into_iter()
@@ -93,7 +97,11 @@ pub(crate) async fn read_resource<T>(
 where
     T: StaticSerializable + ObjectMetaResource + StaticResource + Serialize,
 {
-    let resource = operator.store.get::<T>(namespace.clone(), &name).await.map_err(|e| Box::new(e.into()))?;
+    let resource = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     match resource {
         Some(data) => Ok(ReadResponse::new(data.apply_revision())),
         None => Err(Box::new(StatusResponse::not_found(
@@ -117,7 +125,11 @@ where
         + PartialEq
         + Clone,
 {
-    let current = operator.store.get::<T>(namespace.clone(), &name).await.map_err(|e| Box::new(e.into()))?;
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let Some(current) = current else {
         return Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
@@ -130,7 +142,12 @@ where
         let mut pending_delete = current.clone();
         pending_delete.mark_for_deletion(Time::now());
         let pending_delete = if current != pending_delete {
-            operator.store.put(pending_delete).await.map_err(|e| Box::new(e.into()))?.apply_revision()
+            operator
+                .store
+                .put(pending_delete)
+                .await
+                .map_err(|e| Box::new(e.into()))?
+                .apply_revision()
         } else {
             pending_delete
         };
@@ -138,7 +155,11 @@ where
         return Ok(ReadResponse::new(pending_delete));
     }
 
-    let resource = operator.store.delete::<T>(namespace.clone(), &name).await.map_err(|e| Box::new(e.into()))?;
+    let resource = operator
+        .store
+        .delete::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     match resource {
         Some(data) => Ok(ReadResponse::new(data.apply_revision())),
         None => Err(Box::new(StatusResponse::not_found(
@@ -169,7 +190,11 @@ where
         + DeserializeOwned
         + PartialEq,
 {
-    let current = operator.store.get::<T>(namespace.clone(), &name).await.map_err(|e| Box::new(e.into()))?;
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let Some(current) = current else {
         return Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
@@ -180,7 +205,12 @@ where
     let replaced = merge_replacement(&current, &replacement, options)?;
 
     let replaced = if current != replaced {
-        operator.store.put(replaced).await.map_err(|e| Box::new(e.into()))?.apply_revision()
+        operator
+            .store
+            .put(replaced)
+            .await
+            .map_err(|e| Box::new(e.into()))?
+            .apply_revision()
     } else {
         replaced
     };
@@ -209,7 +239,11 @@ where
     }
     let patch = serde_json::Value::Object(patch);
 
-    let current = operator.store.get::<T>(namespace.clone(), &name).await.map_err(|e| Box::new(e.into()))?;
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let Some(current) = current else {
         return Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
@@ -223,7 +257,12 @@ where
     let patched = serde_json::from_value::<T>(patched).map_err(|e| Box::new(e.into()))?;
 
     let patched = if current != patched {
-        operator.store.put(patched).await.map_err(|e| Box::new(e.into()))?.apply_revision()
+        operator
+            .store
+            .put(patched)
+            .await
+            .map_err(|e| Box::new(e.into()))?
+            .apply_revision()
     } else {
         patched
     };
@@ -244,7 +283,11 @@ where
         + DeserializeOwned
         + PartialEq,
 {
-    let current = operator.store.get::<T>(namespace.clone(), &name).await.map_err(|e| Box::new(e.into()))?;
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
     let Some(current) = current else {
         return Err(Box::new(StatusResponse::not_found(
             format!("{} not found", T::kind()),
@@ -259,12 +302,21 @@ where
         .and_then(|obj| obj.get("status").cloned())
         .unwrap_or(serde_json::Value::Null);
 
-    let mut replaced = to_object(serde_json::to_value(&current).map_err(|e| Box::new(e.into()))?, "current resource")?;
+    let mut replaced = to_object(
+        serde_json::to_value(&current).map_err(|e| Box::new(e.into()))?,
+        "current resource",
+    )?;
     replaced.insert("status".to_string(), status);
-    let replaced = serde_json::from_value::<T>(serde_json::Value::Object(replaced)).map_err(|e| Box::new(e.into()))?;
+    let replaced = serde_json::from_value::<T>(serde_json::Value::Object(replaced))
+        .map_err(|e| Box::new(e.into()))?;
 
     let replaced = if current != replaced {
-        operator.store.put(replaced).await.map_err(|e| Box::new(e.into()))?.apply_revision()
+        operator
+            .store
+            .put(replaced)
+            .await
+            .map_err(|e| Box::new(e.into()))?
+            .apply_revision()
     } else {
         replaced
     };
@@ -279,8 +331,14 @@ fn merge_replacement<T>(
 where
     T: Serialize + DeserializeOwned,
 {
-    let mut merged = to_object(serde_json::to_value(current).map_err(|e| Box::new(e.into()))?, "current resource")?;
-    let replacement = to_object(serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?, "replacement resource")?;
+    let mut merged = to_object(
+        serde_json::to_value(current).map_err(|e| Box::new(e.into()))?,
+        "current resource",
+    )?;
+    let replacement = to_object(
+        serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?,
+        "replacement resource",
+    )?;
 
     for (key, value) in &replacement {
         if key == "metadata" || key == "apiVersion" || key == "kind" {
@@ -311,9 +369,7 @@ where
     }
     let _ = merged.insert("metadata".to_string(), serde_json::Value::Object(metadata));
 
-    serde_json::from_value::<T>(serde_json::Value::Object(
-        merged,
-    )).map_err(|e| Box::new(e.into()))
+    serde_json::from_value::<T>(serde_json::Value::Object(merged)).map_err(|e| Box::new(e.into()))
 }
 
 fn to_object(
