@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::csi::{PublishedVolume, effective_publish_settings};
+use crate::csi::{
+    PublishedAccessType, PublishedVolume, access_type_from_volume_mode, effective_publish_settings,
+};
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::reconcile::AppendStatus;
@@ -63,6 +65,36 @@ impl ShipReconciler {
             .namespace
             .clone()
             .unwrap_or("default".to_string());
+        let spec_fingerprint = serde_json::to_string(ship_spec)?;
+
+        if self.runtime_operator.is_present(ship_id).await? {
+            let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
+            let mut published_volumes = self.csi.load_published_volumes(ship_id)?;
+            if published_volumes.is_empty() && !volumes.is_empty() {
+                published_volumes = self
+                    .plan_desired_published_volumes(ship_id, &volumes)
+                    .await?;
+            }
+            self.runtime_operator
+                .register_existing(
+                    namespace,
+                    name.clone(),
+                    ship_id.clone(),
+                    spec_fingerprint,
+                    published_volumes,
+                )
+                .await;
+            info!("Recovered existing VM runtime state for ship '{}'", ship_id);
+            return Ok(());
+        }
+
+        let stale_published_volumes = self.csi.load_published_volumes(ship_id)?;
+        if !stale_published_volumes.is_empty() {
+            info!("Cleaning up stale CSI publish state for ship '{}'", ship_id);
+            self.cleanup_published_volumes(&stale_published_volumes)
+                .await?;
+            self.csi.cleanup_mount_namespace(ship_id)?;
+        }
 
         debug!("Getting network classes for ship");
         let network_classes = self
@@ -104,6 +136,7 @@ impl ShipReconciler {
                         ship_class: class,
                         networks: networks.iter().map(|n| n.vm.clone()).collect(),
                         volumes,
+                        spec_fingerprint,
                         published_volumes,
                     })
                     .await
@@ -140,6 +173,7 @@ impl ShipReconciler {
                 &volume.volume.access_modes,
                 volume.source.read_only,
             )?;
+            let secrets = self.resolve_node_secrets(volume).await?;
             match self
                 .csi
                 .publish(
@@ -148,15 +182,12 @@ impl ShipReconciler {
                     &volume.volume,
                     &volume.claim,
                     &volume.source,
+                    &secrets,
                 )
                 .await
             {
                 Ok(published) => {
-                    vm_volumes.push(VmVolumeConfig {
-                        host_path: published.target_path.clone(),
-                        format: "raw".to_string(),
-                        read_only,
-                    });
+                    vm_volumes.push(vm_volume_config(volume, &published, read_only));
                     published_volumes.push(published);
                 }
                 Err(err) => {
@@ -177,6 +208,31 @@ impl ShipReconciler {
             }
         }
         Ok((published_volumes, vm_volumes))
+    }
+
+    async fn plan_desired_published_volumes(
+        &self,
+        ship_id: &str,
+        volumes: &[VolumeInfo],
+    ) -> Result<Vec<PublishedVolume>, ReconcileError> {
+        let mut planned = Vec::with_capacity(volumes.len());
+        for volume in volumes {
+            let access_type = PublishedAccessType::from(access_type_from_volume_mode(
+                volume.volume.volume_mode.as_deref(),
+            )?);
+            let requires_staging = self
+                .csi
+                .driver_requires_staging(&volume.source.driver)
+                .await?;
+            planned.push(self.csi.plan_published_volume(
+                ship_id,
+                &volume.claim_name,
+                &volume.source,
+                access_type,
+                requires_staging,
+            )?);
+        }
+        Ok(planned)
     }
 
     async fn with_cleanup<Fut, F>(
@@ -234,5 +290,22 @@ impl ShipReconciler {
         }
         self.csi.cleanup_mount_namespace(ship_id)?;
         Ok(())
+    }
+}
+
+fn vm_volume_config(
+    volume: &VolumeInfo,
+    published: &PublishedVolume,
+    read_only: bool,
+) -> VmVolumeConfig {
+    match published.access_type {
+        PublishedAccessType::Block => {
+            VmVolumeConfig::block(published.target_path.clone(), "raw", read_only)
+        }
+        PublishedAccessType::Filesystem => VmVolumeConfig::filesystem(
+            published.target_path.clone(),
+            volume.claim_name.clone(),
+            read_only,
+        ),
     }
 }

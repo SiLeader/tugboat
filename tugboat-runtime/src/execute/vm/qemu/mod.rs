@@ -25,7 +25,7 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, info};
 use tugboat_vm_runtime_interface::run::{
-    VmCpuConfig, VmNetworkConfig, VmRunRequest, VmVolumeConfig,
+    VmCpuConfig, VmNetworkConfig, VmRunRequest, VmVolumeConfig, VmVolumeKind,
 };
 
 #[derive(Debug, Clone)]
@@ -129,17 +129,33 @@ impl QemuArgs<Vec<VmNetworkConfig>> for Command {
 
 impl QemuArgs<Vec<VmVolumeConfig>> for Command {
     fn qemu_args(&mut self, value: &Vec<VmVolumeConfig>) -> &mut Self {
+        let mut disk_index = 1;
         for (idx, vol) in value.iter().enumerate() {
-            // index=0 is used for BootDisk
-            let ro = if vol.read_only { "on" } else { "off" };
-            let opts = format!(
-                "if=virtio,format={},index={},media=disk,readonly={},file={}",
-                vol.format,
-                idx + 1,
-                ro,
-                vol.host_path
-            );
-            self.arg("-drive").arg(opts);
+            match vol.kind {
+                VmVolumeKind::Block => {
+                    let ro = if vol.read_only { "on" } else { "off" };
+                    let opts = format!(
+                        "if=virtio,format={},index={},media=disk,readonly={},file={}",
+                        vol.format, disk_index, ro, vol.host_path
+                    );
+                    self.arg("-drive").arg(opts);
+                    disk_index += 1;
+                }
+                VmVolumeKind::Filesystem => {
+                    let fsdev_id = format!("fs{}", idx + 1);
+                    let mut fsdev_opts = format!(
+                        "local,id={fsdev_id},path={},security_model=none",
+                        vol.host_path
+                    );
+                    if vol.read_only {
+                        fsdev_opts.push_str(",readonly=on");
+                    }
+                    let device_opts =
+                        format!("virtio-9p-pci,fsdev={fsdev_id},mount_tag={}", vol.mount_tag);
+                    self.arg("-fsdev").arg(fsdev_opts);
+                    self.arg("-device").arg(device_opts);
+                }
+            }
         }
         self
     }
@@ -197,11 +213,11 @@ mod tests {
     #[test]
     fn block_volume_path_is_forwarded_to_drive_args() {
         let mut command = Command::new("qemu-system-x86_64");
-        command.qemu_args(&vec![VmVolumeConfig {
-            host_path: "/var/lib/tugboat-agent/csi/ship-uid/data-disk.block".to_string(),
-            format: "raw".to_string(),
-            read_only: true,
-        }]);
+        command.qemu_args(&vec![VmVolumeConfig::block(
+            "/var/lib/tugboat-agent/csi/ship-uid/data-disk.block",
+            "raw",
+            true,
+        )]);
 
         let args = command
             .get_args()
@@ -213,6 +229,31 @@ mod tests {
             vec![
                 "-drive".to_string(),
                 "if=virtio,format=raw,index=1,media=disk,readonly=on,file=/var/lib/tugboat-agent/csi/ship-uid/data-disk.block".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn filesystem_volume_path_is_forwarded_to_9p_args() {
+        let mut command = Command::new("qemu-system-x86_64");
+        command.qemu_args(&vec![VmVolumeConfig::filesystem(
+            "/var/lib/tugboat-agent/csi/ship-uid/data-disk.fs",
+            "data-disk",
+            false,
+        )]);
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "-fsdev".to_string(),
+                "local,id=fs1,path=/var/lib/tugboat-agent/csi/ship-uid/data-disk.fs,security_model=none".to_string(),
+                "-device".to_string(),
+                "virtio-9p-pci,fsdev=fs1,mount_tag=data-disk".to_string(),
             ]
         );
     }

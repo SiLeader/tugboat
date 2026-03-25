@@ -41,8 +41,28 @@ impl ShipReconciler {
             return self.reconcile_added(ship).await;
         }
 
-        // TODO modified
-        warn!("Modify Ship is not handled yet. (Ship: {ship:?})");
-        Ok(())
+        let Some(ship_spec) = &ship.spec else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+        let spec_fingerprint = serde_json::to_string(ship_spec)?;
+        if self
+            .runtime_operator
+            .matches_spec(ship_id, &spec_fingerprint)
+            .await
+        {
+            info!("Ship modified but desired spec is unchanged: {}", ship_id);
+            return Ok(());
+        }
+
+        warn!(
+            "Ship '{}' changed while running, but live mutation is not supported yet",
+            ship_id
+        );
+        Err(ReconcileError::UnsupportedRunningShipModification(
+            ship_id.clone(),
+        ))
     }
 }

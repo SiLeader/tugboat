@@ -1,3 +1,4 @@
+use crate::csi::{PublishedAccessType, access_type_from_volume_mode};
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use tracing::info;
@@ -33,13 +34,24 @@ impl ShipReconciler {
                 ));
             };
             let resolved_volumes = self.get_related_volumes(&namespace, ship_spec).await?;
-            published_volumes = resolved_volumes
-                .into_iter()
-                .map(|volume| {
-                    self.csi
-                        .plan_published_volume(ship_id, &volume.claim_name, &volume.source)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut planned = Vec::with_capacity(resolved_volumes.len());
+            for volume in resolved_volumes {
+                let access_type = PublishedAccessType::from(access_type_from_volume_mode(
+                    volume.volume.volume_mode.as_deref(),
+                )?);
+                let requires_staging = self
+                    .csi
+                    .driver_requires_staging(&volume.source.driver)
+                    .await?;
+                planned.push(self.csi.plan_published_volume(
+                    ship_id,
+                    &volume.claim_name,
+                    &volume.source,
+                    access_type,
+                    requires_staging,
+                )?);
+            }
+            published_volumes = planned;
         }
         self.cleanup_published_volumes(&published_volumes).await?;
         self.csi.cleanup_mount_namespace(ship_id)?;

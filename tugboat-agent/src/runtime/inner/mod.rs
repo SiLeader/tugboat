@@ -20,6 +20,7 @@ pub(crate) struct Runtime {
     namespace: String,
     ship_name: String,
     id: String,
+    spec_fingerprint: String,
     published_volumes: Vec<PublishedVolume>,
 }
 
@@ -28,17 +29,23 @@ impl Runtime {
         namespace: String,
         ship_name: String,
         id: String,
+        spec_fingerprint: String,
         published_volumes: Vec<PublishedVolume>,
     ) -> Self {
         Self {
             namespace,
             ship_name,
             id,
+            spec_fingerprint,
             published_volumes,
         }
     }
 
     pub(super) fn into_published_volumes(self) -> Vec<PublishedVolume> {
         self.published_volumes
+    }
+
+    pub(super) fn matches_spec(&self, spec_fingerprint: &str) -> bool {
+        self.spec_fingerprint == spec_fingerprint
     }
 }

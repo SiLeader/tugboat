@@ -31,6 +31,7 @@ pub(crate) struct RuntimeCreateRequest<'a> {
     pub ship_class: ShipClass,
     pub networks: Vec<VmNetworkConfig>,
     pub volumes: Vec<VmVolumeConfig>,
+    pub spec_fingerprint: String,
     pub published_volumes: Vec<PublishedVolume>,
 }
 
@@ -52,6 +53,7 @@ impl RuntimeOperator {
             ship_class,
             networks,
             volumes,
+            spec_fingerprint,
             published_volumes,
         } = request;
         let Some(ship_class_spec) = ship_class.spec else {
@@ -98,7 +100,13 @@ impl RuntimeOperator {
         let mut children = self.children.write().await;
         children.insert(
             ship_id.clone(),
-            Runtime::new(namespace, ship_name, ship_id, published_volumes),
+            Runtime::new(
+                namespace,
+                ship_name,
+                ship_id,
+                spec_fingerprint,
+                published_volumes,
+            ),
         );
         Ok(pid)
     }

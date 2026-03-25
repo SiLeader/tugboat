@@ -33,6 +33,8 @@ pub(crate) enum ReconcileError {
     ShipClassNotFound(String),
     #[error("Runtime error: {0}")]
     Runtime(#[from] RuntimeError),
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("Invalid NetworkClassRef: {0}")]
     InvalidNetworkClassRef(NetworkClassRefForError),
     #[error("NetworkClass '{0}' not found")]
@@ -95,8 +97,34 @@ pub(crate) enum ReconcileError {
         volume: String,
         volume_mode: String,
     },
+    #[error(
+        "Running ship '{0}' received a spec change that requires explicit recreate; live mutation is not supported"
+    )]
+    UnsupportedRunningShipModification(String),
     #[error("PersistentVolume '{volume}' uses unsupported CSI feature '{feature}'")]
     UnsupportedPersistentVolumeCsiFeature { volume: String, feature: String },
+    #[error("PersistentVolume '{volume}' has an invalid CSI secret reference in field '{field}'")]
+    InvalidCsiSecretReference { volume: String, field: String },
+    #[error(
+        "Secret '{namespace}/{name}' referenced by PersistentVolume '{volume}' field '{field}' was not found"
+    )]
+    CsiSecretNotFound {
+        volume: String,
+        field: String,
+        namespace: String,
+        name: String,
+    },
+    #[error(
+        "Secret '{namespace}/{name}' referenced by PersistentVolume '{volume}' field '{field}' has invalid data for key '{key}': {reason}"
+    )]
+    InvalidCsiSecretData {
+        volume: String,
+        field: String,
+        namespace: String,
+        name: String,
+        key: String,
+        reason: String,
+    },
     #[error("CNI error: {0}")]
     Cni(#[from] tugboat_cni_operator::Error),
     #[error("CSI error: {0}")]
