@@ -1,0 +1,37 @@
+CRD Support
+===========
+
+Goal
+Enable runtime-defined custom resources instead of limiting Tugboat to the current compile-time protobuf resource set.
+
+Current evidence
+- README.md advertises planned CRD support.
+- tugboat-resources/build.rs compiles a fixed list of protobuf files.
+- tugboat-resource-store/src/serializer/mod.rs hard-codes every serializable resource type.
+- tugboat-apiserver/src/endpoints/resource_registry.rs and discovery.rs build discovery output from a static resource list.
+- The current generic handlers depend on StaticSerializable and StaticResource, which only work for compiled-in types.
+
+What to implement
+- Add a CustomResourceDefinition-style resource, likely in an apiextensions API group.
+- Persist CRD metadata, versions, schema, scope, and naming information in the resource store.
+- Introduce an unstructured or schema-driven storage path for custom resources so new kinds do not require a rebuild.
+- Replace the static API registry and discovery output with a dynamic registry that includes installed CRDs.
+- Support CRUD, list, watch, and delete behavior for custom resources with correct namespace rules.
+- Decide how validation and defaulting work for CRD instances and how much schema support is required in the first slice.
+- Decide whether OpenAPI publication for CRDs is in scope now or deferred.
+
+Implementation surfaces
+- tugboat-resources/proto/
+- tugboat-resources/build.rs
+- tugboat-resource-store/src/serializer/
+- tugboat-apiserver/src/endpoints/resource_registry.rs
+- tugboat-apiserver/src/endpoints/discovery.rs
+- tugboat-apiserver/src/endpoints/resource_handlers.rs
+- tugboat-apiserver/src/operator.rs
+
+Acceptance criteria
+- A user can create a CRD without rebuilding Tugboat.
+- Discovery endpoints list the new custom resource kind and version.
+- Custom resource instances can be created, read, listed, watched, updated, and deleted.
+- Scope rules are enforced for both namespaced and cluster-scoped CRDs.
+- Validation errors are surfaced clearly when a custom resource instance violates its schema.

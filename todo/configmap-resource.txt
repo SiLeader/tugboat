@@ -1,0 +1,33 @@
+ConfigMap Resource
+==================
+
+Goal
+Add a Kubernetes-style ConfigMap resource to Tugboat core/v1 so namespaced configuration data can be stored, listed, watched, and read through the API server.
+
+Current evidence
+- README.md lists ConfigMap as unfinished.
+- There is no ConfigMap protobuf in tugboat-resources/proto/core/v1/.
+- tugboat-resources/build.rs does not compile a ConfigMap definition.
+- tugboat-resources/src/manifests/mod.rs, tugboat-resource-store/src/serializer/mod.rs, and tugboat-apiserver/src/endpoints/v1_core/ contain no ConfigMap wiring.
+
+What to implement
+- Define a namespaced ConfigMap resource in tugboat-resources/proto/core/v1/.
+- Register the generated type in build.rs and manifests/mod.rs with the correct metadata and validators.
+- Add serializer support in tugboat-resource-store so the new type can be stored and watched.
+- Add API server CRUD, list, list-all, read, replace, discovery, and OpenAPI registration.
+- Decide whether the first slice supports only string data or both data and binaryData like Kubernetes.
+- Decide whether Ship integration is part of the first implementation or a follow-up task; do not leave the scope ambiguous.
+
+Implementation surfaces
+- tugboat-resources/proto/core/v1/
+- tugboat-resources/build.rs
+- tugboat-resources/src/manifests/mod.rs
+- tugboat-resource-store/src/serializer/mod.rs
+- tugboat-apiserver/src/endpoints/v1_core/
+- tugboat-apiserver/src/endpoints/resource_registry.rs
+
+Acceptance criteria
+- kubectl-compatible discovery shows ConfigMap under core/v1.
+- CRUD, list, watch, and replace operations work for namespaced ConfigMaps.
+- Serializer and watch paths can round-trip stored ConfigMaps.
+- Tests cover validation, list-all behavior, and at least one watch flow.

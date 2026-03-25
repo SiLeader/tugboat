@@ -1,0 +1,40 @@
+Agent CSI Feature Completion
+============================
+
+Goal
+Finish the remaining agent-side CSI functionality so storage support is not limited to the current narrow compatibility set.
+
+Current evidence
+- README.md still marks "Storage (CSI)" as unfinished.
+- tugboat-agent/src/reconciler/volume.rs only accepts Block volume mode and rejects other modes.
+- tugboat-agent/src/csi.rs only converts "Block" into a CSI access type.
+- tugboat-agent/src/csi.rs rejects node drivers that require STAGE_UNSTAGE_VOLUME.
+- tugboat-agent/src/reconciler/volume.rs rejects CSI secret-backed fields such as node_publish_secret_ref and node_stage_secret_ref.
+
+Important scope note
+- Dynamic PVC provisioning and PV cleanup already exist in tugboat-controller-manager.
+- This TODO is about completing node-side attach, publish, and recovery behavior in tugboat-agent.
+
+What to implement
+- Add Filesystem volumeMode support end to end, including target-path preparation and runtime volume wiring.
+- Support drivers that require NodeStageVolume and NodeUnstageVolume instead of failing early.
+- Pass CSI secret references from PersistentVolume sources into the node publish and stage calls where required.
+- Decide whether volume expansion is in scope now; if yes, add node-side resize handling and status reporting.
+- Ensure the agent can recover published volume state after restart without leaking mounts or leaving stale state files.
+- Document the supported CSI capability matrix so users can tell which drivers and access modes are expected to work.
+
+Implementation surfaces
+- tugboat-agent/src/reconciler/volume.rs
+- tugboat-agent/src/csi.rs
+- tugboat-agent/src/reconciler/ops/add.rs
+- tugboat-agent/src/reconciler/ops/modify.rs
+- tugboat-agent/src/reconciler/ops/delete.rs
+- tugboat-csi-operator/src/ (add NodeStageVolumeRequest/NodeUnstageVolumeRequest gRPC wrappers and enable the Filesystem volume mode enum variant currently commented out)
+- tugboat-vm-runtime-interface/src/
+
+Acceptance criteria
+- Both Block and Filesystem volumes can be attached when the CSI driver supports them.
+- Drivers with stage and unstage requirements no longer fail with an unsupported capability error.
+- Secret-backed CSI publish and stage flows work for supported drivers.
+- Agent restart recovery can rediscover and clean up published volumes without orphaning state.
+- Integration tests exist for at least one happy path and one cleanup path.
