@@ -114,6 +114,14 @@ pub(crate) enum ReconcileError {
         "Running ship '{0}' received a spec change that requires explicit recreate; live mutation is not supported"
     )]
     UnsupportedRunningShipModification(String),
+    #[error(
+        "Running ship '{0}' has attached volumes but no persisted CSI published volume state to recover"
+    )]
+    MissingRecoveredPublishedVolumeState(String),
+    #[error(
+        "Running ship '{0}' has persisted CSI published volume state that does not match the desired volume plan"
+    )]
+    RecoveredPublishedVolumeStateMismatch(String),
     #[error("PersistentVolume '{volume}' uses unsupported CSI feature '{feature}'")]
     UnsupportedPersistentVolumeCsiFeature { volume: String, feature: String },
     #[error("PersistentVolume '{volume}' has an invalid CSI secret reference in field '{field}'")]
@@ -129,6 +137,8 @@ pub(crate) enum ReconcileError {
     },
     #[error(transparent)]
     InvalidCsiSecretData(Box<InvalidCsiSecretDataError>),
+    #[error("Failed to clean up one or more published CSI volumes: {0}")]
+    PublishedVolumeCleanupFailed(String),
     #[error("CNI error: {0}")]
     Cni(#[from] tugboat_cni_operator::Error),
     #[error("CSI error: {0}")]

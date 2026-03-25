@@ -203,6 +203,7 @@ impl CsiWrapper {
             PublishedAccessType::from(access_type),
             requires_staging,
         )?;
+        let mut staged = false;
         if let Some(staging_target_path) = &published.staging_target_path {
             prepare_directory_path(staging_target_path)?;
             let operator = self.operator.clone();
@@ -226,8 +227,18 @@ impl CsiWrapper {
                     .await
             })
             .await?;
+            staged = true;
         }
-        prepare_target_path(&published.target_path, published.access_type)?;
+        if let Err(err) = prepare_target_path(&published.target_path, published.access_type) {
+            if staged {
+                self.rollback_published_volume(
+                    &published,
+                    "staged volume after target-path preparation error",
+                )
+                .await;
+            }
+            return Err(err);
+        }
         let operator = self.operator.clone();
         let uds_path = uds_path.to_string();
         let volume_id = published.volume_id.clone();
@@ -253,19 +264,19 @@ impl CsiWrapper {
         })
         .await
         {
-            if let Err(cleanup_err) = self.unpublish(&published).await {
-                tracing::error!(
-                    "Failed to roll back staged/published volume after publish error: {cleanup_err}"
-                );
-            }
+            self.rollback_published_volume(
+                &published,
+                "staged/published volume after publish error",
+            )
+            .await;
             return Err(err);
         }
         if let Err(err) = self.persist_published_volume(&published) {
-            if let Err(cleanup_err) = self.unpublish(&published).await {
-                tracing::error!(
-                    "Failed to roll back published volume after state persistence error: {cleanup_err}"
-                );
-            }
+            self.rollback_published_volume(
+                &published,
+                "published volume after state persistence error",
+            )
+            .await;
             return Err(err);
         }
         Ok(published)
@@ -324,6 +335,12 @@ impl CsiWrapper {
         };
         let node_capabilities = self.operator.node_capabilities(uds_path).await?;
         Ok(node_capabilities.contains(&NodeCapability::StageUnstageVolume))
+    }
+
+    async fn rollback_published_volume(&self, published: &PublishedVolume, context: &str) {
+        if let Err(cleanup_err) = self.unpublish(published).await {
+            tracing::error!("Failed to roll back {context}: {cleanup_err}");
+        }
     }
 
     fn target_path(
@@ -794,6 +811,28 @@ mod tests {
         assert!(std::path::Path::new(&target_path).is_dir());
 
         cleanup_target_path(&target_path, PublishedAccessType::Filesystem)
+            .expect("target path cleanup should succeed");
+        assert!(!std::path::Path::new(&target_path).exists());
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn can_prepare_and_cleanup_block_target_path() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tugboat-agent-csi-block-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should be monotonic")
+                .as_nanos()
+        ));
+        let target_path = temp_dir.join("ship-uid").join("data-volume.block");
+        let target_path = target_path.display().to_string();
+
+        prepare_target_path(&target_path, PublishedAccessType::Block)
+            .expect("target path preparation should succeed");
+        assert!(std::path::Path::new(&target_path).is_file());
+
+        cleanup_target_path(&target_path, PublishedAccessType::Block)
             .expect("target path cleanup should succeed");
         assert!(!std::path::Path::new(&target_path).exists());
         let _ = std::fs::remove_dir_all(temp_dir);

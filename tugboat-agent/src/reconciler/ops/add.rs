@@ -69,12 +69,14 @@ impl ShipReconciler {
 
         if self.runtime_operator.is_present(ship_id).await? {
             let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
-            let mut published_volumes = self.csi.load_published_volumes(ship_id)?;
-            if published_volumes.is_empty() && !volumes.is_empty() {
-                published_volumes = self
-                    .plan_desired_published_volumes(ship_id, &volumes)
-                    .await?;
-            }
+            let planned_published_volumes = self
+                .plan_desired_published_volumes(ship_id, &volumes)
+                .await?;
+            let published_volumes = validate_recovered_published_volumes(
+                ship_id,
+                self.csi.load_published_volumes(ship_id)?,
+                &planned_published_volumes,
+            )?;
             self.runtime_operator
                 .register_existing(
                     namespace,
@@ -265,8 +267,20 @@ impl ShipReconciler {
         &self,
         published_volumes: &[PublishedVolume],
     ) -> Result<(), ReconcileError> {
+        let mut errors = Vec::new();
         for volume in published_volumes.iter().rev() {
-            self.csi.unpublish(volume).await?;
+            if let Err(err) = self.csi.unpublish(volume).await {
+                error!(
+                    "Failed to unpublish CSI volume '{}' for ship mount namespace '{}': {err}",
+                    volume.target_path, volume.mount_namespace_path
+                );
+                errors.push(format!("{}: {err}", volume.target_path));
+            }
+        }
+        if !errors.is_empty() {
+            return Err(ReconcileError::PublishedVolumeCleanupFailed(
+                errors.join("; "),
+            ));
         }
         Ok(())
     }
@@ -307,5 +321,98 @@ fn vm_volume_config(
             volume.claim_name.clone(),
             read_only,
         ),
+    }
+}
+
+fn validate_recovered_published_volumes(
+    ship_id: &str,
+    mut persisted: Vec<PublishedVolume>,
+    planned: &[PublishedVolume],
+) -> Result<Vec<PublishedVolume>, ReconcileError> {
+    if persisted.is_empty() {
+        if planned.is_empty() {
+            return Ok(persisted);
+        }
+        return Err(ReconcileError::MissingRecoveredPublishedVolumeState(
+            ship_id.to_string(),
+        ));
+    }
+
+    persisted.sort_by(|left, right| left.target_path.cmp(&right.target_path));
+    let mut planned_sorted = planned.to_vec();
+    planned_sorted.sort_by(|left, right| left.target_path.cmp(&right.target_path));
+
+    if persisted != planned_sorted {
+        return Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(
+            ship_id.to_string(),
+        ));
+    }
+
+    Ok(persisted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_recovered_published_volumes;
+    use crate::csi::{PublishedAccessType, PublishedVolume};
+    use crate::reconciler::error::ReconcileError;
+
+    fn published_volume(target_path: &str) -> PublishedVolume {
+        PublishedVolume {
+            driver: "example.csi".to_string(),
+            volume_id: format!("volume-{target_path}"),
+            target_path: target_path.to_string(),
+            access_type: PublishedAccessType::Filesystem,
+            mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+            staging_target_path: Some(format!("{target_path}.staging")),
+        }
+    }
+
+    #[test]
+    fn recovered_volumes_require_persisted_state_when_volumes_exist() {
+        let planned = vec![published_volume(
+            "/var/lib/tugboat-agent/csi/ship-uid/data.fs",
+        )];
+
+        let err = validate_recovered_published_volumes("ship-uid", Vec::new(), &planned)
+            .expect_err("missing persisted state should fail recovery");
+
+        assert!(matches!(
+            err,
+            ReconcileError::MissingRecoveredPublishedVolumeState(ship)
+            if ship == "ship-uid"
+        ));
+    }
+
+    #[test]
+    fn recovered_volumes_reject_state_that_differs_from_plan() {
+        let persisted = vec![published_volume(
+            "/var/lib/tugboat-agent/csi/ship-uid/data.fs",
+        )];
+        let planned = vec![published_volume(
+            "/var/lib/tugboat-agent/csi/ship-uid/other.fs",
+        )];
+
+        let err = validate_recovered_published_volumes("ship-uid", persisted, &planned)
+            .expect_err("mismatched persisted state should fail recovery");
+
+        assert!(matches!(
+            err,
+            ReconcileError::RecoveredPublishedVolumeStateMismatch(ship)
+            if ship == "ship-uid"
+        ));
+    }
+
+    #[test]
+    fn recovered_volumes_accept_matching_persisted_state() {
+        let persisted = vec![published_volume(
+            "/var/lib/tugboat-agent/csi/ship-uid/data.fs",
+        )];
+
+        let recovered =
+            validate_recovered_published_volumes("ship-uid", persisted.clone(), &persisted)
+                .expect("matching persisted state should be accepted");
+
+        assert_eq!(recovered, persisted);
     }
 }
