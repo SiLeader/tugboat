@@ -1,0 +1,38 @@
+ReplicaSet Controller
+=====================
+
+Goal
+Implement a ReplicaSet-style workload controller that keeps the requested number of Ship replicas running from a shared template.
+
+Current evidence
+- README.md lists ReplicaSet as unfinished under tugboat-controller-manager.
+- tugboat-controller-manager currently starts only storage-related controllers.
+- No ReplicaSet resource exists in tugboat-resources/proto/.
+
+Why this matters
+- The current platform can run individual Ships but cannot automatically maintain replica count when a Ship disappears or when the desired count changes.
+- ReplicaSet is also the natural building block for any higher-level rollout feature.
+
+What to implement
+- Define a ReplicaSet resource with selector, template, replicas, and status fields.
+- Add API server and resource-store support so ReplicaSets can be created, read, listed, watched, and updated.
+- Implement a controller-manager reconciler that creates, adopts, scales, and deletes child Ships to match desired state.
+- Add owner references, labels, or another stable ownership mechanism so child Ships can be tracked and garbage-collected safely.
+- Reconcile status fields such as desired replicas, ready replicas, available replicas, and observed generation.
+- Handle scale-down ordering and orphan adoption explicitly instead of relying on best effort behavior.
+
+Implementation surfaces
+- tugboat-resources/proto/
+- tugboat-resources/build.rs
+- tugboat-resources/src/manifests/mod.rs
+- tugboat-resource-store/src/serializer/mod.rs
+- tugboat-apiserver/src/endpoints/
+- tugboat-apiserver/src/endpoints/resource_registry.rs
+- tugboat-controller-manager/src/
+
+Acceptance criteria
+- Creating a ReplicaSet results in the correct number of Ships.
+- Deleting a managed Ship causes the controller to replace it.
+- Updating the replica count scales up or down deterministically.
+- Status reflects actual child Ship counts.
+- Tests cover adoption rules, scale changes, and Ship recreation after deletion.

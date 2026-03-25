@@ -1,0 +1,38 @@
+Ship Modified Reconciliation
+============================
+
+Goal
+Implement real handling for Ship Modified watch events in the agent.
+
+Current evidence
+- README.md still lists "Reconcile on Ship Modified / Deleted events" as unfinished.
+- tugboat-agent/src/reconciler/reconcile.rs already dispatches WatchEvent::Modified.
+- tugboat-agent/src/reconciler/ops/modify.rs checks whether a runtime exists for the Ship; if the runtime is absent it delegates to reconcile_added. If the runtime is present, it logs a warning and returns Ok(()) without reconciling any field changes.
+
+Why this matters
+- Added and Deleted flows exist, but updates to an existing Ship do not converge.
+- A running VM cannot safely be managed in production if image, class, network, or volume changes are silently ignored.
+
+What to implement
+- Define which Ship fields are mutable in place, which require restart or recreate, and which must be rejected.
+- Compare the desired Ship against the current runtime state instead of treating every update as a blind restart.
+- Apply supported network and volume changes through the existing CNI and CSI wrappers.
+- Preserve the current fallback where a modified but missing runtime is treated like Added.
+- Update Ship status with explicit conditions for accepted updates, rejected updates, restart-required updates, and failures.
+- Make the handler idempotent so repeated Modified events with no meaningful delta are true no-ops.
+
+Implementation surfaces
+- tugboat-agent/src/reconciler/ops/modify.rs
+- tugboat-agent/src/reconciler/ops/add.rs
+- tugboat-agent/src/reconciler/network.rs
+- tugboat-agent/src/reconciler/volume.rs
+- tugboat-agent/src/runtime/
+- tugboat-agent/src/cni.rs
+- tugboat-agent/src/csi.rs
+
+Acceptance criteria
+- Modified events trigger deterministic reconciliation instead of a warning-only path.
+- Unsupported mutations fail explicitly and leave a visible status condition.
+- No-op updates do not recreate or restart the VM.
+- Recovery still works when the runtime record is missing and the agent must rebuild state from the Ship object.
+- Tests cover mutable updates, rejected updates, cleanup on failure, and runtime-missing fallback.

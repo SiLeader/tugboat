@@ -1,0 +1,38 @@
+Live Migration
+==============
+
+Goal
+Allow a running Ship to move between nodes with minimal downtime.
+
+Current evidence
+- README.md lists live migration as unfinished.
+- tugboat-runtime/src/lib.rs exposes only Run, Status, Create, Start, and Stop subcommands.
+- tugboat-runtime/src/cmd/status/mod.rs understands QEMU migration-related run states, but no migrate command or migration workflow exists.
+- There is no migration orchestration code in tugboat-agent, tugboat-client, or tugboat-scheduler.
+
+What to implement
+- Decide the public API surface: Ship subresource, dedicated Migration resource, or another explicit workflow object.
+- Extend tugboat-runtime and tugboat-vm-runtime-interface with migrate source and target operations.
+- Add agent-side coordination between source and target nodes, including preflight checks for CPU compatibility, storage access, and network continuity.
+- Define how the target node is selected and reserved; reuse the scheduler when it makes sense instead of embedding ad hoc placement logic in the agent.
+- Track migration progress and errors through Ship status or a dedicated migration status object.
+- Define rollback and cleanup behavior when migration fails mid-flight.
+- Clarify the storage model for migration, especially whether shared volumes are required or whether block-copy migration is expected.
+
+Implementation surfaces
+- tugboat-runtime/src/
+- tugboat-vm-runtime-interface/src/
+- tugboat-agent/src/
+- tugboat-scheduler/src/
+- tugboat-client/src/
+- tugboat-resources/proto/
+- tugboat-resource-store/src/serializer/mod.rs
+- tugboat-apiserver/src/endpoints/
+- tugboat-apiserver/src/endpoints/resource_registry.rs
+
+Acceptance criteria
+- A migration request can be created through the public API.
+- The source and target agents coordinate a full handoff instead of leaving two runtimes active.
+- Success and failure states are visible through status updates.
+- A failed migration leaves the Ship in a recoverable and explicitly reported state.
+- Tests cover at least one successful migration flow and one rollback or failure path.
