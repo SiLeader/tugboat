@@ -69,8 +69,7 @@ struct ListQuery {
 }
 
 impl ListQuery {
-    #[allow(clippy::result_large_err)]
-    fn to_field_selector(&self) -> Result<Option<Vec<Selector>>, StatusResponse> {
+    fn to_field_selector(&self) -> Result<Option<Vec<Selector>>, Box<StatusResponse>> {
         if let Some(field_selector) = &self.field_selector {
             Selector::try_parse(field_selector).map(Some)
         } else {
@@ -78,8 +77,7 @@ impl ListQuery {
         }
     }
 
-    #[allow(clippy::result_large_err)]
-    fn to_label_selector(&self) -> Result<Option<Vec<Selector>>, StatusResponse> {
+    fn to_label_selector(&self) -> Result<Option<Vec<Selector>>, Box<StatusResponse>> {
         if let Some(label_selector) = &self.label_selector {
             Selector::try_parse(label_selector).map(Some)
         } else {

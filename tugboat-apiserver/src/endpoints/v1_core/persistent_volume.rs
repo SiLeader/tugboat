@@ -34,7 +34,7 @@ use utoipa::ToSchema;
 pub(super) async fn handle_persistent_volume_create(
     json: Json<PersistentVolume>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<PersistentVolume>, StatusResponse> {
+) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
@@ -57,7 +57,7 @@ pub(super) struct PersistentVolumeDeletePathParams {
 pub(super) async fn handle_persistent_volume_delete(
     path: Path<PersistentVolumeDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<PersistentVolume>, StatusResponse> {
+) -> Result<ReadResponse<PersistentVolume>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<PersistentVolume>(&operator, None, path.into_inner().name)
         .await
 }
@@ -78,7 +78,7 @@ pub(super) async fn handle_persistent_volume_delete(
 pub(super) async fn handle_persistent_volume_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<PersistentVolume>(&operator, query.into_inner(), None).await
 }
 
@@ -101,7 +101,7 @@ pub(super) struct PersistentVolumeReadPathParams {
 pub(super) async fn handle_persistent_volume_read(
     path: Path<PersistentVolumeReadPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<PersistentVolume>, StatusResponse> {
+) -> Result<ReadResponse<PersistentVolume>, Box<StatusResponse>> {
     resource_handlers::read_resource::<PersistentVolume>(&operator, None, path.into_inner().name)
         .await
 }
@@ -127,7 +127,7 @@ pub(super) async fn handle_persistent_volume_replace(
     path: Path<PersistentVolumeReplacePathParams>,
     replacement: Json<PersistentVolume>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<PersistentVolume>, StatusResponse> {
+) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {
     resource_handlers::replace_resource::<PersistentVolume>(
         &operator,
         None,
@@ -162,7 +162,7 @@ pub(super) async fn handle_persistent_volume_status_patch(
     path: Path<PersistentVolumePatchPathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<PersistentVolume>, StatusResponse> {
+) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {
     resource_handlers::status_patch_resource::<PersistentVolume>(
         &operator,
         None,
@@ -193,7 +193,7 @@ pub(super) async fn handle_persistent_volume_status_replace(
     path: Path<PersistentVolumeStatusReplacePathParams>,
     replacement: Json<PersistentVolume>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<PersistentVolume>, StatusResponse> {
+) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {
     resource_handlers::status_replace_resource::<PersistentVolume>(
         &operator,
         None,

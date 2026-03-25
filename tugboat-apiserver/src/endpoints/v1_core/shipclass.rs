@@ -33,7 +33,7 @@ use utoipa::ToSchema;
 pub(super) async fn handle_shipclass_create(
     json: Json<ShipClass>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<ShipClass>, StatusResponse> {
+) -> Result<ModifyResponse<ShipClass>, Box<StatusResponse>> {
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
@@ -56,7 +56,7 @@ pub(super) struct ShipClassDeletePathParams {
 pub(super) async fn handle_shipclass_delete(
     path: Path<ShipClassDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<ShipClass>, StatusResponse> {
+) -> Result<ReadResponse<ShipClass>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<ShipClass>(&operator, None, path.into_inner().name).await
 }
 
@@ -76,7 +76,7 @@ pub(super) async fn handle_shipclass_delete(
 pub(super) async fn handle_shipclass_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<ShipClass>(&operator, query.into_inner(), None).await
 }
 
@@ -99,6 +99,6 @@ pub(super) struct ReadParams {
 pub(super) async fn handle_shipclass_read(
     path: Path<ReadParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<ShipClass>, StatusResponse> {
+) -> Result<ReadResponse<ShipClass>, Box<StatusResponse>> {
     resource_handlers::read_resource::<ShipClass>(&operator, None, path.into_inner().name).await
 }

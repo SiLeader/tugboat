@@ -39,7 +39,7 @@ pub(super) async fn handle_persistent_volume_claim_create(
     path: Path<NamespacedPathParams>,
     json: Json<PersistentVolumeClaim>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<PersistentVolumeClaim>, StatusResponse> {
+) -> Result<ModifyResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
     resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
         .await
 }
@@ -65,7 +65,7 @@ pub(super) struct PersistentVolumeClaimDeletePathParams {
 pub(super) async fn handle_persistent_volume_claim_delete(
     path: Path<PersistentVolumeClaimDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<PersistentVolumeClaim>, StatusResponse> {
+) -> Result<ReadResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
     let params = path.into_inner();
     resource_handlers::delete_resource::<PersistentVolumeClaim>(
         &operator,
@@ -93,7 +93,7 @@ pub(super) async fn handle_persistent_volume_claim_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<PersistentVolumeClaim>(
         &operator,
         query.into_inner(),
@@ -118,7 +118,7 @@ pub(super) async fn handle_persistent_volume_claim_list(
 pub(super) async fn handle_persistent_volume_claim_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<PersistentVolumeClaim>(&operator, query.into_inner(), None)
         .await
 }
@@ -144,7 +144,7 @@ pub(super) struct PersistentVolumeClaimReadPathParams {
 pub(super) async fn handle_persistent_volume_claim_read(
     path: Path<PersistentVolumeClaimReadPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<PersistentVolumeClaim>, StatusResponse> {
+) -> Result<ReadResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<PersistentVolumeClaim>(
         &operator,
@@ -177,7 +177,7 @@ pub(super) async fn handle_persistent_volume_claim_replace(
     path: Path<PersistentVolumeClaimReplacePathParams>,
     replacement: Json<PersistentVolumeClaim>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<PersistentVolumeClaim>, StatusResponse> {
+) -> Result<ModifyResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::replace_resource::<PersistentVolumeClaim>(
         &operator,
@@ -215,7 +215,7 @@ pub(super) async fn handle_persistent_volume_claim_status_patch(
     path: Path<PersistentVolumeClaimPatchPathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<PersistentVolumeClaim>, StatusResponse> {
+) -> Result<ModifyResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::status_patch_resource::<PersistentVolumeClaim>(
         &operator,
@@ -249,7 +249,7 @@ pub(super) async fn handle_persistent_volume_claim_status_replace(
     path: Path<PersistentVolumeClaimStatusReplacePathParams>,
     replacement: Json<PersistentVolumeClaim>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<PersistentVolumeClaim>, StatusResponse> {
+) -> Result<ModifyResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::status_replace_resource::<PersistentVolumeClaim>(
         &operator,

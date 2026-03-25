@@ -28,18 +28,17 @@ pub(crate) struct ResourceList {
 }
 
 impl ResourceList {
-    #[allow(clippy::result_large_err)]
-    pub(crate) fn from_serializable<T: Serialize>(items: Vec<T>) -> Result<Self, StatusResponse> {
+    pub(crate) fn from_serializable<T: Serialize>(items: Vec<T>) -> Result<Self, Box<StatusResponse>> {
         match items
             .into_iter()
             .map(|v| serde_json::to_value(v))
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(items) => Ok(Self::from_raw_items(items)),
-            Err(_e) => Err(StatusResponse::internal_error(
+            Err(_e) => Err(Box::new(StatusResponse::internal_error(
                 "Failed to serialize data",
                 None,
-            )),
+            ))),
         }
     }
 

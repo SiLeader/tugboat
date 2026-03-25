@@ -18,10 +18,10 @@ macro_rules! extract_object_meta {
         match ::tugboat_resources::ObjectMetaResource::object_meta(&$obj).clone() {
             Some(meta) => meta,
             None => {
-                return Err($crate::data::StatusResponse::bad_request(
+                return Err(Box::new($crate::data::StatusResponse::bad_request(
                     "metadata is required",
                     None,
-                ))
+                )))
             }
         }
     };
@@ -31,10 +31,10 @@ macro_rules! extract_object_meta {
 macro_rules! check_namespace_absent {
     ($object_meta:expr) => {
         if $object_meta.namespace.is_some() {
-            return Err($crate::data::StatusResponse::bad_request(
+            return Err(Box::new($crate::data::StatusResponse::bad_request(
                 "metadata.namespace cannot be set",
                 None,
-            ));
+            )));
         }
     };
 }
@@ -52,21 +52,21 @@ macro_rules! create_object {
                 &mut object,
                 Some(object_meta),
             );
-            return if let Some(data) = $operator.store.put_if_not_exists(object).await? {
+            return if let Some(data) = $operator.store.put_if_not_exists(object).await.map_err(|e| Box::new(e.into()))? {
                 Ok($crate::data::ModifyResponse::Created(data.apply_revision()))
             } else {
-                Err(StatusResponse::conflict(
+                Err(Box::new(StatusResponse::conflict(
                     "Specified name is already exists",
                     None,
-                ))
+                )))
             };
         }
 
         let Some(generate_name) = &object_meta.generate_name else {
-            return Err(StatusResponse::bad_request(
+            return Err(Box::new(StatusResponse::bad_request(
                 "metadata.generateName is required",
                 None,
-            ));
+            )));
         };
         for _ in 0..5 {
             let name = $operator.name_generator.generate(generate_name).await;
@@ -81,10 +81,10 @@ macro_rules! create_object {
                 );
                 obj
             };
-            if let Some(data) = $operator.store.put_if_not_exists(object).await? {
+            if let Some(data) = $operator.store.put_if_not_exists(object).await.map_err(|e| Box::new(e.into()))? {
                 return Ok($crate::data::ModifyResponse::Created(data.apply_revision()));
             }
         }
-        Err(StatusResponse::conflict("Generate name failed", None))
+        Err(Box::new(StatusResponse::conflict("Generate name failed", None)))
     }};
 }

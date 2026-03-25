@@ -29,8 +29,7 @@ pub(crate) enum Selector {
 }
 
 impl Selector {
-    #[allow(clippy::result_large_err)]
-    pub(crate) fn try_parse(s: &str) -> Result<Vec<Selector>, StatusResponse> {
+    pub(crate) fn try_parse(s: &str) -> Result<Vec<Selector>, Box<StatusResponse>> {
         let mut selectors = Vec::new();
         for fragment in s.split(',') {
             if let Some((key, value)) = fragment.split_once("!=") {
@@ -38,10 +37,10 @@ impl Selector {
             } else if let Some((key, value)) = fragment.split_once("=") {
                 selectors.push(Selector::Equal(key.to_string(), value.to_string()));
             } else {
-                return Err(StatusResponse::bad_request(
+                return Err(Box::new(StatusResponse::bad_request(
                     "Invalid selector format: must be key=value or key!=value, separated by commas",
                     None,
-                ));
+                )));
             }
         }
         Ok(selectors)

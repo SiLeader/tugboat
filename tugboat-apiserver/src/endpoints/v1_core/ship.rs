@@ -39,7 +39,7 @@ pub(super) async fn handle_ship_create(
     path: Path<NamespacedPathParams>,
     json: Json<Ship>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, StatusResponse> {
+) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
     resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
         .await
 }
@@ -65,7 +65,7 @@ pub(super) struct ShipDeletePathParams {
 pub(super) async fn handle_ship_delete(
     path: Path<ShipDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Ship>, StatusResponse> {
+) -> Result<ReadResponse<Ship>, Box<StatusResponse>> {
     let params = path.into_inner();
     resource_handlers::delete_resource::<Ship>(&operator, Some(params.namespace), params.name).await
 }
@@ -88,7 +88,7 @@ pub(super) async fn handle_ship_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<Ship>(
         &operator,
         query.into_inner(),
@@ -113,7 +113,7 @@ pub(super) async fn handle_ship_list(
 pub(super) async fn handle_ship_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<Ship>(&operator, query.into_inner(), None).await
 }
 
@@ -138,7 +138,7 @@ pub(super) struct ShipReadPathParams {
 pub(super) async fn handle_ship_read(
     path: Path<ShipReadPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Ship>, StatusResponse> {
+) -> Result<ReadResponse<Ship>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<Ship>(&operator, Some(path.namespace), path.name).await
 }
@@ -166,7 +166,7 @@ pub(super) async fn handle_ship_replace(
     path: Path<ShipReplacePathParams>,
     replacement: Json<Ship>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, StatusResponse> {
+) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::replace_resource::<Ship>(
         &operator,
@@ -204,7 +204,7 @@ pub(super) async fn handle_ship_status_patch(
     path: Path<ShipPatchPathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, StatusResponse> {
+) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::status_patch_resource::<Ship>(
         &operator,
@@ -232,7 +232,7 @@ pub(super) async fn handle_ship_status_replace(
     path: Path<ShipReplacePathParams>,
     replacement: Json<Ship>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, StatusResponse> {
+) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::status_replace_resource::<Ship>(
         &operator,

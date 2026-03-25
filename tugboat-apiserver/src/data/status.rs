@@ -138,3 +138,28 @@ impl From<serde_json::Error> for StatusResponse {
         )
     }
 }
+
+// Allow using `?` to convert serde_json::Error into Box<StatusResponse>
+impl From<serde_json::Error> for Box<StatusResponse> {
+    fn from(value: serde_json::Error) -> Self {
+        Box::new(StatusResponse::from(value))
+    }
+}
+
+// Allow using `?` to convert storage errors into Box<StatusResponse>
+impl From<tugboat_resource_store::error::Error> for Box<StatusResponse> {
+    fn from(value: tugboat_resource_store::error::Error) -> Self {
+        Box::new(StatusResponse::from(value))
+    }
+}
+
+// Delegate ResponseError for boxed StatusResponse so actix-web can use it as an error type
+impl ResponseError for Box<StatusResponse> {
+    fn status_code(&self) -> StatusCode {
+        (**self).status_code()
+    }
+
+    fn error_response(&self) -> HttpResponse<BoxBody> {
+        (**self).error_response()
+    }
+}

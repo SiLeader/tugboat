@@ -33,7 +33,7 @@ use utoipa::ToSchema;
 pub(super) async fn handle_storage_class_create(
     json: Json<StorageClass>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<StorageClass>, StatusResponse> {
+) -> Result<ModifyResponse<StorageClass>, Box<StatusResponse>> {
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
@@ -56,7 +56,7 @@ pub(super) struct StorageClassDeletePathParams {
 pub(super) async fn handle_storage_class_delete(
     path: Path<StorageClassDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<StorageClass>, StatusResponse> {
+) -> Result<ReadResponse<StorageClass>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<StorageClass>(&operator, None, path.into_inner().name)
         .await
 }
@@ -77,7 +77,7 @@ pub(super) async fn handle_storage_class_delete(
 pub(super) async fn handle_storage_class_list(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
-) -> Result<HttpResponse, StatusResponse> {
+) -> Result<HttpResponse, Box<StatusResponse>> {
     resource_handlers::list_resources::<StorageClass>(&operator, query.into_inner(), None).await
 }
 
@@ -100,6 +100,6 @@ pub(super) struct ReadParams {
 pub(super) async fn handle_storage_class_read(
     path: Path<ReadParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<StorageClass>, StatusResponse> {
+) -> Result<ReadResponse<StorageClass>, Box<StatusResponse>> {
     resource_handlers::read_resource::<StorageClass>(&operator, None, path.into_inner().name).await
 }
