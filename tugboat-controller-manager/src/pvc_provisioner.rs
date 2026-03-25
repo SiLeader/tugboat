@@ -176,10 +176,7 @@ impl PvcProvisionerReconciler {
                     let Some(existing) = pv_api.get(&pv_name).await? else {
                         if let Err(cleanup_err) = self
                             .csi_operator
-                            .delete_volume(
-                                &provisioner_config.socket_path,
-                                volume_id.clone(),
-                            )
+                            .delete_volume(&provisioner_config.socket_path, volume_id.clone())
                             .await
                         {
                             tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
@@ -198,10 +195,7 @@ impl PvcProvisionerReconciler {
                     )? {
                         if let Err(cleanup_err) = self
                             .csi_operator
-                            .delete_volume(
-                                &provisioner_config.socket_path,
-                                volume_id.clone(),
-                            )
+                            .delete_volume(&provisioner_config.socket_path, volume_id.clone())
                             .await
                         {
                             tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
