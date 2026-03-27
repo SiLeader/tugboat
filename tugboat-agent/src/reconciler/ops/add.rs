@@ -178,6 +178,7 @@ impl ShipReconciler {
     ) -> Result<(Vec<PublishedVolume>, Vec<VmVolumeConfig>), ReconcileError> {
         let mut published_volumes = Vec::new();
         let mut vm_volumes = Vec::new();
+        let mut controller_publish_secrets = HashMap::new();
         if !volumes.is_empty() {
             self.csi.ensure_mount_namespace(ship_id)?;
         }
@@ -187,7 +188,19 @@ impl ShipReconciler {
                 &volume.volume.access_modes,
                 volume.source.read_only,
             )?;
-            let secrets = self.resolve_csi_secrets(volume).await?;
+            let secrets = match self.resolve_csi_secrets(volume).await {
+                Ok(secrets) => secrets,
+                Err(err) => {
+                    self.cleanup_after_volume_setup_error(
+                        ship_id,
+                        &published_volumes,
+                        &controller_publish_secrets,
+                        "secret resolution error",
+                    )
+                    .await;
+                    return Err(err);
+                }
+            };
             match self
                 .csi
                 .publish(
@@ -202,6 +215,10 @@ impl ShipReconciler {
                 .await
             {
                 Ok(published) => {
+                    controller_publish_secrets.insert(
+                        volume.claim_name.clone(),
+                        secrets.controller_publish.clone(),
+                    );
                     let mut cleanup_targets = published_volumes.clone();
                     cleanup_targets.push(published.clone());
                     if let Err(err) = self
@@ -209,11 +226,12 @@ impl ShipReconciler {
                         .await
                     {
                         self.cleanup_after_volume_setup_error(
-                            volumes,
+                            ship_id,
                             &cleanup_targets,
+                            &controller_publish_secrets,
                             "node expansion error",
                         )
-                        .await?;
+                        .await;
                         return Err(err);
                     }
                     if let Err(err) = self
@@ -221,41 +239,35 @@ impl ShipReconciler {
                         .await
                     {
                         self.cleanup_after_volume_setup_error(
-                            volumes,
+                            ship_id,
                             &cleanup_targets,
+                            &controller_publish_secrets,
                             "volume stats refresh error",
                         )
-                        .await?;
+                        .await;
                         return Err(err);
                     }
                     if let Err(err) = self.mark_volume_attached(&volume.volume_name, true).await {
                         self.cleanup_after_volume_setup_error(
-                            volumes,
+                            ship_id,
                             &cleanup_targets,
+                            &controller_publish_secrets,
                             "attachment status error",
                         )
-                        .await?;
+                        .await;
                         return Err(err);
                     }
                     vm_volumes.push(vm_volume_config(volume, &published, read_only));
                     published_volumes.push(published);
                 }
                 Err(err) => {
-                    let controller_publish_secrets =
-                        self.controller_publish_secret_map(volumes).await?;
-                    if let Err(cleanup_err) = self
-                        .cleanup_published_volumes(&published_volumes, &controller_publish_secrets)
-                        .await
-                    {
-                        error!(
-                            "Failed to roll back published volumes after publish error: {cleanup_err}"
-                        );
-                    }
-                    if let Err(cleanup_err) = self.csi.cleanup_mount_namespace(ship_id) {
-                        error!(
-                            "Failed to clean up mount namespace after publish error: {cleanup_err}"
-                        );
-                    }
+                    self.cleanup_after_volume_setup_error(
+                        ship_id,
+                        &published_volumes,
+                        &controller_publish_secrets,
+                        "publish error",
+                    )
+                    .await;
                     return Err(err.into());
                 }
             }
@@ -265,18 +277,20 @@ impl ShipReconciler {
 
     async fn cleanup_after_volume_setup_error(
         &self,
-        volumes: &[VolumeInfo],
+        ship_id: &str,
         cleanup_targets: &[PublishedVolume],
+        controller_publish_secrets: &HashMap<String, HashMap<String, String>>,
         context: &str,
-    ) -> Result<(), ReconcileError> {
-        let controller_publish_secrets = self.controller_publish_secret_map(volumes).await?;
+    ) {
         if let Err(cleanup_err) = self
-            .cleanup_published_volumes(cleanup_targets, &controller_publish_secrets)
+            .cleanup_published_volumes(cleanup_targets, controller_publish_secrets)
             .await
         {
             error!("Failed to clean up published volumes after {context}: {cleanup_err}");
         }
-        Ok(())
+        if let Err(cleanup_err) = self.csi.cleanup_mount_namespace(ship_id) {
+            error!("Failed to clean up mount namespace after {context}: {cleanup_err}");
+        }
     }
 
     async fn plan_desired_published_volumes(
@@ -739,7 +753,11 @@ where
         .iter_mut()
         .find(|condition| status_ref(condition) == status)
     {
-        *message_ref(existing) = message;
+        let existing_message = message_ref(existing);
+        if existing_message.as_str() == message.as_str() {
+            return false;
+        }
+        *existing_message = message;
         *timestamp_ref(existing) = Some(Time::now());
         return true;
     }
@@ -819,6 +837,7 @@ mod tests {
     use tugboat_resources::manifests::core::v1::{
         PersistentVolumeClaimCondition, PersistentVolumeCondition,
     };
+    use tugboat_resources::manifests::meta::v1::Time;
 
     fn published_volume(target_path: &str) -> PublishedVolume {
         PublishedVolume {
@@ -908,6 +927,37 @@ mod tests {
         assert_eq!(conditions.len(), 1);
         assert_eq!(conditions[0].status, "Keep");
         assert_eq!(conditions[0].message, "keep me");
+    }
+
+    #[test]
+    fn csi_observation_does_not_update_condition_when_message_is_unchanged() {
+        let stats = NodeVolumeStats {
+            usage: vec![VolumeUsageStats {
+                available: Some(3072),
+                total: 4096,
+                used: Some(1024),
+                unit: VolumeUsageUnit::Bytes,
+            }],
+            condition: None,
+        };
+        let timestamp = Some(Time::now());
+        let mut conditions = vec![PersistentVolumeCondition {
+            status: CSI_VOLUME_STATS_CONDITION.to_string(),
+            message:
+                "CSI driver reported volume usage: bytes(total=4096, used=1024, available=3072)"
+                    .to_string(),
+            timestamp: timestamp.clone(),
+        }];
+
+        let changed = apply_persistent_volume_csi_observation(&mut conditions, &stats);
+
+        assert!(!changed);
+        assert_eq!(conditions.len(), 1);
+        assert_eq!(
+            conditions[0].message,
+            "CSI driver reported volume usage: bytes(total=4096, used=1024, available=3072)"
+        );
+        assert_eq!(conditions[0].timestamp, timestamp);
     }
 
     #[test]
