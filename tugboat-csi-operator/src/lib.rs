@@ -100,6 +100,7 @@ pub struct NodeVolumeStats {
 }
 
 impl TugboatCsiOperator {
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_volume(
         &self,
         socket_path: &str,
