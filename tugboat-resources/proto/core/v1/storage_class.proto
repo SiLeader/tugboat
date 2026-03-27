@@ -37,4 +37,6 @@ message StorageClassSpec {
   SecretReference node_expand_secret_ref = 8;
   SecretReference node_publish_secret_ref = 9;
   SecretReference node_stage_secret_ref = 10;
+  SecretReference controller_create_secret_ref = 11;
+  repeated string mount_options = 12;
 }

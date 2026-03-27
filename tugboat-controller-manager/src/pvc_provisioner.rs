@@ -3,19 +3,16 @@ use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use crate::provisioning::{
     build_persistent_volume, claim_access_modes, claim_access_type, dynamic_volume_name,
-    existing_pv_matches_claim, persistent_volume_capacity_bytes, provisioner_config, pvc_identity,
-    reclaim_policy_from_storage_class, requested_capacity_bytes, storage_class_csi_config,
-    storage_class_provisioner,
+    existing_pv_matches_claim, load_secret_reference, persistent_volume_capacity_bytes,
+    provisioner_config, pvc_identity, reclaim_policy_from_storage_class, requested_capacity_bytes,
+    storage_class_csi_config, storage_class_provisioner,
 };
-use base64::Engine;
-use base64::prelude::BASE64_STANDARD;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_csi_operator::TugboatCsiOperator;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Secret, SecretReference,
-    StorageClass,
+    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, StorageClass,
 };
 
 #[derive(Clone)]
@@ -125,6 +122,11 @@ impl PvcProvisionerReconciler {
         let access_modes = claim_access_modes(&namespace, &name, &spec.access_modes)?;
         let access_type = claim_access_type(&namespace, &name, spec.volume_mode.as_deref())?;
         let requested_capacity_bytes = requested_capacity_bytes(&namespace, &name, spec)?;
+        let controller_create_secrets = load_secret_reference(
+            &self.client,
+            csi_config.controller_create_secret_ref.as_ref(),
+        )
+        .await?;
         let bound_volume_name = spec.volume_name.clone().filter(|value| !value.is_empty());
         let pv_name = bound_volume_name
             .clone()
@@ -159,6 +161,8 @@ impl PvcProvisionerReconciler {
                     parameters,
                     access_modes.clone(),
                     access_type,
+                    controller_create_secrets.clone(),
+                    csi_config.mount_options.clone(),
                 )
                 .await?;
             let volume_id = provisioned_volume.volume_id.clone();
@@ -187,7 +191,11 @@ impl PvcProvisionerReconciler {
                     let Some(existing) = pv_api.get(&pv_name).await? else {
                         if let Err(cleanup_err) = self
                             .csi_operator
-                            .delete_volume(&provisioner_config.socket_path, volume_id.clone())
+                            .delete_volume(
+                                &provisioner_config.socket_path,
+                                volume_id.clone(),
+                                controller_create_secrets.clone(),
+                            )
                             .await
                         {
                             tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
@@ -206,7 +214,11 @@ impl PvcProvisionerReconciler {
                     )? {
                         if let Err(cleanup_err) = self
                             .csi_operator
-                            .delete_volume(&provisioner_config.socket_path, volume_id.clone())
+                            .delete_volume(
+                                &provisioner_config.socket_path,
+                                volume_id.clone(),
+                                controller_create_secrets.clone(),
+                            )
                             .await
                         {
                             tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
@@ -221,7 +233,11 @@ impl PvcProvisionerReconciler {
                 Err(err) => {
                     if let Err(cleanup_err) = self
                         .csi_operator
-                        .delete_volume(&provisioner_config.socket_path, volume_id)
+                        .delete_volume(
+                            &provisioner_config.socket_path,
+                            volume_id,
+                            controller_create_secrets.clone(),
+                        )
                         .await
                     {
                         tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
@@ -243,6 +259,7 @@ impl PvcProvisionerReconciler {
                 self.cleanup_orphaned_volume(
                     &provisioner_config.socket_path,
                     provisioned_volume_id.as_deref(),
+                    &controller_create_secrets,
                     &pv_api,
                     &pv_name,
                 )
@@ -261,6 +278,7 @@ impl PvcProvisionerReconciler {
                 self.cleanup_orphaned_volume(
                     &provisioner_config.socket_path,
                     provisioned_volume_id.as_deref(),
+                    &controller_create_secrets,
                     &pv_api,
                     &pv_name,
                 )
@@ -303,6 +321,7 @@ impl PvcProvisionerReconciler {
                     self.cleanup_orphaned_volume(
                         &provisioner_config.socket_path,
                         provisioned_volume_id.as_deref(),
+                        &controller_create_secrets,
                         &pv_api,
                         &pv_name,
                     )
@@ -370,9 +389,14 @@ impl PvcProvisionerReconciler {
                         csi.controller_expand_secret_ref.as_ref(),
                     )
                 };
-                let controller_expand_secrets = self
-                    .load_secret_reference(controller_expand_secret_ref)
-                    .await?;
+                let controller_expand_secrets =
+                    load_secret_reference(&self.client, controller_expand_secret_ref).await?;
+                let mount_flags =
+                    if matches!(access_type, tugboat_csi_operator::CsiAccessType::Filesystem) {
+                        csi_config.mount_options.clone()
+                    } else {
+                        Vec::new()
+                    };
                 let expanded = self
                     .csi_operator
                     .controller_expand(
@@ -382,6 +406,7 @@ impl PvcProvisionerReconciler {
                         access_modes[0],
                         access_type,
                         fs_type,
+                        mount_flags,
                         controller_expand_secrets,
                     )
                     .await?;
@@ -435,13 +460,18 @@ impl PvcProvisionerReconciler {
         &self,
         socket_path: &str,
         volume_id: Option<&str>,
+        volume_delete_secrets: &std::collections::HashMap<String, String>,
         pv_api: &Api<PersistentVolume>,
         pv_name: &str,
     ) {
         if let Some(volume_id) = volume_id
             && let Err(cleanup_err) = self
                 .csi_operator
-                .delete_volume(socket_path, volume_id.to_string())
+                .delete_volume(
+                    socket_path,
+                    volume_id.to_string(),
+                    volume_delete_secrets.clone(),
+                )
                 .await
         {
             tracing::warn!(
@@ -457,37 +487,6 @@ impl PvcProvisionerReconciler {
                 cleanup_err
             );
         }
-    }
-
-    async fn load_secret_reference(
-        &self,
-        reference: Option<&SecretReference>,
-    ) -> Result<std::collections::HashMap<String, String>, ControllerError> {
-        let Some(reference) = reference else {
-            return Ok(Default::default());
-        };
-        let api: Api<Secret> = Api::namespaced(self.client.clone(), &reference.namespace);
-        let Some(secret) = api.get(&reference.name).await? else {
-            tracing::warn!(
-                "Secret '{}/{}' referenced by CSI configuration is not available yet",
-                reference.namespace,
-                reference.name
-            );
-            return Ok(Default::default());
-        };
-
-        let mut data = std::collections::HashMap::new();
-        for (key, value) in secret.data {
-            let decoded = BASE64_STANDARD
-                .decode(value)
-                .ok()
-                .and_then(|bytes| String::from_utf8(bytes).ok());
-            if let Some(decoded) = decoded {
-                data.insert(key, decoded);
-            }
-        }
-        data.extend(secret.string_data);
-        Ok(data)
     }
 }
 

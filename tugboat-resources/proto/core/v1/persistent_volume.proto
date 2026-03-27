@@ -69,4 +69,6 @@ message CsiPersistentVolumeSource {
   string volume_handle = 8;
   optional string fs_type = 9;
   map<string, string> volume_attributes = 10;
+  repeated string mount_options = 11;
+  SecretReference controller_create_secret_ref = 12;
 }

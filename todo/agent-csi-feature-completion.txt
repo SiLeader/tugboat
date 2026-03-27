@@ -2,40 +2,87 @@ CSI Agent and Runtime Completion
 ================================
 
 Goal
-Refresh the node-side CSI todo so it reflects the code as it exists today and focuses only on the remaining agent/runtime work.
+Support Filesystem and Block storage with general CSI providers on the node side. Track the
+remaining agent and runtime work after the core node pipeline is in place.
 
 Current evidence
-- `README.md` already documents that node-side support includes `Block`, `Filesystem`, `NodeStageVolume` / `NodeUnstageVolume`, `nodePublishSecretRef` / `nodeStageSecretRef`, persisted publish-state recovery, `fs_type`, and `volume_attributes`.
-- `tugboat-agent/src/csi.rs` implements the full ControllerPublish → NodeStage → NodePublish pipeline; `publish_context` returned by `ControllerPublishVolume` is passed through into both `NodeStageVolume` and `NodePublishVolume`. Unpublish reverses the sequence and calls `ControllerUnpublishVolume` when appropriate.
-- `tugboat-agent/src/csi.rs` also implements `expand()`: it queries `NodeCapability::ExpandVolume` and calls `NodeExpandVolume` when the driver supports it.
-- `tugboat-agent/src/csi.rs` now also queries `NodeGetVolumeStats` when the driver advertises `GetVolumeStats`, and `tugboat-agent/src/reconciler/ops/add.rs` writes the reported usage / health back onto both `PersistentVolumeStatus.conditions` and `PersistentVolumeClaimStatus.conditions`.
-- `tugboat-agent/src/reconciler/volume.rs` resolves `controller_publish_secret_ref`, `controller_expand_secret_ref`, `node_publish_secret_ref`, `node_stage_secret_ref`, and `node_expand_secret_ref`.
-- `tugboat-agent/src/reconciler/ops/add.rs` attaches CSI volumes during create and recovers persisted volume state for already-running ships. After a successful publish it calls `csi.expand()` when `PersistentVolumeStatus.node_expansion_required` is set, and updates both `PersistentVolumeStatus` and `PersistentVolumeClaimStatus` capacity/resize state on success.
+- `tugboat-agent/src/csi.rs` implements the full ControllerPublish → NodeStage → NodePublish
+  pipeline. `publish_context` returned by `ControllerPublishVolume` is passed through into both
+  `NodeStageVolume` and `NodePublishVolume`. Unpublish reverses the sequence and calls
+  `ControllerUnpublishVolume` when appropriate.
+- `tugboat-agent/src/csi.rs` implements `expand()`: queries `NodeCapability::ExpandVolume` and
+  calls `NodeExpandVolume` when the driver supports it.
+- `tugboat-agent/src/csi.rs` queries `NodeGetVolumeStats` when the driver advertises
+  `GetVolumeStats`, and the result is written back onto both `PersistentVolumeStatus.conditions`
+  and `PersistentVolumeClaimStatus.conditions`, including `VolumeCondition` health state.
+- `tugboat-agent/src/reconciler/volume.rs` resolves `controller_publish_secret_ref`,
+  `controller_expand_secret_ref`, `node_publish_secret_ref`, `node_stage_secret_ref`, and
+  `node_expand_secret_ref`. Access mode and volume mode (Block/Filesystem) compatibility is
+  validated before attempting a publish.
+- `tugboat-agent/src/reconciler/ops/add.rs` attaches CSI volumes during Ship create and recovers
+  persisted volume state for already-running Ships. After a successful publish, it calls
+  `csi.expand()` when `PersistentVolumeStatus.node_expansion_required` is set, and updates both
+  `PersistentVolumeStatus` and `PersistentVolumeClaimStatus` capacity/resize state on success.
 - `tugboat-agent/src/reconciler/ops/delete.rs` detaches published volumes during cleanup.
-- `tugboat-vm-runtime-interface/src/run.rs` and `tugboat-runtime/src/execute/vm/qemu/mod.rs` expose block volumes as virtio disks and filesystem volumes as 9p shares to the guest.
+- `tugboat-agent/src/reconciler/ops/modify.rs` rejects volume-spec changes with an explicit
+  CSI-aware `SpecChangeRequiresRecreate` status path when they cannot be applied live.
+- Staging runs inside the Ship's mount namespace; `mountns` helpers ensure the namespace is
+  created and bound before stage and cleaned up after unpublish.
+- `tugboat-vm-runtime-interface/src/run.rs` distinguishes `VmVolumeKind::Block` and
+  `VmVolumeKind::Filesystem`. Block volumes are passed as a file path; Filesystem volumes carry
+  a `mount_tag` for guest identification.
+- `tugboat-runtime/src/execute/vm/qemu/mod.rs` translates `VmVolumeKind::Block` into a QEMU
+  `-drive if=virtio` argument and `VmVolumeKind::Filesystem` into `-fsdev local` +
+  `-device virtio-9p-pci` arguments. The 9p `security_model=none` is used so the guest can
+  access files without host-side permission constraints.
+- `tugboat-csi-operator/src/lib.rs` encodes `CsiAccessType::Block` as `BlockVolume {}` and
+  `CsiAccessType::Filesystem` as `MountVolume { fs_type, ... }` in every capability sent to
+  the driver. `fs_type` comes from `CsiPersistentVolumeSource.fs_type` for filesystem volumes.
 
 What is still missing
-- `reconciler/ops/modify.rs` treats all volume-spec changes identically. A capacity-only increase that the driver supports in place could instead trigger the node-expansion path rather than forcing a full recreate.
-- Improve recovery beyond the persisted JSON state if stronger self-healing is needed. Current recovery still assumes the persisted publish records are present and match the planned mounts.
-- Decide whether live CSI attach/detach beyond resize should ever become in-place operations instead of today’s explicit recreate-required status path.
-- Document the practical driver compatibility matrix for VM guests, especially the `Filesystem -> 9p` path and any driver assumptions around mount namespaces and guest access.
-- If controller and node CSI services can live on different sockets in the target environment, split the current single-endpoint driver assumption into explicit controller/node endpoint configuration.
+- `MountVolume.mount_flags` in `tugboat-csi-operator/src/lib.rs` is always `Vec::new()` because
+  there is no `mount_options` source from the PV or StorageClass yet (tracked on the control-plane
+  side). Once `mount_options` lands in `StorageClassSpec`, the agent must thread the resolved list
+  through `ResolvedCsiSecrets` (or a parallel struct) into every `NodeStage` and `NodePublish`
+  call that uses `Filesystem` access type.
+- `reconciler/ops/modify.rs` treats all volume-spec changes identically as recreate-required. A
+  capacity-only increase that the driver supports in place could instead trigger the existing
+  node-expansion path rather than forcing a full Ship recreate.
+- Recovery relies on the persisted JSON state under the publish directory. If those files are
+  lost or corrupted, the agent has no fallback to re-derive published state from the live driver.
+  Stronger self-healing (e.g. re-query driver state via `NodeGetVolumeStats` or replay publish
+  on startup) is not implemented.
+- Whether live CSI attach/detach (beyond resize) should ever become an in-place operation instead
+  of the current recreate-required path is not decided; the architecture currently treats it as
+  out of scope.
+- If controller and node CSI services can live on different sockets (common in production
+  deployments), there is no per-driver config for separate controller/node endpoints. The current
+  `CsiDrivers` map assumes a single socket serves all RPCs.
+- Practical driver compatibility has not been documented — in particular the `Filesystem → 9p`
+  path has specific assumptions (mount namespace isolation, `security_model=none`, no virtiofs
+  alternative) that may not suit all drivers or guests.
 
 Implementation surfaces
-- `tugboat-agent/src/csi.rs`
-- `tugboat-agent/src/reconciler/volume.rs`
-- `tugboat-agent/src/reconciler/ops/add.rs`
-- `tugboat-agent/src/reconciler/ops/delete.rs`
-- `tugboat-agent/src/reconciler/ops/modify.rs`
+- `tugboat-agent/src/csi.rs` — thread `mount_flags` into `stage()` and `publish()` calls once control-plane adds `mount_options`
+- `tugboat-agent/src/reconciler/volume.rs` — carry resolved mount options alongside secrets if needed
+- `tugboat-agent/src/reconciler/ops/modify.rs` — detect capacity-only resize and route to expansion instead of recreate
 - `tugboat-vm-runtime-interface/src/run.rs`
 - `tugboat-runtime/src/execute/vm/qemu/mod.rs`
 
 Acceptance criteria
-- ✓ CSI volumes can be resized on the node side when the driver advertises `NodeExpandVolume` (`csi.rs` `expand()` implemented).
-- ✓ Drivers that depend on controller-provided publish context can be used without patching the agent by hand (`controller_publish_secret_ref` resolved in `volume.rs`).
-- ✓ Dynamically provisioned expandable volumes are accepted by the agent because `controller_expand_secret_ref` is no longer rejected during volume validation.
-- ✓ After node-side resize completes, the agent updates both `PersistentVolumeStatus` and `PersistentVolumeClaimStatus` so capacity and `resize_pending` do not wait for the controller-manager's next reconcile.
-- ✓ `NodeGetVolumeStats` is queried when available, and CSI-reported usage is surfaced onto both `PersistentVolume` and `PersistentVolumeClaim` conditions.
-- ✓ CSI `VolumeCondition` responses are tracked on both `PersistentVolume` and `PersistentVolumeClaim` conditions instead of being dropped on the floor.
-- ✓ Volume-related `Ship` updates are rejected with an explicit, CSI-aware recreate-required status path when they cannot be applied live (`reconciler/ops/modify.rs`).
-- The todo stays aligned with reality: it should not describe node expansion, controller publish context support, `NodeGetVolumeStats` / `VolumeCondition` support, controller expand secret support, PVC resize status propagation, or the CSI-aware recreate-required path as missing anymore.
+- ✓ CSI volumes can be resized on the node side when the driver advertises `NodeExpandVolume`.
+- ✓ Drivers that depend on controller-provided publish context can be used without patching the
+  agent; `controller_publish_secret_ref` is resolved and the context is threaded through.
+- ✓ Dynamically provisioned expandable volumes are accepted by the agent because
+  `controller_expand_secret_ref` is no longer rejected during volume validation.
+- ✓ After node-side resize, the agent updates both `PersistentVolumeStatus` and
+  `PersistentVolumeClaimStatus` so capacity and `resize_pending` are cleared promptly.
+- ✓ `NodeGetVolumeStats` is queried when available; CSI-reported usage and `VolumeCondition`
+  health are surfaced onto both `PersistentVolume` and `PersistentVolumeClaim` conditions.
+- ✓ Block volumes reach the guest as virtio disks; Filesystem volumes reach the guest as
+  virtio-9p shares with a stable mount tag.
+- ✓ Volume-related Ship updates are rejected with a CSI-aware recreate-required status path
+  when they cannot be applied live.
+- Filesystem drivers that require non-default mount flags can be configured once mount_options
+  support lands in StorageClass; `MountVolume.mount_flags` must be populated from that source
+  in both `NodeStageVolume` and `NodePublishVolume` calls.

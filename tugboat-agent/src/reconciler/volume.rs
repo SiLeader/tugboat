@@ -162,6 +162,13 @@ impl ShipReconciler {
                     volume.source.node_stage_secret_ref.as_ref(),
                 )
                 .await?,
+            mount_flags: volume
+                .source
+                .mount_options
+                .iter()
+                .filter(|value| !value.is_empty())
+                .cloned()
+                .collect(),
         })
     }
 

@@ -105,6 +105,7 @@ pub(crate) struct ResolvedCsiSecrets {
     pub node_expand: HashMap<String, String>,
     pub node_publish: HashMap<String, String>,
     pub node_stage: HashMap<String, String>,
+    pub mount_flags: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -207,6 +208,11 @@ impl CsiWrapper {
         )?;
         let access_type = access_type_from_volume_mode(volume.volume_mode.as_deref())?;
         let fs_type = filesystem_type(source, access_type);
+        let mount_flags = if matches!(access_type, CsiAccessType::Filesystem) {
+            secrets.mount_flags.clone()
+        } else {
+            Vec::new()
+        };
         let volume_context = source.volume_attributes.clone();
         let requires_staging = node_capabilities.contains(&NodeCapability::StageUnstageVolume);
         let controller_capabilities = self.operator.controller_capabilities(uds_path).await?;
@@ -248,6 +254,7 @@ impl CsiWrapper {
             let mount_namespace_path = published.mount_namespace_path.clone();
             let node_stage_secrets = secrets.node_stage.clone();
             let fs_type = fs_type.clone();
+            let mount_flags = mount_flags.clone();
             let volume_context = volume_context.clone();
             let publish_context = publish_context.clone();
             match run_in_mount_namespace(mount_namespace_path, move || async move {
@@ -259,6 +266,7 @@ impl CsiWrapper {
                         access_mode,
                         access_type,
                         fs_type,
+                        mount_flags,
                         node_stage_secrets,
                         volume_context,
                         publish_context,
@@ -306,6 +314,7 @@ impl CsiWrapper {
         let staging_target_path = published.staging_target_path.clone();
         let node_publish_secrets = secrets.node_publish.clone();
         let fs_type = fs_type.clone();
+        let mount_flags = mount_flags.clone();
         let volume_context = volume_context.clone();
         let publish_context = publish_context.clone();
         if let Err(err) = run_in_mount_namespace(mount_namespace_path, move || async move {
@@ -318,6 +327,7 @@ impl CsiWrapper {
                     access_mode,
                     access_type,
                     fs_type,
+                    mount_flags,
                     staging_target_path,
                     node_publish_secrets,
                     volume_context,
@@ -1150,5 +1160,24 @@ mod tests {
             Some("xfs".to_string())
         );
         assert_eq!(filesystem_type(&source, CsiAccessType::Block), None);
+    }
+
+    #[test]
+    fn mount_flags_are_carried_in_resolved_secrets() {
+        let source = CsiPersistentVolumeSource {
+            mount_options: vec![
+                "noatime".to_string(),
+                String::new(),
+                "nodiratime".to_string(),
+            ],
+            ..Default::default()
+        };
+        let mount_flags: Vec<String> = source
+            .mount_options
+            .iter()
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .collect();
+        assert_eq!(mount_flags, vec!["noatime", "nodiratime"]);
     }
 }

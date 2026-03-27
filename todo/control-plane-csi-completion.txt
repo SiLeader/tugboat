@@ -2,39 +2,74 @@ CSI Control Plane Completion
 ============================
 
 Goal
-Track the remaining CSI work on the API, resource-model, and controller side now that the basic storage control plane already exists.
+Support Filesystem and Block storage with general CSI providers. Track the remaining work on
+the API, resource-model, and controller side.
 
 Current evidence
-- `tugboat-resources/proto/core/v1/` defines `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass`, and `tugboat-resources/src/manifests/mod.rs` registers them as API resources.
-- `tugboat-resource-store/src/serializer/mod.rs` already serializes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass`, so they can be stored and watched through etcd-backed APIs.
-- `tugboat-apiserver/src/endpoints/v1_core/` already exposes CRUD/list/watch/status endpoints for `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass`.
-- `tugboat-controller-manager/src/main.rs` starts both `PvcProvisionerController` and `PersistentVolumeCleanupController`.
-- `tugboat-controller-manager/src/pvc_provisioner.rs` dynamically provisions CSI-backed volumes with `CreateVolume`, creates managed PVs, and binds them back to PVCs. It also handles PVC resize: when `requested_capacity_bytes` exceeds current capacity, it calls `ControllerExpandVolume`, propagates `node_expansion_required` to `PersistentVolumeStatus`, and sets `resize_pending` on `PersistentVolumeClaimStatus`.
-- `tugboat-controller-manager/src/pv_cleanup.rs` finalizes managed PV deletion and calls `DeleteVolume` on the CSI driver. Non-CSI PVs (those without a `csi` source) raise `MissingPersistentVolumeCsi` with no graceful fallback.
+- `tugboat-resources/proto/core/v1/` defines `PersistentVolume`, `PersistentVolumeClaim`, and
+  `StorageClass`, and `tugboat-resources/src/manifests/mod.rs` registers them as API resources.
+- `tugboat-resource-store/src/serializer/mod.rs` already serializes `PersistentVolume`,
+  `PersistentVolumeClaim`, and `StorageClass`, so they can be stored and watched through
+  etcd-backed APIs.
+- `tugboat-apiserver/src/endpoints/v1_core/` exposes CRUD/list/watch/status endpoints for
+  `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass`.
+- `tugboat-controller-manager/src/main.rs` starts both `PvcProvisionerController` and
+  `PersistentVolumeCleanupController`.
+- `tugboat-controller-manager/src/pvc_provisioner.rs` dynamically provisions CSI-backed volumes
+  with `CreateVolume`, creates managed PVs, and binds them back to PVCs. It also handles PVC
+  resize: when `requested_capacity_bytes` exceeds current capacity, it calls
+  `ControllerExpandVolume`, propagates `node_expansion_required` to `PersistentVolumeStatus`,
+  and sets `resize_pending` on `PersistentVolumeClaimStatus`.
+- `tugboat-controller-manager/src/pv_cleanup.rs` finalizes managed PV deletion and calls
+  `DeleteVolume` on the CSI driver. Non-CSI PVs are handled gracefully (skip without error).
+- `StorageClassSpec` carries `controller_expand_secret_ref`, `controller_publish_secret_ref`,
+  `node_expand_secret_ref`, `node_publish_secret_ref`, and `node_stage_secret_ref`, and
+  `pvc_provisioner.rs` propagates all of these into the provisioned PV's `CsiPersistentVolumeSource`.
+- `CsiPersistentVolumeSource` carries `fs_type` and `volume_attributes` for driver-specific
+  filesystem configuration; these are passed through `CreateVolumeRequest.parameters` and
+  ultimately appear in `NodeStageVolumeRequest` and `NodePublishVolumeRequest`.
 
 What is still missing
-- `StorageClassSpec` proto is missing `volumeBindingMode` (Immediate vs WaitForFirstConsumer), `mountOptions`, and `allowedTopologies`; topology-aware or late-binding provisioning cannot be expressed today.
-- `PersistentVolumeSpec` proto has no `node_affinity` field; topology-constrained CSI volumes cannot express which nodes they are accessible from.
-- `PersistentVolumeClaimSpec` proto has no `dataSource` or `dataSourceRef` field; volume cloning and snapshot-restore are not expressible.
-- Make the scheduler storage-aware if topology, attach limits, or driver placement constraints are required. Current scheduling has no CSI-specific plugins and does not filter nodes by driver availability or volume attach limits.
-- Decide whether snapshots, cloning, and PVC data sources are in scope. The current PVC/PV schemas still do not model them.
-- Decide whether status should grow from the current phase/capacity/resize fields into a richer condition/error model for long-running operational debugging.
-- If controller services are exposed on endpoints distinct from node services, add explicit config and orchestration for split controller/node CSI sockets instead of assuming a single configured endpoint can serve the needed RPCs.
+- `StorageClassSpec` has no `controller_create_secret_ref` (provisioner secret). As a result,
+  `CreateVolumeRequest.secrets` and `DeleteVolumeRequest.secrets` in `pvc_provisioner.rs` and
+  `pv_cleanup.rs` are always sent empty. Drivers that require credentials at provision/deprovision
+  time (e.g. Ceph RBD, iSCSI-based drivers) will fail or behave incorrectly.
+- `StorageClassSpec` has no `mount_options` field. `MountVolume.mount_flags` in
+  `tugboat-csi-operator/src/lib.rs` is always `Vec::new()`. Filesystem drivers that require
+  non-default mount flags (e.g. `noatime`, `relatime`, NFS-specific options) cannot be
+  configured today.
+- `StorageClassSpec` is missing `volumeBindingMode` (Immediate vs WaitForFirstConsumer) and
+  `allowedTopologies`; topology-aware or late-binding provisioning cannot be expressed.
+- `PersistentVolumeSpec` has no `node_affinity` field; topology-constrained CSI volumes cannot
+  express which nodes they are accessible from.
+- `PersistentVolumeClaimSpec` has no `dataSource` or `dataSourceRef` field; volume cloning and
+  snapshot-restore are not expressible.
+- The scheduler has no CSI-specific plugins and does not filter nodes by driver availability,
+  volume attach limits, or topology constraints.
+- If controller and node CSI services are on different sockets, there is no way to configure
+  separate controller/node endpoints; a single socket is assumed per driver.
 
 Implementation surfaces
-- `tugboat-resources/proto/core/v1/persistent_volume.proto`
-- `tugboat-resources/proto/core/v1/persistent_volume_claim.proto`
-- `tugboat-resources/proto/core/v1/storage_class.proto`
-- `tugboat-controller-manager/src/provisioning.rs`
-- `tugboat-controller-manager/src/pvc_provisioner.rs`
-- `tugboat-controller-manager/src/pv_cleanup.rs`
-- `tugboat-csi-operator/src/lib.rs`
+- `tugboat-resources/proto/core/v1/storage_class.proto` — add `controller_create_secret_ref` and `mount_options`
+- `tugboat-resources/proto/core/v1/persistent_volume.proto` — add `node_affinity` if topology support is desired
+- `tugboat-resources/proto/core/v1/persistent_volume_claim.proto` — add `dataSource`/`dataSourceRef` if snapshot support is desired
+- `tugboat-controller-manager/src/provisioning.rs` — resolve `controller_create_secret_ref` and include in CreateVolume/DeleteVolume secrets
+- `tugboat-controller-manager/src/pvc_provisioner.rs` — pass provisioner secrets into `CreateVolumeRequest` and propagate `mount_options` into provisioned PV
+- `tugboat-controller-manager/src/pv_cleanup.rs` — pass provisioner secrets into `DeleteVolumeRequest`
+- `tugboat-csi-operator/src/lib.rs` — thread `mount_flags` through `create_volume` and `controller_expand` APIs
 - `tugboat-apiserver/src/endpoints/v1_core/`
 - `tugboat-scheduler/src/`
 
 Acceptance criteria
-- ✓ PVCs can express the inputs needed for CSI provisioning, including requested size and the intended volume mode.
+- ✓ PVCs can express the inputs needed for CSI provisioning, including requested size and volume mode.
 - ✓ Dynamically provisioned PVs preserve the CSI metadata needed by downstream node-side flows.
-- ✓ Drivers that require controller expansion are handled through the implemented controller-side CSI flow (`pvc_provisioner.rs` calls `ControllerExpandVolume`).
-- ✓ `pv_cleanup.rs` and `pvc_provisioner.rs` now handle non-CSI PVs gracefully instead of failing with `MissingPersistentVolumeCsi`; CSI-specific cleanup/resize is skipped or rejected without crashing reconciliation.
-- The todo stays aligned with reality: it should not describe capacity-aware provisioning, filesystem claims, StorageClass CSI secret propagation, basic controller-side expansion, or non-CSI PV graceful handling as missing anymore.
+- ✓ Drivers that require controller expansion are handled through the controller-side CSI flow.
+- ✓ `pv_cleanup.rs` and `pvc_provisioner.rs` handle non-CSI PVs gracefully.
+- ✓ All node-side and controller-publish secrets are propagated from StorageClass into the provisioned PV.
+- Drivers that require provisioner secrets (CreateVolume / DeleteVolume) can be used without
+  embedding credentials in StorageClass.parameters; `controller_create_secret_ref` resolves them
+  as a first-class field.
+- Filesystem volumes can specify mount options via StorageClass so that `MountVolume.mount_flags`
+  is populated and non-default mount behaviour (e.g. noatime, NFS options) is supported.
+- The todo stays aligned with reality: it must not describe the above two items as resolved until
+  both the proto additions and the controller/operator wiring are in place.

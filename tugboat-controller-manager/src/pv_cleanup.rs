@@ -2,8 +2,8 @@ use crate::base::TugboatController;
 use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use crate::provisioning::{
-    PV_FINALIZER, is_managed_pv, managed_pv_label_selector, provisioner_config, pv_provisioner,
-    should_delete_backing_volume,
+    PV_FINALIZER, is_managed_pv, load_secret_reference, managed_pv_label_selector,
+    provisioner_config, pv_provisioner, should_delete_backing_volume,
 };
 use tugboat_client::runtime::{
     Action, Controller, FinalizerEvent, ReconcileEvent, Reconciler, finalizer,
@@ -156,9 +156,15 @@ impl PersistentVolumeCleanupReconciler {
         if csi.volume_handle.is_empty() {
             return Err(ControllerError::MissingVolumeHandle { name });
         }
+        let controller_create_secrets =
+            load_secret_reference(&self.client, csi.controller_create_secret_ref.as_ref()).await?;
 
         self.csi_operator
-            .delete_volume(&provisioner_config.socket_path, csi.volume_handle.clone())
+            .delete_volume(
+                &provisioner_config.socket_path,
+                csi.volume_handle.clone(),
+                controller_create_secrets,
+            )
             .await?;
         Ok(Action::await_change())
     }

@@ -108,6 +108,8 @@ impl TugboatCsiOperator {
         parameters: HashMap<String, String>,
         access_modes: Vec<CsiAccessMode>,
         access_type: CsiAccessType,
+        secrets: HashMap<String, String>,
+        mount_flags: Vec<String>,
     ) -> Result<ProvisionedVolume, error::Error> {
         let req = CreateVolumeRequest {
             name,
@@ -117,10 +119,12 @@ impl TugboatCsiOperator {
             }),
             volume_capabilities: access_modes
                 .into_iter()
-                .map(|access_mode| volume_capability(access_mode, access_type, None))
+                .map(|access_mode| {
+                    volume_capability(access_mode, access_type, None, mount_flags.clone())
+                })
                 .collect(),
             parameters,
-            secrets: Default::default(),
+            secrets,
             volume_content_source: None,
             accessibility_requirements: None,
             mutable_parameters: Default::default(),
@@ -145,11 +149,9 @@ impl TugboatCsiOperator {
         &self,
         socket_path: &str,
         volume_id: String,
+        secrets: HashMap<String, String>,
     ) -> Result<(), error::Error> {
-        let req = DeleteVolumeRequest {
-            volume_id,
-            secrets: Default::default(),
-        };
+        let req = DeleteVolumeRequest { volume_id, secrets };
 
         let mut client = connect_controller_client(socket_path).await?;
         client
@@ -213,7 +215,12 @@ impl TugboatCsiOperator {
         let req = ControllerPublishVolumeRequest {
             volume_id,
             node_id,
-            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
+            volume_capability: Some(volume_capability(
+                access_mode,
+                access_type,
+                fs_type,
+                Vec::new(),
+            )),
             readonly: read_only,
             secrets,
             volume_context,
@@ -258,6 +265,7 @@ impl TugboatCsiOperator {
         access_mode: CsiAccessMode,
         access_type: CsiAccessType,
         fs_type: Option<String>,
+        mount_flags: Vec<String>,
         secrets: HashMap<String, String>,
     ) -> Result<ControllerExpandedVolume, error::Error> {
         let req = ControllerExpandVolumeRequest {
@@ -267,7 +275,12 @@ impl TugboatCsiOperator {
                 limit_bytes: 0,
             }),
             secrets,
-            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
+            volume_capability: Some(volume_capability(
+                access_mode,
+                access_type,
+                fs_type,
+                mount_flags,
+            )),
         };
 
         let mut client = connect_controller_client(socket_path).await?;
@@ -335,6 +348,7 @@ impl TugboatCsiOperator {
         access_mode: CsiAccessMode,
         access_type: CsiAccessType,
         fs_type: Option<String>,
+        mount_flags: Vec<String>,
         staging_target_path: Option<String>,
         secrets: HashMap<String, String>,
         volume_context: HashMap<String, String>,
@@ -343,7 +357,12 @@ impl TugboatCsiOperator {
         let req = NodePublishVolumeRequest {
             volume_id,
             target_path,
-            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
+            volume_capability: Some(volume_capability(
+                access_mode,
+                access_type,
+                fs_type,
+                mount_flags,
+            )),
             readonly: read_only,
             secrets,
             volume_context,
@@ -368,6 +387,7 @@ impl TugboatCsiOperator {
         access_mode: CsiAccessMode,
         access_type: CsiAccessType,
         fs_type: Option<String>,
+        mount_flags: Vec<String>,
         secrets: HashMap<String, String>,
         volume_context: HashMap<String, String>,
         publish_context: HashMap<String, String>,
@@ -376,7 +396,12 @@ impl TugboatCsiOperator {
             volume_id,
             publish_context,
             staging_target_path,
-            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
+            volume_capability: Some(volume_capability(
+                access_mode,
+                access_type,
+                fs_type,
+                mount_flags,
+            )),
             secrets,
             volume_context,
         };
@@ -491,7 +516,12 @@ impl TugboatCsiOperator {
                 limit_bytes: 0,
             }),
             staging_target_path: staging_target_path.unwrap_or_default(),
-            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
+            volume_capability: Some(volume_capability(
+                access_mode,
+                access_type,
+                fs_type,
+                Vec::new(),
+            )),
             secrets,
         };
 
@@ -509,6 +539,7 @@ fn volume_capability(
     access_mode: CsiAccessMode,
     access_type: CsiAccessType,
     fs_type: Option<String>,
+    mount_flags: Vec<String>,
 ) -> VolumeCapability {
     VolumeCapability {
         access_mode: Some(AccessMode {
@@ -522,7 +553,7 @@ fn volume_capability(
             CsiAccessType::Block => AccessType::Block(BlockVolume {}),
             CsiAccessType::Filesystem => AccessType::Mount(MountVolume {
                 fs_type: fs_type.unwrap_or_default(),
-                mount_flags: Vec::new(),
+                mount_flags,
                 volume_mount_group: String::new(),
             }),
         }),
@@ -745,15 +776,34 @@ mod tests {
             CsiAccessMode::ReadWriteOnce,
             CsiAccessType::Filesystem,
             None,
+            Vec::new(),
         );
         assert!(matches!(capability.access_type, Some(AccessType::Mount(_))));
     }
 
     #[test]
     fn block_access_type_is_encoded_as_block_volume() {
-        let capability =
-            volume_capability(CsiAccessMode::ReadWriteOnce, CsiAccessType::Block, None);
+        let capability = volume_capability(
+            CsiAccessMode::ReadWriteOnce,
+            CsiAccessType::Block,
+            None,
+            vec!["ignored".to_string()],
+        );
         assert!(matches!(capability.access_type, Some(AccessType::Block(_))));
+    }
+
+    #[test]
+    fn filesystem_mount_flags_are_encoded() {
+        let capability = volume_capability(
+            CsiAccessMode::ReadWriteOnce,
+            CsiAccessType::Filesystem,
+            Some("xfs".to_string()),
+            vec!["noatime".to_string(), "nodiratime".to_string()],
+        );
+        let Some(AccessType::Mount(mount)) = capability.access_type else {
+            panic!("expected mount access type");
+        };
+        assert_eq!(mount.mount_flags, vec!["noatime", "nodiratime"]);
     }
 
     #[tokio::test]
@@ -771,6 +821,7 @@ mod tests {
                 CsiAccessMode::ReadWriteOnce,
                 CsiAccessType::Filesystem,
                 Some("xfs".to_string()),
+                vec!["noatime".to_string()],
                 HashMap::from([("token".to_string(), "secret".to_string())]),
                 volume_context.clone(),
                 publish_context.clone(),
@@ -786,6 +837,7 @@ mod tests {
                 CsiAccessMode::ReadWriteOnce,
                 CsiAccessType::Filesystem,
                 Some("xfs".to_string()),
+                vec!["noatime".to_string()],
                 Some("/staging/volume-1".to_string()),
                 HashMap::from([("token".to_string(), "secret".to_string())]),
                 volume_context.clone(),
@@ -822,6 +874,7 @@ mod tests {
             panic!("stage capability should use mount access type");
         };
         assert_eq!(stage_mount.fs_type, "xfs");
+        assert_eq!(stage_mount.mount_flags, vec!["noatime"]);
 
         let RecordedCall::Publish(publish_request) = &calls[1] else {
             panic!("second call should be publish");
@@ -840,6 +893,7 @@ mod tests {
             panic!("publish capability should use mount access type");
         };
         assert_eq!(publish_mount.fs_type, "xfs");
+        assert_eq!(publish_mount.mount_flags, vec!["noatime"]);
     }
 
     #[tokio::test]
