@@ -23,12 +23,19 @@ use crate::runtime::RuntimeCreateRequest;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 use tugboat_client::Api;
+use tugboat_csi_operator::{
+    NodeVolumeStats, VolumeHealthCondition, VolumeUsageStats, VolumeUsageUnit,
+};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship, ShipCondition,
+    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimCondition,
+    PersistentVolumeClaimStatus, PersistentVolumeCondition, Ship, ShipCondition,
 };
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
+
+const CSI_VOLUME_STATS_CONDITION: &str = "CsiVolumeStats";
+const CSI_VOLUME_HEALTH_CONDITION: &str = "CsiVolumeHealth";
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_added(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -201,35 +208,33 @@ impl ShipReconciler {
                         .ensure_node_expansion(namespace, volume, &published, &secrets)
                         .await
                     {
-                        let controller_publish_secrets =
-                            self.controller_publish_secret_map(volumes).await?;
-                        if let Err(cleanup_err) = self
-                            .cleanup_published_volumes(
-                                &cleanup_targets,
-                                &controller_publish_secrets,
-                            )
-                            .await
-                        {
-                            error!(
-                                "Failed to clean up published volumes after node expansion error: {cleanup_err}"
-                            );
-                        }
+                        self.cleanup_after_volume_setup_error(
+                            volumes,
+                            &cleanup_targets,
+                            "node expansion error",
+                        )
+                        .await?;
+                        return Err(err);
+                    }
+                    if let Err(err) = self
+                        .refresh_volume_stats(namespace, volume, &published)
+                        .await
+                    {
+                        self.cleanup_after_volume_setup_error(
+                            volumes,
+                            &cleanup_targets,
+                            "volume stats refresh error",
+                        )
+                        .await?;
                         return Err(err);
                     }
                     if let Err(err) = self.mark_volume_attached(&volume.volume_name, true).await {
-                        let controller_publish_secrets =
-                            self.controller_publish_secret_map(volumes).await?;
-                        if let Err(cleanup_err) = self
-                            .cleanup_published_volumes(
-                                &cleanup_targets,
-                                &controller_publish_secrets,
-                            )
-                            .await
-                        {
-                            error!(
-                                "Failed to clean up published volumes after attachment status error: {cleanup_err}"
-                            );
-                        }
+                        self.cleanup_after_volume_setup_error(
+                            volumes,
+                            &cleanup_targets,
+                            "attachment status error",
+                        )
+                        .await?;
                         return Err(err);
                     }
                     vm_volumes.push(vm_volume_config(volume, &published, read_only));
@@ -256,6 +261,22 @@ impl ShipReconciler {
             }
         }
         Ok((published_volumes, vm_volumes))
+    }
+
+    async fn cleanup_after_volume_setup_error(
+        &self,
+        volumes: &[VolumeInfo],
+        cleanup_targets: &[PublishedVolume],
+        context: &str,
+    ) -> Result<(), ReconcileError> {
+        let controller_publish_secrets = self.controller_publish_secret_map(volumes).await?;
+        if let Err(cleanup_err) = self
+            .cleanup_published_volumes(cleanup_targets, &controller_publish_secrets)
+            .await
+        {
+            error!("Failed to clean up published volumes after {context}: {cleanup_err}");
+        }
+        Ok(())
     }
 
     async fn plan_desired_published_volumes(
@@ -424,6 +445,53 @@ impl ShipReconciler {
         Ok(())
     }
 
+    async fn refresh_volume_stats(
+        &self,
+        namespace: &str,
+        volume: &VolumeInfo,
+        published: &PublishedVolume,
+    ) -> Result<(), ReconcileError> {
+        let Some(stats) = self.csi.volume_stats(published).await? else {
+            return Ok(());
+        };
+
+        let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
+        let Some(mut persistent_volume) = pv_api.get(&volume.volume_name).await? else {
+            return Ok(());
+        };
+        let mut persistent_volume_changed = false;
+        {
+            let status = persistent_volume
+                .status
+                .get_or_insert_with(Default::default);
+            persistent_volume_changed |=
+                apply_persistent_volume_csi_observation(&mut status.conditions, &stats);
+        }
+        if persistent_volume_changed {
+            pv_api
+                .replace(&volume.volume_name, persistent_volume)
+                .await?;
+        }
+
+        let pvc_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
+        let Some(mut claim) = pvc_api.get(&volume.claim_name).await? else {
+            return Ok(());
+        };
+        let mut claim_changed = false;
+        {
+            let status = claim
+                .status
+                .get_or_insert_with(PersistentVolumeClaimStatus::default);
+            claim_changed |=
+                apply_persistent_volume_claim_csi_observation(&mut status.conditions, &stats);
+        }
+        if claim_changed {
+            pvc_api.replace(&volume.claim_name, claim).await?;
+        }
+
+        Ok(())
+    }
+
     pub(super) async fn mark_volume_attached(
         &self,
         volume_name: &str,
@@ -517,6 +585,198 @@ fn vm_volume_config(
     }
 }
 
+fn apply_persistent_volume_csi_observation(
+    conditions: &mut Vec<PersistentVolumeCondition>,
+    stats: &NodeVolumeStats,
+) -> bool {
+    let mut changed = false;
+    if let Some(message) = volume_usage_message(&stats.usage) {
+        changed |=
+            upsert_persistent_volume_condition(conditions, CSI_VOLUME_STATS_CONDITION, message);
+    } else {
+        changed |= remove_persistent_volume_condition(conditions, CSI_VOLUME_STATS_CONDITION);
+    }
+    if let Some(condition) = stats.condition.as_ref() {
+        changed |= upsert_persistent_volume_condition(
+            conditions,
+            CSI_VOLUME_HEALTH_CONDITION,
+            volume_health_message(condition),
+        );
+    } else {
+        changed |= remove_persistent_volume_condition(conditions, CSI_VOLUME_HEALTH_CONDITION);
+    }
+    changed
+}
+
+fn apply_persistent_volume_claim_csi_observation(
+    conditions: &mut Vec<PersistentVolumeClaimCondition>,
+    stats: &NodeVolumeStats,
+) -> bool {
+    let mut changed = false;
+    if let Some(message) = volume_usage_message(&stats.usage) {
+        changed |= upsert_persistent_volume_claim_condition(
+            conditions,
+            CSI_VOLUME_STATS_CONDITION,
+            message,
+        );
+    } else {
+        changed |= remove_persistent_volume_claim_condition(conditions, CSI_VOLUME_STATS_CONDITION);
+    }
+    if let Some(condition) = stats.condition.as_ref() {
+        changed |= upsert_persistent_volume_claim_condition(
+            conditions,
+            CSI_VOLUME_HEALTH_CONDITION,
+            volume_health_message(condition),
+        );
+    } else {
+        changed |=
+            remove_persistent_volume_claim_condition(conditions, CSI_VOLUME_HEALTH_CONDITION);
+    }
+    changed
+}
+
+fn volume_usage_message(usage: &[VolumeUsageStats]) -> Option<String> {
+    if usage.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "CSI driver reported volume usage: {}",
+        usage
+            .iter()
+            .map(volume_usage_summary)
+            .collect::<Vec<_>>()
+            .join("; ")
+    ))
+}
+
+fn volume_usage_summary(usage: &VolumeUsageStats) -> String {
+    let unit = match usage.unit {
+        VolumeUsageUnit::Bytes => "bytes",
+        VolumeUsageUnit::Inodes => "inodes",
+        VolumeUsageUnit::Unknown => "units",
+    };
+    let mut parts = vec![format!("total={}", usage.total)];
+    if let Some(used) = usage.used {
+        parts.push(format!("used={used}"));
+    }
+    if let Some(available) = usage.available {
+        parts.push(format!("available={available}"));
+    }
+    format!("{unit}({})", parts.join(", "))
+}
+
+fn volume_health_message(condition: &VolumeHealthCondition) -> String {
+    match (condition.abnormal, condition.message.trim()) {
+        (true, "") => "CSI driver reported an abnormal volume condition.".to_string(),
+        (true, message) => {
+            format!("CSI driver reported an abnormal volume condition: {message}")
+        }
+        (false, "") => "CSI driver reports the volume is healthy.".to_string(),
+        (false, message) => format!("CSI driver reports the volume is healthy: {message}"),
+    }
+}
+
+fn upsert_persistent_volume_condition(
+    conditions: &mut Vec<PersistentVolumeCondition>,
+    status: &str,
+    message: String,
+) -> bool {
+    upsert_condition(
+        conditions,
+        status,
+        message,
+        |condition| &condition.status,
+        |condition| &mut condition.message,
+        |condition| &mut condition.timestamp,
+    )
+}
+
+fn remove_persistent_volume_condition(
+    conditions: &mut Vec<PersistentVolumeCondition>,
+    status: &str,
+) -> bool {
+    remove_condition(conditions, status, |condition| &condition.status)
+}
+
+fn upsert_persistent_volume_claim_condition(
+    conditions: &mut Vec<PersistentVolumeClaimCondition>,
+    status: &str,
+    message: String,
+) -> bool {
+    upsert_condition(
+        conditions,
+        status,
+        message,
+        |condition| &condition.status,
+        |condition| &mut condition.message,
+        |condition| &mut condition.timestamp,
+    )
+}
+
+fn remove_persistent_volume_claim_condition(
+    conditions: &mut Vec<PersistentVolumeClaimCondition>,
+    status: &str,
+) -> bool {
+    remove_condition(conditions, status, |condition| &condition.status)
+}
+
+fn upsert_condition<T, FStatus, FMessage, FTimestamp>(
+    conditions: &mut Vec<T>,
+    status: &str,
+    message: String,
+    status_ref: FStatus,
+    message_ref: FMessage,
+    timestamp_ref: FTimestamp,
+) -> bool
+where
+    T: Default + ConditionStatus,
+    FStatus: Fn(&T) -> &String,
+    FMessage: Fn(&mut T) -> &mut String,
+    FTimestamp: Fn(&mut T) -> &mut Option<Time>,
+{
+    if let Some(existing) = conditions
+        .iter_mut()
+        .find(|condition| status_ref(condition) == status)
+    {
+        *message_ref(existing) = message;
+        *timestamp_ref(existing) = Some(Time::now());
+        return true;
+    }
+
+    let mut condition = T::default();
+    *condition.status_mut() = status.to_string();
+    *message_ref(&mut condition) = message;
+    *timestamp_ref(&mut condition) = Some(Time::now());
+    conditions.push(condition);
+    true
+}
+
+fn remove_condition<T, FStatus>(conditions: &mut Vec<T>, status: &str, status_ref: FStatus) -> bool
+where
+    FStatus: Fn(&T) -> &String,
+{
+    let original_len = conditions.len();
+    conditions.retain(|condition| status_ref(condition) != status);
+    original_len != conditions.len()
+}
+
+trait ConditionStatus {
+    fn status_mut(&mut self) -> &mut String;
+}
+
+impl ConditionStatus for PersistentVolumeCondition {
+    fn status_mut(&mut self) -> &mut String {
+        &mut self.status
+    }
+}
+
+impl ConditionStatus for PersistentVolumeClaimCondition {
+    fn status_mut(&mut self) -> &mut String {
+        &mut self.status
+    }
+}
+
 fn validate_recovered_published_volumes(
     ship_id: &str,
     mut persisted: Vec<PublishedVolume>,
@@ -546,9 +806,19 @@ fn validate_recovered_published_volumes(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_recovered_published_volumes;
+    use super::{
+        CSI_VOLUME_HEALTH_CONDITION, CSI_VOLUME_STATS_CONDITION,
+        apply_persistent_volume_claim_csi_observation, apply_persistent_volume_csi_observation,
+        validate_recovered_published_volumes,
+    };
     use crate::csi::{PublishedAccessType, PublishedVolume};
     use crate::reconciler::error::ReconcileError;
+    use tugboat_csi_operator::{
+        NodeVolumeStats, VolumeHealthCondition, VolumeUsageStats, VolumeUsageUnit,
+    };
+    use tugboat_resources::manifests::core::v1::{
+        PersistentVolumeClaimCondition, PersistentVolumeCondition,
+    };
 
     fn published_volume(target_path: &str) -> PublishedVolume {
         PublishedVolume {
@@ -561,6 +831,83 @@ mod tests {
             staging_target_path: Some(format!("{target_path}.staging")),
             controller_published: false,
         }
+    }
+
+    #[test]
+    fn csi_observation_upserts_usage_and_health_conditions() {
+        let stats = NodeVolumeStats {
+            usage: vec![VolumeUsageStats {
+                available: Some(3072),
+                total: 4096,
+                used: Some(1024),
+                unit: VolumeUsageUnit::Bytes,
+            }],
+            condition: Some(VolumeHealthCondition {
+                abnormal: true,
+                message: "filesystem is read-only".to_string(),
+            }),
+        };
+        let mut conditions = vec![PersistentVolumeCondition {
+            status: "Existing".to_string(),
+            message: "keep me".to_string(),
+            timestamp: None,
+        }];
+
+        let changed = apply_persistent_volume_csi_observation(&mut conditions, &stats);
+
+        assert!(changed);
+        assert_eq!(conditions.len(), 3);
+        assert!(conditions.iter().any(|condition| {
+            condition.status == CSI_VOLUME_STATS_CONDITION
+                && condition
+                    .message
+                    .contains("CSI driver reported volume usage: bytes(total=4096, used=1024, available=3072)")
+                && condition.timestamp.is_some()
+        }));
+        assert!(conditions.iter().any(|condition| {
+            condition.status == CSI_VOLUME_HEALTH_CONDITION
+                && condition.message.contains(
+                    "CSI driver reported an abnormal volume condition: filesystem is read-only",
+                )
+                && condition.timestamp.is_some()
+        }));
+        assert!(
+            conditions
+                .iter()
+                .any(|condition| condition.status == "Existing" && condition.message == "keep me")
+        );
+    }
+
+    #[test]
+    fn csi_observation_removes_stale_claim_conditions_when_stats_disappear() {
+        let stats = NodeVolumeStats {
+            usage: Vec::new(),
+            condition: None,
+        };
+        let mut conditions = vec![
+            PersistentVolumeClaimCondition {
+                status: CSI_VOLUME_STATS_CONDITION.to_string(),
+                message: "old stats".to_string(),
+                timestamp: None,
+            },
+            PersistentVolumeClaimCondition {
+                status: CSI_VOLUME_HEALTH_CONDITION.to_string(),
+                message: "old health".to_string(),
+                timestamp: None,
+            },
+            PersistentVolumeClaimCondition {
+                status: "Keep".to_string(),
+                message: "keep me".to_string(),
+                timestamp: None,
+            },
+        ];
+
+        let changed = apply_persistent_volume_claim_csi_observation(&mut conditions, &stats);
+
+        assert!(changed);
+        assert_eq!(conditions.len(), 1);
+        assert_eq!(conditions[0].status, "Keep");
+        assert_eq!(conditions[0].message, "keep me");
     }
 
     #[test]

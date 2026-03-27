@@ -114,12 +114,13 @@ CSI volume を使う場合は、`volumeClaimRef` で同一 namespace の `Persis
 - [x] `nodePublishSecretRef` / `nodeStageSecretRef`
 - [x] agent restart 後の publish state からの復旧
 - [x] 明示的な `fs_type` と `volume_attributes`
-- [ ] `NodeExpandVolume` / volume expansion
-- [ ] controller publish context を必須とする driver
+- [x] `NodeExpandVolume` / volume expansion
+- [x] controller publish context を必須とする driver
+- [x] `NodeGetVolumeStats` による CSI volume の health / usage を PV/PVC condition へ反映
 
 `Filesystem` volume は guest へ 9p share として公開され、mount tag には `volumeClaimRef[].name` が使われます。
 
-control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context と `NodeExpandVolume` に対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone 系ワークフローです。
+control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context、`NodeExpandVolume`、`NodeGetVolumeStats` による CSI health / usage の PV/PVC condition 反映まで対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone 系ワークフローです。
 
 ## Roadmap
 

@@ -22,7 +22,8 @@ use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use tugboat_csi_operator::{
-    ControllerCapability, CsiAccessMode, CsiAccessType, NodeCapability, TugboatCsiOperator,
+    ControllerCapability, CsiAccessMode, CsiAccessType, NodeCapability, NodeVolumeStats,
+    TugboatCsiOperator,
 };
 use tugboat_resources::manifests::core::v1::{
     CsiPersistentVolumeSource, PersistentVolumeClaimSpec, PersistentVolumeSpec,
@@ -184,6 +185,7 @@ impl CsiWrapper {
         Ok(volumes)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn publish(
         &self,
         node_name: &str,
@@ -452,6 +454,34 @@ impl CsiWrapper {
                     secrets.node_expand.clone(),
                 )
                 .await?,
+        ))
+    }
+
+    pub(crate) async fn volume_stats(
+        &self,
+        volume: &PublishedVolume,
+    ) -> Result<Option<NodeVolumeStats>, CsiError> {
+        let Some(uds_path) = self.drivers.get(&volume.driver) else {
+            return Err(CsiError::DriverNotFound(volume.driver.clone()));
+        };
+        let node_capabilities = self.operator.node_capabilities(uds_path).await?;
+        if !node_capabilities.contains(&NodeCapability::GetVolumeStats) {
+            return Ok(None);
+        }
+
+        let operator = self.operator.clone();
+        let uds_path = uds_path.to_string();
+        let volume_id = volume.volume_id.clone();
+        let volume_path = volume.target_path.clone();
+        let staging_target_path = volume.staging_target_path.clone();
+        let mount_namespace_path = volume.mount_namespace_path.clone();
+        Ok(Some(
+            run_in_mount_namespace(mount_namespace_path, move || async move {
+                operator
+                    .node_volume_stats(&uds_path, volume_id, volume_path, staging_target_path)
+                    .await
+            })
+            .await?,
         ))
     }
 

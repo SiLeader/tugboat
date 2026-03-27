@@ -6,12 +6,13 @@ use crate::proto::csi::v1::node_service_capability;
 use crate::proto::csi::v1::node_service_capability::rpc::Type as NodeServiceCapabilityType;
 use crate::proto::csi::v1::volume_capability::access_mode::Mode;
 use crate::proto::csi::v1::volume_capability::{AccessMode, AccessType, BlockVolume, MountVolume};
+use crate::proto::csi::v1::volume_usage::Unit as VolumeUsageProtoUnit;
 use crate::proto::csi::v1::{
     CapacityRange, ControllerExpandVolumeRequest, ControllerGetCapabilitiesRequest,
     ControllerPublishVolumeRequest, ControllerUnpublishVolumeRequest, CreateVolumeRequest,
     DeleteVolumeRequest, NodeExpandVolumeRequest, NodeGetCapabilitiesRequest,
-    NodePublishVolumeRequest, NodeStageVolumeRequest, NodeUnpublishVolumeRequest,
-    NodeUnstageVolumeRequest, VolumeCapability,
+    NodeGetVolumeStatsRequest, NodePublishVolumeRequest, NodeStageVolumeRequest,
+    NodeUnpublishVolumeRequest, NodeUnstageVolumeRequest, VolumeCapability,
 };
 pub use error::Error;
 use hyper_util::rt::TokioIo;
@@ -69,6 +70,33 @@ pub struct ProvisionedVolume {
 pub struct ControllerExpandedVolume {
     pub capacity_bytes: i64,
     pub node_expansion_required: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeUsageUnit {
+    Unknown,
+    Bytes,
+    Inodes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeUsageStats {
+    pub available: Option<i64>,
+    pub total: i64,
+    pub used: Option<i64>,
+    pub unit: VolumeUsageUnit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeHealthCondition {
+    pub abnormal: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeVolumeStats {
+    pub usage: Vec<VolumeUsageStats>,
+    pub condition: Option<VolumeHealthCondition>,
 }
 
 impl TugboatCsiOperator {
@@ -399,6 +427,49 @@ impl TugboatCsiOperator {
             .map_err(map_grpc_error)
     }
 
+    pub async fn node_volume_stats(
+        &self,
+        socket_path: &str,
+        volume_id: String,
+        volume_path: String,
+        staging_target_path: Option<String>,
+    ) -> Result<NodeVolumeStats, error::Error> {
+        let req = NodeGetVolumeStatsRequest {
+            volume_id,
+            volume_path,
+            staging_target_path: staging_target_path.unwrap_or_default(),
+        };
+
+        let mut client = connect_node_client(socket_path).await?;
+        let response = client
+            .node_get_volume_stats(req)
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+        Ok(NodeVolumeStats {
+            usage: response
+                .usage
+                .into_iter()
+                .map(|usage| VolumeUsageStats {
+                    available: Some(usage.available),
+                    total: usage.total,
+                    used: Some(usage.used),
+                    unit: match VolumeUsageProtoUnit::try_from(usage.unit).ok() {
+                        Some(VolumeUsageProtoUnit::Bytes) => VolumeUsageUnit::Bytes,
+                        Some(VolumeUsageProtoUnit::Inodes) => VolumeUsageUnit::Inodes,
+                        _ => VolumeUsageUnit::Unknown,
+                    },
+                })
+                .collect(),
+            condition: response
+                .volume_condition
+                .map(|condition| VolumeHealthCondition {
+                    abnormal: condition.abnormal,
+                    message: condition.message,
+                }),
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn node_expand(
         &self,
@@ -512,16 +583,20 @@ fn map_controller_grpc_error(error: tonic::Status) -> error::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{CsiAccessMode, CsiAccessType, TugboatCsiOperator, volume_capability};
+    use super::{
+        CsiAccessMode, CsiAccessType, NodeVolumeStats, TugboatCsiOperator, VolumeHealthCondition,
+        VolumeUsageStats, VolumeUsageUnit, volume_capability,
+    };
     use crate::proto::csi::v1::node_server::{Node, NodeServer};
     use crate::proto::csi::v1::volume_capability::AccessType;
+    use crate::proto::csi::v1::volume_usage::Unit as VolumeUsageProtoUnit;
     use crate::proto::csi::v1::{
         NodeExpandVolumeRequest, NodeExpandVolumeResponse, NodeGetCapabilitiesRequest,
         NodeGetCapabilitiesResponse, NodeGetInfoRequest, NodeGetInfoResponse,
         NodeGetVolumeStatsRequest, NodeGetVolumeStatsResponse, NodePublishVolumeRequest,
         NodePublishVolumeResponse, NodeStageVolumeRequest, NodeStageVolumeResponse,
         NodeUnpublishVolumeRequest, NodeUnpublishVolumeResponse, NodeUnstageVolumeRequest,
-        NodeUnstageVolumeResponse,
+        NodeUnstageVolumeResponse, VolumeCondition, VolumeUsage,
     };
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -534,6 +609,7 @@ mod tests {
     enum RecordedCall {
         Stage(NodeStageVolumeRequest),
         Publish(NodePublishVolumeRequest),
+        GetVolumeStats(NodeGetVolumeStatsRequest),
         Expand(NodeExpandVolumeRequest),
         Unpublish(NodeUnpublishVolumeRequest),
         Unstage(NodeUnstageVolumeRequest),
@@ -542,6 +618,7 @@ mod tests {
     #[derive(Clone)]
     struct FakeNodeService {
         calls: Arc<Mutex<Vec<RecordedCall>>>,
+        volume_stats_response: NodeGetVolumeStatsResponse,
     }
 
     #[tonic::async_trait]
@@ -606,9 +683,13 @@ mod tests {
 
         async fn node_get_volume_stats(
             &self,
-            _request: Request<NodeGetVolumeStatsRequest>,
+            request: Request<NodeGetVolumeStatsRequest>,
         ) -> Result<Response<NodeGetVolumeStatsResponse>, Status> {
-            Ok(Response::new(NodeGetVolumeStatsResponse::default()))
+            self.calls
+                .lock()
+                .expect("lock should be available")
+                .push(RecordedCall::GetVolumeStats(request.into_inner()));
+            Ok(Response::new(self.volume_stats_response.clone()))
         }
 
         async fn node_expand_volume(
@@ -625,7 +706,9 @@ mod tests {
         }
     }
 
-    async fn spawn_node_server() -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
+    async fn spawn_node_server_with_volume_stats(
+        volume_stats_response: NodeGetVolumeStatsResponse,
+    ) -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
         let socket_path = std::env::temp_dir().join(format!(
             "tugboat-csi-operator-{}.sock",
             std::time::SystemTime::now()
@@ -639,6 +722,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let service = FakeNodeService {
             calls: calls.clone(),
+            volume_stats_response,
         };
         tokio::spawn(async move {
             tonic::transport::Server::builder()
@@ -649,6 +733,10 @@ mod tests {
         });
         sleep(Duration::from_millis(50)).await;
         (socket_path.display().to_string(), calls)
+    }
+
+    async fn spawn_node_server() -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
+        spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse::default()).await
     }
 
     #[test]
@@ -752,6 +840,76 @@ mod tests {
             panic!("publish capability should use mount access type");
         };
         assert_eq!(publish_mount.fs_type, "xfs");
+    }
+
+    #[tokio::test]
+    async fn can_query_volume_stats_over_uds() {
+        let operator = TugboatCsiOperator::default();
+        let (socket_path, calls) =
+            spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse {
+                usage: vec![
+                    VolumeUsage {
+                        available: 3072,
+                        total: 4096,
+                        used: 1024,
+                        unit: VolumeUsageProtoUnit::Bytes as i32,
+                    },
+                    VolumeUsage {
+                        available: 90,
+                        total: 100,
+                        used: 10,
+                        unit: VolumeUsageProtoUnit::Inodes as i32,
+                    },
+                ],
+                volume_condition: Some(VolumeCondition {
+                    abnormal: true,
+                    message: "filesystem is read-only".to_string(),
+                }),
+            })
+            .await;
+
+        let stats = operator
+            .node_volume_stats(
+                &socket_path,
+                "volume-1".to_string(),
+                "/publish/volume-1".to_string(),
+                Some("/staging/volume-1".to_string()),
+            )
+            .await
+            .expect("stats query should succeed");
+
+        assert_eq!(
+            stats,
+            NodeVolumeStats {
+                usage: vec![
+                    VolumeUsageStats {
+                        available: Some(3072),
+                        total: 4096,
+                        used: Some(1024),
+                        unit: VolumeUsageUnit::Bytes,
+                    },
+                    VolumeUsageStats {
+                        available: Some(90),
+                        total: 100,
+                        used: Some(10),
+                        unit: VolumeUsageUnit::Inodes,
+                    },
+                ],
+                condition: Some(VolumeHealthCondition {
+                    abnormal: true,
+                    message: "filesystem is read-only".to_string(),
+                }),
+            }
+        );
+
+        let calls = calls.lock().expect("lock should be available").clone();
+        assert_eq!(calls.len(), 1);
+        let RecordedCall::GetVolumeStats(stats_request) = &calls[0] else {
+            panic!("first call should be get volume stats");
+        };
+        assert_eq!(stats_request.volume_id, "volume-1");
+        assert_eq!(stats_request.volume_path, "/publish/volume-1");
+        assert_eq!(stats_request.staging_target_path, "/staging/volume-1");
     }
 
     #[tokio::test]

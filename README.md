@@ -118,12 +118,13 @@ Current node-side support matrix:
 - [x] `nodePublishSecretRef` / `nodeStageSecretRef`
 - [x] agent restart recovery from persisted publish state
 - [x] explicit `fs_type` and `volume_attributes`
-- [ ] `NodeExpandVolume` / volume expansion
-- [ ] drivers that require controller publish context
+- [x] `NodeExpandVolume` / volume expansion
+- [x] drivers that require controller publish context
+- [x] `NodeGetVolumeStats` / CSI volume health + usage surfacing on PV/PVC conditions
 
 `Filesystem` volumes are exposed to the guest as a 9p share. The mount tag is the referenced `volumeClaimRef[].name`.
 
-Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling and `NodeExpandVolume` when the driver advertises it. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
+Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling, `NodeExpandVolume` when the driver advertises it, and `NodeGetVolumeStats`-backed PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
 
 ## Roadmap
 
