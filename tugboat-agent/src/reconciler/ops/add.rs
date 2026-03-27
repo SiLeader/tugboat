@@ -24,7 +24,9 @@ use std::collections::HashMap;
 use tracing::{debug, error, info};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{PersistentVolume, Ship, ShipCondition};
+use tugboat_resources::manifests::core::v1::{
+    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship, ShipCondition,
+};
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
@@ -122,7 +124,8 @@ impl ShipReconciler {
 
         debug!("Planning network configurations for ship");
         let networks = self.cni.create_network_configs(ship_id, network_classes);
-        let (published_volumes, vm_volumes) = self.setup_volumes(ship_id, &volumes).await?;
+        let (published_volumes, vm_volumes) =
+            self.setup_volumes(ship_id, &namespace, &volumes).await?;
 
         self.with_cleanup(ship_id, published_volumes.as_slice(), &volumes, || {
             let volumes = vm_volumes;
@@ -163,6 +166,7 @@ impl ShipReconciler {
     async fn setup_volumes(
         &self,
         ship_id: &str,
+        namespace: &str,
         volumes: &[VolumeInfo],
     ) -> Result<(Vec<PublishedVolume>, Vec<VmVolumeConfig>), ReconcileError> {
         let mut published_volumes = Vec::new();
@@ -194,7 +198,7 @@ impl ShipReconciler {
                     let mut cleanup_targets = published_volumes.clone();
                     cleanup_targets.push(published.clone());
                     if let Err(err) = self
-                        .ensure_node_expansion(volume, &published, &secrets)
+                        .ensure_node_expansion(namespace, volume, &published, &secrets)
                         .await
                     {
                         let controller_publish_secrets =
@@ -370,6 +374,7 @@ impl ShipReconciler {
 
     async fn ensure_node_expansion(
         &self,
+        namespace: &str,
         volume: &VolumeInfo,
         published: &PublishedVolume,
         secrets: &crate::csi::ResolvedCsiSecrets,
@@ -409,8 +414,13 @@ impl ShipReconciler {
                 feature: "node_expand".to_string(),
             });
         };
-        self.mark_volume_node_expanded(&volume.volume_name, expanded_capacity_bytes)
-            .await?;
+        self.mark_volume_node_expanded(
+            namespace,
+            &volume.claim_name,
+            &volume.volume_name,
+            expanded_capacity_bytes,
+        )
+        .await?;
         Ok(())
     }
 
@@ -434,6 +444,8 @@ impl ShipReconciler {
 
     async fn mark_volume_node_expanded(
         &self,
+        namespace: &str,
+        claim_name: &str,
         volume_name: &str,
         capacity_bytes: i64,
     ) -> Result<(), ReconcileError> {
@@ -450,6 +462,40 @@ impl ShipReconciler {
         status.node_expansion_required = Some(false);
         status.attached_node = Some(self.node_name.clone());
         api.replace(volume_name, volume).await?;
+        self.mark_claim_node_expanded(namespace, claim_name, capacity_bytes)
+            .await?;
+        Ok(())
+    }
+
+    async fn mark_claim_node_expanded(
+        &self,
+        namespace: &str,
+        claim_name: &str,
+        capacity_bytes: i64,
+    ) -> Result<(), ReconcileError> {
+        let api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
+        let Some(mut claim) = api.get(claim_name).await? else {
+            return Ok(());
+        };
+        let status = claim
+            .status
+            .get_or_insert_with(PersistentVolumeClaimStatus::default);
+        let mut changed = false;
+        if status.phase.as_deref() != Some("Bound") {
+            status.phase = Some("Bound".to_string());
+            changed = true;
+        }
+        if status.capacity_bytes != Some(capacity_bytes) {
+            status.capacity_bytes = Some(capacity_bytes);
+            changed = true;
+        }
+        if status.resize_pending != Some(false) {
+            status.resize_pending = Some(false);
+            changed = true;
+        }
+        if changed {
+            api.replace(claim_name, claim).await?;
+        }
         Ok(())
     }
 }

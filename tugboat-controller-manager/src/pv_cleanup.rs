@@ -146,10 +146,13 @@ impl PersistentVolumeCleanupReconciler {
             .spec
             .as_ref()
             .ok_or_else(|| ControllerError::MissingPersistentVolumeSpec { name: name.clone() })?;
-        let csi = spec
-            .csi
-            .as_ref()
-            .ok_or_else(|| ControllerError::MissingPersistentVolumeCsi { name: name.clone() })?;
+        let Some(csi) = spec.csi.as_ref() else {
+            tracing::warn!(
+                "Managed PersistentVolume '{}' has no CSI source; skipping backing volume cleanup",
+                name
+            );
+            return Ok(Action::await_change());
+        };
         if csi.volume_handle.is_empty() {
             return Err(ControllerError::MissingVolumeHandle { name });
         }

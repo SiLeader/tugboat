@@ -16,7 +16,6 @@ What is still missing
 - `StorageClassSpec` proto is missing `volumeBindingMode` (Immediate vs WaitForFirstConsumer), `mountOptions`, and `allowedTopologies`; topology-aware or late-binding provisioning cannot be expressed today.
 - `PersistentVolumeSpec` proto has no `node_affinity` field; topology-constrained CSI volumes cannot express which nodes they are accessible from.
 - `PersistentVolumeClaimSpec` proto has no `dataSource` or `dataSourceRef` field; volume cloning and snapshot-restore are not expressible.
-- `pv_cleanup.rs` and `pvc_provisioner.rs` both require a CSI source on every PV they process; manually-created (non-CSI) PVs cause `MissingPersistentVolumeCsi` errors with no graceful fallback.
 - Make the scheduler storage-aware if topology, attach limits, or driver placement constraints are required. Current scheduling has no CSI-specific plugins and does not filter nodes by driver availability or volume attach limits.
 - Decide whether snapshots, cloning, and PVC data sources are in scope. The current PVC/PV schemas still do not model them.
 - Decide whether status should grow from the current phase/capacity/resize fields into a richer condition/error model for long-running operational debugging.
@@ -37,4 +36,5 @@ Acceptance criteria
 - ✓ PVCs can express the inputs needed for CSI provisioning, including requested size and the intended volume mode.
 - ✓ Dynamically provisioned PVs preserve the CSI metadata needed by downstream node-side flows.
 - ✓ Drivers that require controller expansion are handled through the implemented controller-side CSI flow (`pvc_provisioner.rs` calls `ControllerExpandVolume`).
-- The todo stays aligned with reality: it should not describe capacity-aware provisioning, filesystem claims, StorageClass CSI secret propagation, or basic controller-side expansion as missing anymore.
+- ✓ `pv_cleanup.rs` and `pvc_provisioner.rs` now handle non-CSI PVs gracefully instead of failing with `MissingPersistentVolumeCsi`; CSI-specific cleanup/resize is skipped or rejected without crashing reconciliation.
+- The todo stays aligned with reality: it should not describe capacity-aware provisioning, filesystem claims, StorageClass CSI secret propagation, basic controller-side expansion, or non-CSI PV graceful handling as missing anymore.

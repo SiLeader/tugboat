@@ -346,11 +346,24 @@ impl PvcProvisionerReconciler {
                             name: pv_name.clone(),
                         }
                     })?;
-                    let csi = spec.csi.as_ref().ok_or_else(|| {
-                        ControllerError::MissingPersistentVolumeCsi {
-                            name: pv_name.clone(),
+                    let Some(csi) = spec.csi.as_ref() else {
+                        tracing::warn!(
+                            "PersistentVolume '{}' bound to PersistentVolumeClaim '{}/{}' is not CSI-backed; controller resize is not available",
+                            pv_name,
+                            namespace,
+                            name
+                        );
+                        latest_changed |= apply_pvc_status(
+                            &mut latest,
+                            "ResizeRejected",
+                            effective_capacity_bytes,
+                            false,
+                        );
+                        if latest_changed {
+                            pvc_api.replace(&name, latest).await?;
                         }
-                    })?;
+                        return Ok(Action::await_change());
+                    };
                     (
                         csi.volume_handle.clone(),
                         csi.fs_type.clone(),

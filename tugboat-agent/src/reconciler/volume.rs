@@ -284,23 +284,9 @@ fn ensure_access_modes_compatible(
 }
 
 fn ensure_supported_csi_source(
-    volume_name: &str,
-    source: &CsiPersistentVolumeSource,
+    _volume_name: &str,
+    _source: &CsiPersistentVolumeSource,
 ) -> Result<(), ReconcileError> {
-    let unsupported_features = [(
-        "controller_expand_secret_ref",
-        source.controller_expand_secret_ref.as_ref(),
-    )];
-
-    for (feature, reference) in unsupported_features {
-        if reference.is_some() {
-            return Err(ReconcileError::UnsupportedPersistentVolumeCsiFeature {
-                volume: volume_name.to_string(),
-                feature: feature.to_string(),
-            });
-        }
-    }
-
     Ok(())
 }
 
@@ -430,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_secret_backed_csi_fields() {
+    fn allows_controller_expand_secret_ref() {
         let source = CsiPersistentVolumeSource {
             controller_expand_secret_ref: Some(SecretReference {
                 name: "expand-secret".to_string(),
@@ -439,7 +425,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(ensure_supported_csi_source("pv", &source).is_err());
+        assert!(ensure_supported_csi_source("pv", &source).is_ok());
     }
 
     #[test]

@@ -8,14 +8,12 @@ Current evidence
 - `README.md` already documents that node-side support includes `Block`, `Filesystem`, `NodeStageVolume` / `NodeUnstageVolume`, `nodePublishSecretRef` / `nodeStageSecretRef`, persisted publish-state recovery, `fs_type`, and `volume_attributes`.
 - `tugboat-agent/src/csi.rs` implements the full ControllerPublish → NodeStage → NodePublish pipeline; `publish_context` returned by `ControllerPublishVolume` is passed through into both `NodeStageVolume` and `NodePublishVolume`. Unpublish reverses the sequence and calls `ControllerUnpublishVolume` when appropriate.
 - `tugboat-agent/src/csi.rs` also implements `expand()`: it queries `NodeCapability::ExpandVolume` and calls `NodeExpandVolume` when the driver supports it.
-- `tugboat-agent/src/reconciler/volume.rs` resolves `controller_publish_secret_ref`, `node_publish_secret_ref`, `node_stage_secret_ref`, and `node_expand_secret_ref`; only `controller_expand_secret_ref` is still explicitly rejected as unsupported.
-- `tugboat-agent/src/reconciler/ops/add.rs` attaches CSI volumes during create and recovers persisted volume state for already-running ships. After a successful publish it calls `csi.expand()` when `PersistentVolumeStatus.node_expansion_required` is set, and updates `PersistentVolumeStatus.capacity_bytes` and `attached_node` on success.
+- `tugboat-agent/src/reconciler/volume.rs` resolves `controller_publish_secret_ref`, `controller_expand_secret_ref`, `node_publish_secret_ref`, `node_stage_secret_ref`, and `node_expand_secret_ref`.
+- `tugboat-agent/src/reconciler/ops/add.rs` attaches CSI volumes during create and recovers persisted volume state for already-running ships. After a successful publish it calls `csi.expand()` when `PersistentVolumeStatus.node_expansion_required` is set, and updates both `PersistentVolumeStatus` and `PersistentVolumeClaimStatus` capacity/resize state on success.
 - `tugboat-agent/src/reconciler/ops/delete.rs` detaches published volumes during cleanup.
 - `tugboat-vm-runtime-interface/src/run.rs` and `tugboat-runtime/src/execute/vm/qemu/mod.rs` expose block volumes as virtio disks and filesystem volumes as 9p shares to the guest.
 
 What is still missing
-- `ensure_supported_csi_source()` in `volume.rs` rejects any PV that carries `controller_expand_secret_ref`. The controller-manager’s provisioner already writes this field onto PVs provisioned from a StorageClass that allows expansion. Ships therefore cannot attach to expandable dynamically-provisioned volumes. The fix is to stop rejecting the field during publish (the agent never calls `ControllerExpandVolume`; only the controller-manager does).
-- `PersistentVolumeClaimStatus.capacity_bytes` is not updated by the agent after a volume is attached; it stays stale until the controller-manager next reconciles the PVC.
 - `GetVolumeStats` / `NodeGetVolumeStats` is not called; volume health and usage cannot be probed or surfaced.
 - `VolumeCondition` node capability is never utilized; per-volume error states returned by the driver are not tracked.
 - `reconciler/ops/modify.rs` treats all volume-spec changes identically. A capacity-only increase that the driver supports in place could instead trigger the node-expansion path rather than forcing a full recreate.
@@ -36,5 +34,7 @@ Implementation surfaces
 Acceptance criteria
 - ✓ CSI volumes can be resized on the node side when the driver advertises `NodeExpandVolume` (`csi.rs` `expand()` implemented).
 - ✓ Drivers that depend on controller-provided publish context can be used without patching the agent by hand (`controller_publish_secret_ref` resolved in `volume.rs`).
+- ✓ Dynamically provisioned expandable volumes are accepted by the agent because `controller_expand_secret_ref` is no longer rejected during volume validation.
+- ✓ After node-side resize completes, the agent updates both `PersistentVolumeStatus` and `PersistentVolumeClaimStatus` so capacity and `resize_pending` do not wait for the controller-manager's next reconcile.
 - ✓ Volume-related `Ship` updates are rejected with an explicit, CSI-aware recreate-required status path when they cannot be applied live (`reconciler/ops/modify.rs`).
-- The todo stays aligned with reality: it should not describe node expansion, controller publish context support, or the CSI-aware recreate-required path as missing anymore.
+- The todo stays aligned with reality: it should not describe node expansion, controller publish context support, controller expand secret support, PVC resize status propagation, or the CSI-aware recreate-required path as missing anymore.
