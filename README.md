@@ -117,8 +117,9 @@ Current node-side support matrix:
 - [x] drivers that require `NodeStageVolume` / `NodeUnstageVolume`
 - [x] `nodePublishSecretRef` / `nodeStageSecretRef`
 - [x] agent restart recovery from persisted publish state
+- [x] explicit `fs_type` and `volume_attributes`
 - [ ] `NodeExpandVolume` / volume expansion
-- [ ] drivers that require explicit `fs_type`, `volume_attributes`, or controller publish context
+- [ ] drivers that require controller publish context
 
 `Filesystem` volumes are exposed to the guest as a 9p share. The mount tag is the referenced `volumeClaimRef[].name`.
 

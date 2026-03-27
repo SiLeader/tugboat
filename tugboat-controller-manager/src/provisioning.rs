@@ -226,6 +226,7 @@ pub(crate) fn build_persistent_volume(
     access_modes: Vec<String>,
     volume_mode: Option<String>,
     volume_handle: String,
+    volume_attributes: HashMap<String, String>,
 ) -> PersistentVolume {
     PersistentVolume {
         object_meta: Some(ObjectMeta {
@@ -255,6 +256,8 @@ pub(crate) fn build_persistent_volume(
                 node_stage_secret_ref: None,
                 read_only: false,
                 volume_handle,
+                fs_type: None,
+                volume_attributes,
             }),
             claim_ref: Some(PersistentVolumeClaimReference {
                 name: claim_name.to_string(),
@@ -308,6 +311,7 @@ mod tests {
         MANAGED_LABEL, MANAGED_LABEL_VALUE, build_persistent_volume, claim_access_modes,
         claim_access_type, dynamic_volume_name, is_managed_pv, should_delete_backing_volume,
     };
+    use std::collections::HashMap;
     use tugboat_csi_operator::{CsiAccessMode, CsiAccessType};
 
     #[test]
@@ -361,6 +365,7 @@ mod tests {
             vec!["ReadWriteOnce".to_string()],
             Some("Block".to_string()),
             "volume-1".to_string(),
+            HashMap::new(),
         );
 
         assert!(is_managed_pv(&pv));
@@ -388,6 +393,7 @@ mod tests {
             vec!["ReadWriteOnce".to_string()],
             Some("Block".to_string()),
             "volume-1".to_string(),
+            HashMap::new(),
         );
 
         assert!(!should_delete_backing_volume(&pv).unwrap());

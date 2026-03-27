@@ -113,8 +113,9 @@ CSI volume を使う場合は、`volumeClaimRef` で同一 namespace の `Persis
 - [x] `NodeStageVolume` / `NodeUnstageVolume` を要求する driver
 - [x] `nodePublishSecretRef` / `nodeStageSecretRef`
 - [x] agent restart 後の publish state からの復旧
+- [x] 明示的な `fs_type` と `volume_attributes`
 - [ ] `NodeExpandVolume` / volume expansion
-- [ ] 明示的な `fs_type`、`volume_attributes`、controller publish context を必須とする driver
+- [ ] controller publish context を必須とする driver
 
 `Filesystem` volume は guest へ 9p share として公開され、mount tag には `volumeClaimRef[].name` が使われます。
 

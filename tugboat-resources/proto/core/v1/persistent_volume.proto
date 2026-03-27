@@ -62,4 +62,6 @@ message CsiPersistentVolumeSource {
   SecretReference node_stage_secret_ref = 6;
   bool read_only = 7;
   string volume_handle = 8;
+  optional string fs_type = 9;
+  map<string, string> volume_attributes = 10;
 }

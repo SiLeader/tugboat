@@ -6,17 +6,17 @@ Implement real handling for Ship Modified watch events in the agent.
 
 Current evidence
 - README.md still lists "Reconcile on Ship Modified / Deleted events" as unfinished.
-- tugboat-agent/src/reconciler/reconcile.rs already dispatches WatchEvent::Modified.
-- tugboat-agent/src/reconciler/ops/modify.rs checks whether a runtime exists for the Ship; if the runtime is absent it delegates to reconcile_added. If the runtime is present, it logs a warning and returns Ok(()) without reconciling any field changes.
+- tugboat-agent/src/reconciler/reconcile.rs dispatches WatchEvent::Modified.
+- tugboat-agent/src/reconciler/ops/modify.rs now computes a spec fingerprint and uses runtime_operator.matches_spec to detect no-op updates. If the runtime is missing it delegates to reconcile_added; if the spec changed and live mutation is not supported it sets a ShipStatus condition (SpecChangeRequiresRecreate) and replaces the status.
+- Live in-place mutation for image, network, volume, or class changes is still largely unimplemented and requires work.
 
 Why this matters
-- Added and Deleted flows exist, but updates to an existing Ship do not converge.
-- A running VM cannot safely be managed in production if image, class, network, or volume changes are silently ignored.
+- Added and Deleted flows exist, but updates to an existing Ship do not yet fully converge to the desired state.
+- A running VM cannot safely be managed in production if image, class, network, or volume changes are silently ignored or only produce a status condition.
 
 What to implement
 - Define which Ship fields are mutable in place, which require restart or recreate, and which must be rejected.
-- Compare the desired Ship against the current runtime state instead of treating every update as a blind restart.
-- Apply supported network and volume changes through the existing CNI and CSI wrappers.
+- Implement targeted in-place updates for supported changes (e.g., certain network or volume hotplug operations) using CNI and CSI integrations when possible.
 - Preserve the current fallback where a modified but missing runtime is treated like Added.
 - Update Ship status with explicit conditions for accepted updates, rejected updates, restart-required updates, and failures.
 - Make the handler idempotent so repeated Modified events with no meaningful delta are true no-ops.
@@ -31,8 +31,8 @@ Implementation surfaces
 - tugboat-agent/src/csi.rs
 
 Acceptance criteria
-- Modified events trigger deterministic reconciliation instead of a warning-only path.
+- Modified events trigger deterministic reconciliation or an explicit status condition instead of silent no-ops.
+- Supported in-place mutations are applied without recreating the VM.
 - Unsupported mutations fail explicitly and leave a visible status condition.
-- No-op updates do not recreate or restart the VM.
 - Recovery still works when the runtime record is missing and the agent must rebuild state from the Ship object.
 - Tests cover mutable updates, rejected updates, cleanup on failure, and runtime-missing fallback.

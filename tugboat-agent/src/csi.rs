@@ -194,6 +194,8 @@ impl CsiWrapper {
             source.read_only,
         )?;
         let access_type = access_type_from_volume_mode(volume.volume_mode.as_deref())?;
+        let fs_type = filesystem_type(source, access_type);
+        let volume_context = source.volume_attributes.clone();
         let requires_staging = node_capabilities.contains(&NodeCapability::StageUnstageVolume);
         self.ensure_mount_namespace(ship_id)?;
         let published = self.plan_published_volume(
@@ -212,6 +214,8 @@ impl CsiWrapper {
             let staging_target_path_for_rpc = staging_target_path.clone();
             let mount_namespace_path = published.mount_namespace_path.clone();
             let node_stage_secrets = secrets.node_stage.clone();
+            let fs_type = fs_type.clone();
+            let volume_context = volume_context.clone();
             match run_in_mount_namespace(mount_namespace_path, move || async move {
                 operator
                     .stage(
@@ -220,8 +224,9 @@ impl CsiWrapper {
                         staging_target_path_for_rpc,
                         access_mode,
                         access_type,
+                        fs_type,
                         node_stage_secrets,
-                        HashMap::new(),
+                        volume_context,
                         HashMap::new(),
                     )
                     .await
@@ -253,6 +258,8 @@ impl CsiWrapper {
         let mount_namespace_path = published.mount_namespace_path.clone();
         let staging_target_path = published.staging_target_path.clone();
         let node_publish_secrets = secrets.node_publish.clone();
+        let fs_type = fs_type.clone();
+        let volume_context = volume_context.clone();
         if let Err(err) = run_in_mount_namespace(mount_namespace_path, move || async move {
             operator
                 .publish(
@@ -262,9 +269,10 @@ impl CsiWrapper {
                     read_only,
                     access_mode,
                     access_type,
+                    fs_type,
                     staging_target_path,
                     node_publish_secrets,
-                    HashMap::new(),
+                    volume_context,
                     HashMap::new(),
                 )
                 .await
@@ -506,9 +514,7 @@ fn cleanup_target_path(
         }
         PublishedAccessType::Filesystem => cleanup_directory_path(target_path)?,
     }
-    if matches!(access_type, PublishedAccessType::Block) {
-        cleanup_target_parent_dir(target_path)?;
-    }
+    cleanup_target_parent_dir(target_path)?;
     Ok(())
 }
 
@@ -593,6 +599,16 @@ pub(crate) fn effective_publish_settings(
     ))
 }
 
+fn filesystem_type(
+    source: &CsiPersistentVolumeSource,
+    access_type: CsiAccessType,
+) -> Option<String> {
+    if !matches!(access_type, CsiAccessType::Filesystem) {
+        return None;
+    }
+    source.fs_type.clone().filter(|fs_type| !fs_type.is_empty())
+}
+
 fn select_access_mode(
     claim_access_modes: &[String],
     volume_access_modes: &[String],
@@ -641,7 +657,7 @@ mod tests {
     use super::{
         CsiDrivers, CsiWrapper, PublishedAccessType, PublishedVolume, TryConvertFromString,
         access_type_from_volume_mode, cleanup_directory_path, cleanup_target_path,
-        effective_publish_settings, prepare_directory_path, prepare_target_path,
+        effective_publish_settings, filesystem_type, prepare_directory_path, prepare_target_path,
         select_access_mode,
     };
     use tugboat_csi_operator::{CsiAccessMode, CsiAccessType, TugboatCsiOperator};
@@ -962,6 +978,21 @@ mod tests {
             )
             .exists()
         );
+        assert!(!temp_dir.join("ship-uid").exists());
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn uses_filesystem_type_only_for_filesystem_volumes() {
+        let source = CsiPersistentVolumeSource {
+            fs_type: Some("xfs".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            filesystem_type(&source, CsiAccessType::Filesystem),
+            Some("xfs".to_string())
+        );
+        assert_eq!(filesystem_type(&source, CsiAccessType::Block), None);
     }
 }

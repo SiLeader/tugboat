@@ -67,7 +67,7 @@ impl TugboatCsiOperator {
             capacity_range: None,
             volume_capabilities: access_modes
                 .into_iter()
-                .map(|access_mode| volume_capability(access_mode, access_type))
+                .map(|access_mode| volume_capability(access_mode, access_type, None))
                 .collect(),
             parameters,
             secrets: Default::default(),
@@ -161,6 +161,7 @@ impl TugboatCsiOperator {
         read_only: bool,
         access_mode: CsiAccessMode,
         access_type: CsiAccessType,
+        fs_type: Option<String>,
         staging_target_path: Option<String>,
         secrets: HashMap<String, String>,
         volume_context: HashMap<String, String>,
@@ -169,7 +170,7 @@ impl TugboatCsiOperator {
         let req = NodePublishVolumeRequest {
             volume_id,
             target_path,
-            volume_capability: Some(volume_capability(access_mode, access_type)),
+            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
             readonly: read_only,
             secrets,
             volume_context,
@@ -193,6 +194,7 @@ impl TugboatCsiOperator {
         staging_target_path: String,
         access_mode: CsiAccessMode,
         access_type: CsiAccessType,
+        fs_type: Option<String>,
         secrets: HashMap<String, String>,
         volume_context: HashMap<String, String>,
         publish_context: HashMap<String, String>,
@@ -201,7 +203,7 @@ impl TugboatCsiOperator {
             volume_id,
             publish_context,
             staging_target_path,
-            volume_capability: Some(volume_capability(access_mode, access_type)),
+            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
             secrets,
             volume_context,
         };
@@ -253,7 +255,11 @@ impl TugboatCsiOperator {
     }
 }
 
-fn volume_capability(access_mode: CsiAccessMode, access_type: CsiAccessType) -> VolumeCapability {
+fn volume_capability(
+    access_mode: CsiAccessMode,
+    access_type: CsiAccessType,
+    fs_type: Option<String>,
+) -> VolumeCapability {
     VolumeCapability {
         access_mode: Some(AccessMode {
             mode: match access_mode {
@@ -265,7 +271,7 @@ fn volume_capability(access_mode: CsiAccessMode, access_type: CsiAccessType) -> 
         access_type: Some(match access_type {
             CsiAccessType::Block => AccessType::Block(BlockVolume {}),
             CsiAccessType::Filesystem => AccessType::Mount(MountVolume {
-                fs_type: String::new(),
+                fs_type: fs_type.unwrap_or_default(),
                 mount_flags: Vec::new(),
                 volume_mount_group: String::new(),
             }),
@@ -461,13 +467,18 @@ mod tests {
 
     #[test]
     fn filesystem_access_type_is_encoded_as_mount_volume() {
-        let capability = volume_capability(CsiAccessMode::ReadWriteOnce, CsiAccessType::Filesystem);
+        let capability = volume_capability(
+            CsiAccessMode::ReadWriteOnce,
+            CsiAccessType::Filesystem,
+            None,
+        );
         assert!(matches!(capability.access_type, Some(AccessType::Mount(_))));
     }
 
     #[test]
     fn block_access_type_is_encoded_as_block_volume() {
-        let capability = volume_capability(CsiAccessMode::ReadWriteOnce, CsiAccessType::Block);
+        let capability =
+            volume_capability(CsiAccessMode::ReadWriteOnce, CsiAccessType::Block, None);
         assert!(matches!(capability.access_type, Some(AccessType::Block(_))));
     }
 
@@ -485,6 +496,7 @@ mod tests {
                 "/staging/volume-1".to_string(),
                 CsiAccessMode::ReadWriteOnce,
                 CsiAccessType::Filesystem,
+                Some("xfs".to_string()),
                 HashMap::from([("token".to_string(), "secret".to_string())]),
                 volume_context.clone(),
                 publish_context.clone(),
@@ -499,6 +511,7 @@ mod tests {
                 false,
                 CsiAccessMode::ReadWriteOnce,
                 CsiAccessType::Filesystem,
+                Some("xfs".to_string()),
                 Some("/staging/volume-1".to_string()),
                 HashMap::from([("token".to_string(), "secret".to_string())]),
                 volume_context.clone(),
@@ -527,6 +540,14 @@ mod tests {
                 .and_then(|capability| capability.access_type.clone()),
             Some(AccessType::Mount(_))
         ));
+        let Some(AccessType::Mount(stage_mount)) = stage_request
+            .volume_capability
+            .as_ref()
+            .and_then(|capability| capability.access_type.clone())
+        else {
+            panic!("stage capability should use mount access type");
+        };
+        assert_eq!(stage_mount.fs_type, "xfs");
 
         let RecordedCall::Publish(publish_request) = &calls[1] else {
             panic!("second call should be publish");
@@ -537,6 +558,14 @@ mod tests {
             publish_request.secrets.get("token"),
             Some(&"secret".to_string())
         );
+        let Some(AccessType::Mount(publish_mount)) = publish_request
+            .volume_capability
+            .as_ref()
+            .and_then(|capability| capability.access_type.clone())
+        else {
+            panic!("publish capability should use mount access type");
+        };
+        assert_eq!(publish_mount.fs_type, "xfs");
     }
 
     #[tokio::test]

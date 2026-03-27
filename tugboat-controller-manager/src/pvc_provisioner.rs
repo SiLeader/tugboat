@@ -166,6 +166,7 @@ impl PvcProvisionerReconciler {
                 spec.access_modes.clone(),
                 spec.volume_mode.clone(),
                 volume_id.clone(),
+                provisioned_volume.volume_context.clone(),
             );
 
             match pv_api.create(persistent_volume).await {
