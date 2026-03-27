@@ -1,39 +1,35 @@
-Agent CSI Feature Completion
-============================
+CSI Agent and Runtime Completion
+================================
 
 Goal
-Finish the remaining agent-side CSI functionality so storage support is not limited to the current narrow compatibility set.
+Refresh the node-side CSI todo so it reflects the code as it exists today and focuses only on the remaining agent/runtime work.
 
 Current evidence
-- README.md still marks "Storage (CSI)" as unfinished.
-- tugboat-agent/src/reconciler/volume.rs validates both Block and Filesystem modes and enforces compatibility between PVC and PV.
-- tugboat-agent/src/csi.rs and the reconciler now accept node_publish_secret_ref and node_stage_secret_ref and load secret data for node-side publish/stage flows.
-- Controller-side secret refs and controller-only capabilities (controller_publish_secret_ref, controller_expand_secret_ref, node_expand_secret_ref) are still rejected and not implemented.
-- NodeStage/NodeUnstage capabilities and robust node-side recovery (recreating mounts after agent restart) remain incomplete.
+- `README.md` already documents that node-side support includes `Block`, `Filesystem`, `NodeStageVolume` / `NodeUnstageVolume`, `nodePublishSecretRef` / `nodeStageSecretRef`, persisted publish-state recovery, `fs_type`, and `volume_attributes`.
+- `tugboat-agent/src/csi.rs` implements stage, publish, unpublish, and unstage flows, persists `PublishedVolume` state, and passes `fs_type` plus `volume_attributes` into CSI RPCs.
+- `tugboat-agent/src/reconciler/volume.rs` resolves `node_publish_secret_ref` and `node_stage_secret_ref`, but still rejects `controller_publish_secret_ref`, `controller_expand_secret_ref`, and `node_expand_secret_ref`.
+- `tugboat-agent/src/reconciler/ops/add.rs` attaches CSI volumes during create and recovers persisted volume state for already-running ships; `tugboat-agent/src/reconciler/ops/delete.rs` detaches published volumes during cleanup.
+- `tugboat-vm-runtime-interface/src/run.rs` and `tugboat-runtime/src/execute/vm/qemu/mod.rs` expose block volumes as virtio disks and filesystem volumes as 9p shares to the guest.
 
-Important scope note
-- Dynamic PVC provisioning and PV cleanup already exist in tugboat-controller-manager.
-- This TODO is focused on completing node-side attach, publish, and recovery behavior in tugboat-agent; controller-side controller_* flows are a separate concern.
-
-What to implement
-- Implement NodeStageVolume/NodeUnstageVolume flows when drivers require staging, including creating stage and target paths and idempotent stage/publish operations.
-- Pass CSI secret references from PersistentVolume sources into the node publish and stage calls where required (note: controller-side secrets are separate and may remain out of scope for the node implementation).
-- Add node-side volume expansion support if decided in scope, with status reporting.
-- Improve agent restart recovery to rediscover and clean up published mounts and avoid stale state files.
-- Document the supported CSI capability matrix and driver compatibility so users understand which drivers and access modes are supported.
+What is still missing
+- Add `NodeExpandVolume` handling and the surrounding resize flow so node-side volume expansion is possible.
+- Support CSI drivers that require controller-managed publish context. `tugboat-agent/src/csi.rs` currently passes an empty `publish_context` map to stage/publish calls.
+- Decide how to handle CSI attach/detach for `Ship` updates. Today CSI volumes are reconciled for create/delete flows, but live mutation on `Modified` events still falls back to "recreate required".
+- Improve recovery beyond the persisted JSON state if stronger self-healing is needed. Current recovery assumes the persisted publish records are present and match the planned mounts.
+- Document the practical driver compatibility matrix for VM guests, especially the `Filesystem -> 9p` path and any driver assumptions around mount namespaces and guest access.
 
 Implementation surfaces
-- tugboat-agent/src/reconciler/volume.rs
-- tugboat-agent/src/csi.rs
-- tugboat-agent/src/reconciler/ops/add.rs
-- tugboat-agent/src/reconciler/ops/modify.rs
-- tugboat-agent/src/reconciler/ops/delete.rs
-- tugboat-csi-operator/src/ (add NodeStageVolumeRequest/NodeUnstageVolumeRequest gRPC wrappers)
-- tugboat-vm-runtime-interface/src/
+- `tugboat-agent/src/csi.rs`
+- `tugboat-agent/src/reconciler/volume.rs`
+- `tugboat-agent/src/reconciler/ops/add.rs`
+- `tugboat-agent/src/reconciler/ops/delete.rs`
+- `tugboat-agent/src/reconciler/ops/modify.rs`
+- `tugboat-vm-runtime-interface/src/run.rs`
+- `tugboat-runtime/src/execute/vm/qemu/mod.rs`
 
 Acceptance criteria
-- Both Block and Filesystem volumes are attachable when the CSI driver supports them.
-- Node-stage and node-publish flows work for drivers requiring staging.
-- Secret-backed node publish/stage flows work for supported drivers.
-- Agent restart recovery can rediscover and clean up published volumes without orphaning state.
-- Integration tests exist for at least one happy path and one cleanup/recovery path.
+- CSI volumes can be resized on the node side when the driver advertises `NodeExpandVolume`.
+- Drivers that depend on controller-provided publish context can be used without patching the agent by hand.
+- Volume-related `Ship` updates are either reconciled safely or rejected with an explicit, CSI-aware status path.
+- Recovery behavior is documented clearly enough that operators know whether persisted state alone is sufficient.
+- Tests cover at least one expansion path or, if expansion stays out of scope, the code rejects it explicitly and predictably.

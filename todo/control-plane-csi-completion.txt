@@ -1,0 +1,42 @@
+CSI Control Plane Completion
+============================
+
+Goal
+Track the remaining CSI work on the API, resource-model, and controller side now that the basic storage control plane already exists.
+
+Current evidence
+- `tugboat-resources/proto/core/v1/` defines `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass`, and `tugboat-resources/src/manifests/mod.rs` registers them as API resources.
+- `tugboat-resource-store/src/serializer/mod.rs` already serializes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass`, so they can be stored and watched through etcd-backed APIs.
+- `tugboat-apiserver/src/endpoints/v1_core/` already exposes CRUD/list/watch/status endpoints for `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass`.
+- `tugboat-controller-manager/src/main.rs` starts both `PvcProvisionerController` and `PersistentVolumeCleanupController`.
+- `tugboat-controller-manager/src/pvc_provisioner.rs` dynamically provisions CSI-backed volumes with `CreateVolume`, creates managed PVs, and binds them back to PVCs.
+- `tugboat-controller-manager/src/pv_cleanup.rs` finalizes managed PV deletion and calls `DeleteVolume` on the CSI driver.
+
+What is still missing
+- Add capacity-aware provisioning. `PersistentVolumeClaimSpec` has no requested size field, `PersistentVolumeSpec` has no capacity field, and `create_volume` is called with `capacity_range: None`.
+- Support dynamic provisioning for `Filesystem` claims if that is intended. `tugboat-controller-manager/src/provisioning.rs` currently only accepts `Block` in `claim_access_type`.
+- Preserve more CSI metadata on dynamically provisioned PVs. `build_persistent_volume` currently writes `volume_handle` and `volume_attributes`, but drops `fs_type` and all CSI secret references.
+- Implement controller-side CSI operations beyond create/delete: `ControllerPublishVolume`, `ControllerUnpublishVolume`, `ControllerExpandVolume`, capability discovery, and any required publish-context flow.
+- Add a resource/status model for binding and capacity that is closer to what CSI controllers need in practice. Current PV/PVC statuses only contain conditions arrays.
+- Extend `StorageClass` and related APIs if features such as `allowVolumeExpansion`, topology/binding policy, mount options, or controller secrets are required.
+- Make the scheduler storage-aware if topology, attach limits, or driver placement constraints are required. Current scheduling does not account for CSI-specific constraints.
+- Decide whether snapshots, cloning, and data sources are in scope. The current PVC/PV schemas do not model them.
+
+Implementation surfaces
+- `tugboat-resources/proto/core/v1/persistent_volume.proto`
+- `tugboat-resources/proto/core/v1/persistent_volume_claim.proto`
+- `tugboat-resources/proto/core/v1/storage_class.proto`
+- `tugboat-controller-manager/src/provisioning.rs`
+- `tugboat-controller-manager/src/pvc_provisioner.rs`
+- `tugboat-controller-manager/src/pv_cleanup.rs`
+- `tugboat-csi-operator/src/lib.rs`
+- `tugboat-apiserver/src/endpoints/v1_core/`
+- `tugboat-scheduler/src/`
+
+Acceptance criteria
+- PVCs can express the inputs needed for CSI provisioning, including at minimum requested size and the intended volume mode.
+- Dynamically provisioned PVs preserve the CSI metadata needed by downstream node-side flows.
+- Drivers that require controller publish or controller expand operations are either supported end-to-end or rejected explicitly by the control plane.
+- Status and binding information are rich enough for operators and controllers to debug CSI lifecycle failures.
+- Scheduling decisions remain correct when storage topology or CSI placement constraints matter.
+- The todo stays aligned with reality: it should not describe basic PV/PVC/StorageClass APIs or dynamic provisioning as "missing" anymore.
