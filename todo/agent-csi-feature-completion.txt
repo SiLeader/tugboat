@@ -17,8 +17,8 @@ Current evidence
   and `PersistentVolumeClaimStatus.conditions`, including `VolumeCondition` health state.
 - `tugboat-agent/src/reconciler/volume.rs` resolves `controller_publish_secret_ref`,
   `controller_expand_secret_ref`, `node_publish_secret_ref`, `node_stage_secret_ref`, and
-  `node_expand_secret_ref`. Access mode and volume mode (Block/Filesystem) compatibility is
-  validated before attempting a publish.
+  `node_expand_secret_ref`. `mount_options` (resolved as `mount_flags`) are also carried
+  alongside these secrets.
 - `tugboat-agent/src/reconciler/ops/add.rs` attaches CSI volumes during Ship create and recovers
   persisted volume state for already-running Ships. After a successful publish, it calls
   `csi.expand()` when `PersistentVolumeStatus.node_expansion_required` is set, and updates both
@@ -33,18 +33,12 @@ Current evidence
   a `mount_tag` for guest identification.
 - `tugboat-runtime/src/execute/vm/qemu/mod.rs` translates `VmVolumeKind::Block` into a QEMU
   `-drive if=virtio` argument and `VmVolumeKind::Filesystem` into `-fsdev local` +
-  `-device virtio-9p-pci` arguments. The 9p `security_model=none` is used so the guest can
-  access files without host-side permission constraints.
+  `-device virtio-9p-pci` arguments.
 - `tugboat-csi-operator/src/lib.rs` encodes `CsiAccessType::Block` as `BlockVolume {}` and
-  `CsiAccessType::Filesystem` as `MountVolume { fs_type, ... }` in every capability sent to
-  the driver. `fs_type` comes from `CsiPersistentVolumeSource.fs_type` for filesystem volumes.
+  `CsiAccessType::Filesystem` as `MountVolume { fs_type, mount_flags, ... }` in every capability
+  sent to the driver.
 
 What is still missing
-- `MountVolume.mount_flags` in `tugboat-csi-operator/src/lib.rs` is always `Vec::new()` because
-  there is no `mount_options` source from the PV or StorageClass yet (tracked on the control-plane
-  side). Once `mount_options` lands in `StorageClassSpec`, the agent must thread the resolved list
-  through `ResolvedCsiSecrets` (or a parallel struct) into every `NodeStage` and `NodePublish`
-  call that uses `Filesystem` access type.
 - `reconciler/ops/modify.rs` treats all volume-spec changes identically as recreate-required. A
   capacity-only increase that the driver supports in place could instead trigger the existing
   node-expansion path rather than forcing a full Ship recreate.
@@ -55,16 +49,14 @@ What is still missing
 - Whether live CSI attach/detach (beyond resize) should ever become an in-place operation instead
   of the current recreate-required path is not decided; the architecture currently treats it as
   out of scope.
-- If controller and node CSI services can live on different sockets (common in production
-  deployments), there is no per-driver config for separate controller/node endpoints. The current
-  `CsiDrivers` map assumes a single socket serves all RPCs.
+- If controller and node CSI services can live on different sockets, there is no per-driver config
+  for separate controller/node endpoints. The current `CsiDrivers` map assumes a single socket
+  serves all RPCs.
 - Practical driver compatibility has not been documented — in particular the `Filesystem → 9p`
   path has specific assumptions (mount namespace isolation, `security_model=none`, no virtiofs
   alternative) that may not suit all drivers or guests.
 
 Implementation surfaces
-- `tugboat-agent/src/csi.rs` — thread `mount_flags` into `stage()` and `publish()` calls once control-plane adds `mount_options`
-- `tugboat-agent/src/reconciler/volume.rs` — carry resolved mount options alongside secrets if needed
 - `tugboat-agent/src/reconciler/ops/modify.rs` — detect capacity-only resize and route to expansion instead of recreate
 - `tugboat-vm-runtime-interface/src/run.rs`
 - `tugboat-runtime/src/execute/vm/qemu/mod.rs`
@@ -83,6 +75,5 @@ Acceptance criteria
   virtio-9p shares with a stable mount tag.
 - ✓ Volume-related Ship updates are rejected with a CSI-aware recreate-required status path
   when they cannot be applied live.
-- Filesystem drivers that require non-default mount flags can be configured once mount_options
-  support lands in StorageClass; `MountVolume.mount_flags` must be populated from that source
-  in both `NodeStageVolume` and `NodePublishVolume` calls.
+- ✓ Filesystem drivers that require non-default mount flags can be configured;
+  `MountVolume.mount_flags` is populated from `PersistentVolumeSpec.csi.mount_options`.

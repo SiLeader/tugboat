@@ -1,6 +1,6 @@
 # Tugboat
 
-[日本語](./docs/README_ja.md)
+[日本語](./README_ja.md)
 
 Tugboat is a system for orchestrating virtual machines in a Kubernetes‑like manner.
 
