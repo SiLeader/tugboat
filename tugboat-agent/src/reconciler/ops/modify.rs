@@ -76,9 +76,20 @@ impl ShipReconciler {
         );
         let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
         let mut status_ship = ship.clone();
+        let (status, message) = if ship_spec.volume_claim_ref.is_empty() {
+            (
+                "SpecChangeRequiresRecreate",
+                "Ship spec changed while running; live mutation is not supported — recreate the ship to apply the new spec".to_string(),
+            )
+        } else {
+            (
+                "CsiVolumeChangeRequiresRecreate",
+                "Ship spec changed while running; CSI-backed volume attach, detach, and resize changes are not reconciled live — recreate the ship to apply the new storage plan".to_string(),
+            )
+        };
         status_ship.append_status(ShipCondition {
-            status: "SpecChangeRequiresRecreate".to_string(),
-            message: "Ship spec changed while running; live mutation is not supported — recreate the ship to apply the new spec".to_string(),
+            status: status.to_string(),
+            message,
             timestamp: Some(Time::now()),
         });
         api.replace_status(name, status_ship).await?;

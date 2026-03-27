@@ -13,14 +13,10 @@ Current evidence
 - `tugboat-controller-manager/src/pv_cleanup.rs` finalizes managed PV deletion and calls `DeleteVolume` on the CSI driver.
 
 What is still missing
-- Add capacity-aware provisioning. `PersistentVolumeClaimSpec` has no requested size field, `PersistentVolumeSpec` has no capacity field, and `create_volume` is called with `capacity_range: None`.
-- Support dynamic provisioning for `Filesystem` claims if that is intended. `tugboat-controller-manager/src/provisioning.rs` currently only accepts `Block` in `claim_access_type`.
-- Preserve more CSI metadata on dynamically provisioned PVs. `build_persistent_volume` currently writes `volume_handle` and `volume_attributes`, but drops `fs_type` and all CSI secret references.
-- Implement controller-side CSI operations beyond create/delete: `ControllerPublishVolume`, `ControllerUnpublishVolume`, `ControllerExpandVolume`, capability discovery, and any required publish-context flow.
-- Add a resource/status model for binding and capacity that is closer to what CSI controllers need in practice. Current PV/PVC statuses only contain conditions arrays.
-- Extend `StorageClass` and related APIs if features such as `allowVolumeExpansion`, topology/binding policy, mount options, or controller secrets are required.
 - Make the scheduler storage-aware if topology, attach limits, or driver placement constraints are required. Current scheduling does not account for CSI-specific constraints.
-- Decide whether snapshots, cloning, and data sources are in scope. The current PVC/PV schemas do not model them.
+- Decide whether snapshots, cloning, and PVC data sources are in scope. The current PVC/PV schemas still do not model them.
+- Decide whether status should grow from the current phase/capacity/resize fields into a richer condition/error model for long-running operational debugging.
+- If controller services are exposed on endpoints distinct from node services, add explicit config and orchestration for split controller/node CSI sockets instead of assuming a single configured endpoint can serve the needed RPCs.
 
 Implementation surfaces
 - `tugboat-resources/proto/core/v1/persistent_volume.proto`
@@ -34,9 +30,7 @@ Implementation surfaces
 - `tugboat-scheduler/src/`
 
 Acceptance criteria
-- PVCs can express the inputs needed for CSI provisioning, including at minimum requested size and the intended volume mode.
+- PVCs can express the inputs needed for CSI provisioning, including requested size and the intended volume mode.
 - Dynamically provisioned PVs preserve the CSI metadata needed by downstream node-side flows.
-- Drivers that require controller publish or controller expand operations are either supported end-to-end or rejected explicitly by the control plane.
-- Status and binding information are rich enough for operators and controllers to debug CSI lifecycle failures.
-- Scheduling decisions remain correct when storage topology or CSI placement constraints matter.
-- The todo stays aligned with reality: it should not describe basic PV/PVC/StorageClass APIs or dynamic provisioning as "missing" anymore.
+- Drivers that require controller expansion are handled through the implemented controller-side CSI flow.
+- The todo stays aligned with reality: it should not describe capacity-aware provisioning, filesystem claims, StorageClass CSI secret propagation, or basic controller-side expansion as missing anymore.

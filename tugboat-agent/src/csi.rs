@@ -21,7 +21,9 @@ use std::fs::{OpenOptions, create_dir_all, read_dir, remove_dir, remove_file};
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
-use tugboat_csi_operator::{CsiAccessMode, CsiAccessType, NodeCapability, TugboatCsiOperator};
+use tugboat_csi_operator::{
+    ControllerCapability, CsiAccessMode, CsiAccessType, NodeCapability, TugboatCsiOperator,
+};
 use tugboat_resources::manifests::core::v1::{
     CsiPersistentVolumeSource, PersistentVolumeClaimSpec, PersistentVolumeSpec,
 };
@@ -83,6 +85,7 @@ pub(crate) enum PublishedAccessType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PublishedVolume {
+    pub claim_name: String,
     pub driver: String,
     pub volume_id: String,
     pub target_path: String,
@@ -91,10 +94,14 @@ pub(crate) struct PublishedVolume {
     pub mount_namespace_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staging_target_path: Option<String>,
+    #[serde(default)]
+    pub controller_published: bool,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ResolvedNodeSecrets {
+pub(crate) struct ResolvedCsiSecrets {
+    pub controller_publish: HashMap<String, String>,
+    pub node_expand: HashMap<String, String>,
     pub node_publish: HashMap<String, String>,
     pub node_stage: HashMap<String, String>,
 }
@@ -131,6 +138,7 @@ impl CsiWrapper {
             return Err(CsiError::MissingVolumeHandle);
         }
         Ok(PublishedVolume {
+            claim_name: claim_name.to_string(),
             driver: source.driver.clone(),
             volume_id: source.volume_handle.clone(),
             target_path: self.target_path(ship_id, claim_name, access_type),
@@ -138,6 +146,7 @@ impl CsiWrapper {
             mount_namespace_path: mountns::path_for_ship(ship_id).display().to_string(),
             staging_target_path: requires_staging
                 .then(|| self.staging_target_path(ship_id, claim_name)),
+            controller_published: false,
         })
     }
 
@@ -177,12 +186,13 @@ impl CsiWrapper {
 
     pub(crate) async fn publish(
         &self,
+        node_name: &str,
         ship_id: &str,
         claim_name: &str,
         volume: &PersistentVolumeSpec,
         claim: &PersistentVolumeClaimSpec,
         source: &CsiPersistentVolumeSource,
-        secrets: &ResolvedNodeSecrets,
+        secrets: &ResolvedCsiSecrets,
     ) -> Result<PublishedVolume, CsiError> {
         let Some(uds_path) = self.drivers.get(&source.driver) else {
             return Err(CsiError::DriverNotFound(source.driver.clone()));
@@ -197,25 +207,47 @@ impl CsiWrapper {
         let fs_type = filesystem_type(source, access_type);
         let volume_context = source.volume_attributes.clone();
         let requires_staging = node_capabilities.contains(&NodeCapability::StageUnstageVolume);
+        let controller_capabilities = self.operator.controller_capabilities(uds_path).await?;
         self.ensure_mount_namespace(ship_id)?;
-        let published = self.plan_published_volume(
+        let mut published = self.plan_published_volume(
             ship_id,
             claim_name,
             source,
             PublishedAccessType::from(access_type),
             requires_staging,
         )?;
+        let publish_context =
+            if controller_capabilities.contains(&ControllerCapability::PublishUnpublishVolume) {
+                published.controller_published = true;
+                self.operator
+                    .controller_publish(
+                        uds_path,
+                        published.volume_id.clone(),
+                        node_name.to_string(),
+                        read_only,
+                        access_mode,
+                        access_type,
+                        fs_type.clone(),
+                        secrets.controller_publish.clone(),
+                        volume_context.clone(),
+                    )
+                    .await?
+            } else {
+                HashMap::new()
+            };
         let mut staged = false;
         if let Some(staging_target_path) = &published.staging_target_path {
             prepare_directory_path(staging_target_path)?;
             let operator = self.operator.clone();
             let uds_path = uds_path.to_string();
+            let uds_path_for_controller = uds_path.clone();
             let volume_id = published.volume_id.clone();
             let staging_target_path_for_rpc = staging_target_path.clone();
             let mount_namespace_path = published.mount_namespace_path.clone();
             let node_stage_secrets = secrets.node_stage.clone();
             let fs_type = fs_type.clone();
             let volume_context = volume_context.clone();
+            let publish_context = publish_context.clone();
             match run_in_mount_namespace(mount_namespace_path, move || async move {
                 operator
                     .stage(
@@ -227,7 +259,7 @@ impl CsiWrapper {
                         fs_type,
                         node_stage_secrets,
                         volume_context,
-                        HashMap::new(),
+                        publish_context,
                     )
                     .await
             })
@@ -235,6 +267,17 @@ impl CsiWrapper {
             {
                 Ok(_) => {}
                 Err(err) => {
+                    if published.controller_published {
+                        let _ = self
+                            .operator
+                            .controller_unpublish(
+                                &uds_path_for_controller,
+                                published.volume_id.clone(),
+                                node_name.to_string(),
+                                secrets.controller_publish.clone(),
+                            )
+                            .await;
+                    }
                     let _ = cleanup_directory_path(staging_target_path);
                     return Err(err);
                 }
@@ -244,7 +287,9 @@ impl CsiWrapper {
         if let Err(err) = prepare_target_path(&published.target_path, published.access_type) {
             if staged {
                 self.rollback_published_volume(
+                    node_name,
                     &published,
+                    &secrets.controller_publish,
                     "staged volume after target-path preparation error",
                 )
                 .await;
@@ -260,6 +305,7 @@ impl CsiWrapper {
         let node_publish_secrets = secrets.node_publish.clone();
         let fs_type = fs_type.clone();
         let volume_context = volume_context.clone();
+        let publish_context = publish_context.clone();
         if let Err(err) = run_in_mount_namespace(mount_namespace_path, move || async move {
             operator
                 .publish(
@@ -273,14 +319,16 @@ impl CsiWrapper {
                     staging_target_path,
                     node_publish_secrets,
                     volume_context,
-                    HashMap::new(),
+                    publish_context,
                 )
                 .await
         })
         .await
         {
             self.rollback_published_volume(
+                node_name,
                 &published,
+                &secrets.controller_publish,
                 "staged/published volume after publish error",
             )
             .await;
@@ -288,7 +336,9 @@ impl CsiWrapper {
         }
         if let Err(err) = self.persist_published_volume(&published) {
             self.rollback_published_volume(
+                node_name,
                 &published,
+                &secrets.controller_publish,
                 "published volume after state persistence error",
             )
             .await;
@@ -297,7 +347,12 @@ impl CsiWrapper {
         Ok(published)
     }
 
-    pub(crate) async fn unpublish(&self, volume: &PublishedVolume) -> Result<(), CsiError> {
+    pub(crate) async fn unpublish(
+        &self,
+        volume: &PublishedVolume,
+        node_name: &str,
+        controller_publish_secrets: &HashMap<String, String>,
+    ) -> Result<(), CsiError> {
         let Some(uds_path) = self.drivers.get(&volume.driver) else {
             return Err(CsiError::DriverNotFound(volume.driver.clone()));
         };
@@ -340,8 +395,64 @@ impl CsiWrapper {
             }
             cleanup_directory_path(staging_target_path)?;
         }
+        if volume.controller_published {
+            match self
+                .operator
+                .controller_unpublish(
+                    &uds_path,
+                    volume.volume_id.clone(),
+                    node_name.to_string(),
+                    controller_publish_secrets.clone(),
+                )
+                .await
+            {
+                Ok(()) | Err(tugboat_csi_operator::Error::VolumeNotFound) => {}
+                Err(err) => return Err(CsiError::Driver(err)),
+            }
+        }
         self.remove_published_volume_state(volume)?;
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn expand(
+        &self,
+        volume: &PublishedVolume,
+        source: &CsiPersistentVolumeSource,
+        claim: &PersistentVolumeClaimSpec,
+        volume_spec: &PersistentVolumeSpec,
+        secrets: &ResolvedCsiSecrets,
+        capacity_bytes: i64,
+    ) -> Result<Option<i64>, CsiError> {
+        let Some(uds_path) = self.drivers.get(&volume.driver) else {
+            return Err(CsiError::DriverNotFound(volume.driver.clone()));
+        };
+        let node_capabilities = self.operator.node_capabilities(uds_path).await?;
+        if !node_capabilities.contains(&NodeCapability::ExpandVolume) {
+            return Ok(None);
+        }
+
+        let (access_mode, _) = effective_publish_settings(
+            &claim.access_modes,
+            &volume_spec.access_modes,
+            source.read_only,
+        )?;
+        let access_type = access_type_from_volume_mode(volume_spec.volume_mode.as_deref())?;
+        Ok(Some(
+            self.operator
+                .node_expand(
+                    uds_path,
+                    volume.volume_id.clone(),
+                    volume.target_path.clone(),
+                    capacity_bytes,
+                    volume.staging_target_path.clone(),
+                    access_mode,
+                    access_type,
+                    filesystem_type(source, access_type),
+                    secrets.node_expand.clone(),
+                )
+                .await?,
+        ))
     }
 
     pub(crate) async fn driver_requires_staging(&self, driver: &str) -> Result<bool, CsiError> {
@@ -352,8 +463,17 @@ impl CsiWrapper {
         Ok(node_capabilities.contains(&NodeCapability::StageUnstageVolume))
     }
 
-    async fn rollback_published_volume(&self, published: &PublishedVolume, context: &str) {
-        if let Err(cleanup_err) = self.unpublish(published).await {
+    async fn rollback_published_volume(
+        &self,
+        node_name: &str,
+        published: &PublishedVolume,
+        controller_publish_secrets: &HashMap<String, String>,
+        context: &str,
+    ) {
+        if let Err(cleanup_err) = self
+            .unpublish(published, node_name, controller_publish_secrets)
+            .await
+        {
             tracing::error!("Failed to roll back {context}: {cleanup_err}");
         }
     }
@@ -783,6 +903,7 @@ mod tests {
             &temp_dir,
         );
         let volume = PublishedVolume {
+            claim_name: "data-volume".to_string(),
             driver: "example.csi".to_string(),
             volume_id: "volume-001".to_string(),
             target_path: temp_dir
@@ -800,6 +921,7 @@ mod tests {
                     .display()
                     .to_string(),
             ),
+            controller_published: false,
         };
 
         wrapper
@@ -877,6 +999,7 @@ mod tests {
             &temp_dir,
         );
         let volume = PublishedVolume {
+            claim_name: "data-volume".to_string(),
             driver: "example.csi".to_string(),
             volume_id: "volume-001".to_string(),
             target_path: temp_dir
@@ -887,6 +1010,7 @@ mod tests {
             access_type: PublishedAccessType::Block,
             mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
             staging_target_path: None,
+            controller_published: false,
         };
 
         prepare_target_path(&volume.target_path, volume.access_type)
@@ -928,12 +1052,14 @@ mod tests {
             .join(".staging")
             .join("data-volume");
         let volume = PublishedVolume {
+            claim_name: "data-volume".to_string(),
             driver: "example.csi".to_string(),
             volume_id: "volume-001".to_string(),
             target_path: target_path.display().to_string(),
             access_type: PublishedAccessType::Filesystem,
             mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
             staging_target_path: Some(staging_target_path.display().to_string()),
+            controller_published: false,
         };
 
         prepare_directory_path(

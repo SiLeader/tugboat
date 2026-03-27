@@ -12,11 +12,10 @@ Current evidence
 - `tugboat-vm-runtime-interface/src/run.rs` and `tugboat-runtime/src/execute/vm/qemu/mod.rs` expose block volumes as virtio disks and filesystem volumes as 9p shares to the guest.
 
 What is still missing
-- Add `NodeExpandVolume` handling and the surrounding resize flow so node-side volume expansion is possible.
-- Support CSI drivers that require controller-managed publish context. `tugboat-agent/src/csi.rs` currently passes an empty `publish_context` map to stage/publish calls.
-- Decide how to handle CSI attach/detach for `Ship` updates. Today CSI volumes are reconciled for create/delete flows, but live mutation on `Modified` events still falls back to "recreate required".
-- Improve recovery beyond the persisted JSON state if stronger self-healing is needed. Current recovery assumes the persisted publish records are present and match the planned mounts.
+- Improve recovery beyond the persisted JSON state if stronger self-healing is needed. Current recovery still assumes the persisted publish records are present and match the planned mounts.
+- Decide whether live CSI attach/detach/resize during `Ship` updates should ever become in-place operations instead of today’s explicit recreate-required status path.
 - Document the practical driver compatibility matrix for VM guests, especially the `Filesystem -> 9p` path and any driver assumptions around mount namespaces and guest access.
+- If controller and node CSI services can live on different sockets in the target environment, split the current single-endpoint driver assumption into explicit controller/node endpoint configuration.
 
 Implementation surfaces
 - `tugboat-agent/src/csi.rs`
@@ -30,6 +29,5 @@ Implementation surfaces
 Acceptance criteria
 - CSI volumes can be resized on the node side when the driver advertises `NodeExpandVolume`.
 - Drivers that depend on controller-provided publish context can be used without patching the agent by hand.
-- Volume-related `Ship` updates are either reconciled safely or rejected with an explicit, CSI-aware status path.
-- Recovery behavior is documented clearly enough that operators know whether persisted state alone is sufficient.
-- Tests cover at least one expansion path or, if expansion stays out of scope, the code rejects it explicitly and predictably.
+- Volume-related `Ship` updates are rejected with an explicit, CSI-aware recreate-required status path when they cannot be applied live.
+- The todo stays aligned with reality: it should not describe node expansion or controller publish context support as missing anymore.

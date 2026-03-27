@@ -20,10 +20,11 @@ use crate::reconciler::error::ReconcileError;
 use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::VolumeInfo;
 use crate::runtime::RuntimeCreateRequest;
+use std::collections::HashMap;
 use tracing::{debug, error, info};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{Ship, ShipCondition};
+use tugboat_resources::manifests::core::v1::{PersistentVolume, Ship, ShipCondition};
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
@@ -90,14 +91,6 @@ impl ShipReconciler {
             return Ok(());
         }
 
-        let stale_published_volumes = self.csi.load_published_volumes(ship_id)?;
-        if !stale_published_volumes.is_empty() {
-            info!("Cleaning up stale CSI publish state for ship '{}'", ship_id);
-            self.cleanup_published_volumes(&stale_published_volumes)
-                .await?;
-            self.csi.cleanup_mount_namespace(ship_id)?;
-        }
-
         debug!("Getting network classes for ship");
         let network_classes = self
             .get_related_network_classes(&namespace, ship_spec)
@@ -106,6 +99,14 @@ impl ShipReconciler {
         debug!("Getting volume claims for ship");
         let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
         debug!("{} volumes loaded", volumes.len());
+        let stale_published_volumes = self.csi.load_published_volumes(ship_id)?;
+        if !stale_published_volumes.is_empty() {
+            info!("Cleaning up stale CSI publish state for ship '{}'", ship_id);
+            let controller_publish_secrets = self.controller_publish_secret_map(&volumes).await?;
+            self.cleanup_published_volumes(&stale_published_volumes, &controller_publish_secrets)
+                .await?;
+            self.csi.cleanup_mount_namespace(ship_id)?;
+        }
 
         {
             debug!("Updating Ship status");
@@ -123,7 +124,7 @@ impl ShipReconciler {
         let networks = self.cni.create_network_configs(ship_id, network_classes);
         let (published_volumes, vm_volumes) = self.setup_volumes(ship_id, &volumes).await?;
 
-        self.with_cleanup(ship_id, published_volumes.as_slice(), || {
+        self.with_cleanup(ship_id, published_volumes.as_slice(), &volumes, || {
             let volumes = vm_volumes;
             let published_volumes = published_volumes.clone();
             async move {
@@ -175,10 +176,11 @@ impl ShipReconciler {
                 &volume.volume.access_modes,
                 volume.source.read_only,
             )?;
-            let secrets = self.resolve_node_secrets(volume).await?;
+            let secrets = self.resolve_csi_secrets(volume).await?;
             match self
                 .csi
                 .publish(
+                    &self.node_name,
                     ship_id,
                     &volume.claim_name,
                     &volume.volume,
@@ -189,12 +191,52 @@ impl ShipReconciler {
                 .await
             {
                 Ok(published) => {
+                    let mut cleanup_targets = published_volumes.clone();
+                    cleanup_targets.push(published.clone());
+                    if let Err(err) = self
+                        .ensure_node_expansion(volume, &published, &secrets)
+                        .await
+                    {
+                        let controller_publish_secrets =
+                            self.controller_publish_secret_map(volumes).await?;
+                        if let Err(cleanup_err) = self
+                            .cleanup_published_volumes(
+                                &cleanup_targets,
+                                &controller_publish_secrets,
+                            )
+                            .await
+                        {
+                            error!(
+                                "Failed to clean up published volumes after node expansion error: {cleanup_err}"
+                            );
+                        }
+                        return Err(err);
+                    }
+                    if let Err(err) = self.mark_volume_attached(&volume.volume_name, true).await {
+                        let controller_publish_secrets =
+                            self.controller_publish_secret_map(volumes).await?;
+                        if let Err(cleanup_err) = self
+                            .cleanup_published_volumes(
+                                &cleanup_targets,
+                                &controller_publish_secrets,
+                            )
+                            .await
+                        {
+                            error!(
+                                "Failed to clean up published volumes after attachment status error: {cleanup_err}"
+                            );
+                        }
+                        return Err(err);
+                    }
                     vm_volumes.push(vm_volume_config(volume, &published, read_only));
                     published_volumes.push(published);
                 }
                 Err(err) => {
-                    if let Err(cleanup_err) =
-                        self.cleanup_published_volumes(&published_volumes).await
+                    let controller_publish_secrets =
+                        self.controller_publish_secret_map(volumes).await?;
+                    if let Err(cleanup_err) = self
+                        .cleanup_published_volumes(&published_volumes, &controller_publish_secrets)
+                        .await
                     {
                         error!(
                             "Failed to roll back published volumes after publish error: {cleanup_err}"
@@ -241,6 +283,7 @@ impl ShipReconciler {
         &self,
         ship_id: &str,
         published_volumes: &[PublishedVolume],
+        volumes: &[VolumeInfo],
         f: F,
     ) -> Result<(), ReconcileError>
     where
@@ -251,7 +294,7 @@ impl ShipReconciler {
             Ok(_) => Ok(()),
             Err(e) => {
                 if let Err(cleanup_err) = self
-                    .cleanup_runtime_and_published_volumes(ship_id, published_volumes)
+                    .cleanup_runtime_and_published_volumes(ship_id, published_volumes, volumes)
                     .await
                 {
                     error!(
@@ -266,10 +309,15 @@ impl ShipReconciler {
     pub(crate) async fn cleanup_published_volumes(
         &self,
         published_volumes: &[PublishedVolume],
+        controller_publish_secrets: &HashMap<String, HashMap<String, String>>,
     ) -> Result<(), ReconcileError> {
         let mut errors = Vec::new();
         for volume in published_volumes.iter().rev() {
-            if let Err(err) = self.csi.unpublish(volume).await {
+            let secrets = controller_publish_secrets
+                .get(&volume.claim_name)
+                .cloned()
+                .unwrap_or_default();
+            if let Err(err) = self.csi.unpublish(volume, &self.node_name, &secrets).await {
                 error!(
                     "Failed to unpublish CSI volume '{}' for ship mount namespace '{}': {err}",
                     volume.target_path, volume.mount_namespace_path
@@ -289,20 +337,119 @@ impl ShipReconciler {
         &self,
         ship_id: &str,
         fallback_published_volumes: &[PublishedVolume],
+        volumes: &[VolumeInfo],
     ) -> Result<(), ReconcileError> {
         let mut runtime_published_volumes =
             self.runtime_operator.delete(ship_id.to_string()).await?;
+        let controller_publish_secrets = self.controller_publish_secret_map(volumes).await?;
         if runtime_published_volumes.is_empty() {
             runtime_published_volumes = self.csi.load_published_volumes(ship_id)?;
         }
         if runtime_published_volumes.is_empty() {
-            self.cleanup_published_volumes(fallback_published_volumes)
+            self.cleanup_published_volumes(fallback_published_volumes, &controller_publish_secrets)
                 .await?;
         } else {
-            self.cleanup_published_volumes(&runtime_published_volumes)
+            self.cleanup_published_volumes(&runtime_published_volumes, &controller_publish_secrets)
                 .await?;
         }
         self.csi.cleanup_mount_namespace(ship_id)?;
+        Ok(())
+    }
+
+    pub(super) async fn controller_publish_secret_map(
+        &self,
+        volumes: &[VolumeInfo],
+    ) -> Result<HashMap<String, HashMap<String, String>>, ReconcileError> {
+        let mut secrets = HashMap::with_capacity(volumes.len());
+        for volume in volumes {
+            let resolved = self.resolve_csi_secrets(volume).await?;
+            secrets.insert(volume.claim_name.clone(), resolved.controller_publish);
+        }
+        Ok(secrets)
+    }
+
+    async fn ensure_node_expansion(
+        &self,
+        volume: &VolumeInfo,
+        published: &PublishedVolume,
+        secrets: &crate::csi::ResolvedCsiSecrets,
+    ) -> Result<(), ReconcileError> {
+        let needs_node_expansion = volume
+            .status
+            .as_ref()
+            .and_then(|status| status.node_expansion_required)
+            .unwrap_or(false);
+        if !needs_node_expansion {
+            return Ok(());
+        }
+        let Some(target_capacity_bytes) = volume
+            .status
+            .as_ref()
+            .and_then(|status| status.capacity_bytes)
+            .or(volume.volume.capacity_bytes)
+            .or(volume.claim.requested_capacity_bytes)
+            .filter(|value| *value > 0)
+        else {
+            return Ok(());
+        };
+        let expanded_capacity_bytes = self
+            .csi
+            .expand(
+                published,
+                &volume.source,
+                &volume.claim,
+                &volume.volume,
+                secrets,
+                target_capacity_bytes,
+            )
+            .await?;
+        let Some(expanded_capacity_bytes) = expanded_capacity_bytes else {
+            return Err(ReconcileError::UnsupportedPersistentVolumeCsiFeature {
+                volume: volume.volume_name.clone(),
+                feature: "node_expand".to_string(),
+            });
+        };
+        self.mark_volume_node_expanded(&volume.volume_name, expanded_capacity_bytes)
+            .await?;
+        Ok(())
+    }
+
+    pub(super) async fn mark_volume_attached(
+        &self,
+        volume_name: &str,
+        attached: bool,
+    ) -> Result<(), ReconcileError> {
+        let api: Api<PersistentVolume> = Api::all(self.client.clone());
+        let Some(mut volume) = api.get(volume_name).await? else {
+            return Ok(());
+        };
+        let status = volume.status.get_or_insert_with(Default::default);
+        status.attached_node = attached.then(|| self.node_name.clone());
+        if status.phase.is_none() {
+            status.phase = Some("Bound".to_string());
+        }
+        api.replace(volume_name, volume).await?;
+        Ok(())
+    }
+
+    async fn mark_volume_node_expanded(
+        &self,
+        volume_name: &str,
+        capacity_bytes: i64,
+    ) -> Result<(), ReconcileError> {
+        let api: Api<PersistentVolume> = Api::all(self.client.clone());
+        let Some(mut volume) = api.get(volume_name).await? else {
+            return Ok(());
+        };
+        if let Some(spec) = volume.spec.as_mut() {
+            spec.capacity_bytes = Some(capacity_bytes);
+        }
+        let status = volume.status.get_or_insert_with(Default::default);
+        status.phase = Some("Bound".to_string());
+        status.capacity_bytes = Some(capacity_bytes);
+        status.node_expansion_required = Some(false);
+        status.attached_node = Some(self.node_name.clone());
+        api.replace(volume_name, volume).await?;
         Ok(())
     }
 }
@@ -359,12 +506,14 @@ mod tests {
 
     fn published_volume(target_path: &str) -> PublishedVolume {
         PublishedVolume {
+            claim_name: "data".to_string(),
             driver: "example.csi".to_string(),
             volume_id: format!("volume-{target_path}"),
             target_path: target_path.to_string(),
             access_type: PublishedAccessType::Filesystem,
             mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
             staging_target_path: Some(format!("{target_path}.staging")),
+            controller_published: false,
         }
     }
 

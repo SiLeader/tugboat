@@ -123,7 +123,7 @@ Current node-side support matrix:
 
 `Filesystem` volumes are exposed to the guest as a 9p share. The mount tag is the referenced `volumeClaimRef[].name`.
 
-Control-plane storage support already includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning and managed volume cleanup in `tugboat-controller-manager`. Remaining gaps are mainly capacity modeling, controller-side CSI operations, and scheduler awareness of storage constraints.
+Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling and `NodeExpandVolume` when the driver advertises it. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
 
 ## Roadmap
 
@@ -141,7 +141,7 @@ Control-plane storage support already includes `PersistentVolume`, `PersistentVo
     - [x] Networking (CNI, NetworkClass / ClusterNetworkClass)
     - [ ] Reconcile on Ship Modified events
     - [x] Reconcile on Ship Deleted events
-    - [ ] Storage (CSI, node-side publish/stage implemented; expansion and controller-publish-context support pending)
+    - [ ] Storage (CSI provisioning, publish/stage, controller publish context, and expansion are implemented; topology-aware scheduling and snapshot-style workflows remain)
 - [x] Secret
 - [ ] tugboat-controller-manager
     - [x] Dynamic CSI volume provisioning

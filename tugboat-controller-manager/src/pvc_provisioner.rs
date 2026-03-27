@@ -3,15 +3,19 @@ use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use crate::provisioning::{
     build_persistent_volume, claim_access_modes, claim_access_type, dynamic_volume_name,
-    existing_pv_matches_claim, provisioner_config, pvc_identity, reclaim_policy_from_storage_class,
+    existing_pv_matches_claim, persistent_volume_capacity_bytes, provisioner_config, pvc_identity,
+    reclaim_policy_from_storage_class, requested_capacity_bytes, storage_class_csi_config,
     storage_class_provisioner,
 };
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_csi_operator::TugboatCsiOperator;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    PersistentVolume, PersistentVolumeClaim, StorageClass,
+    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Secret, SecretReference,
+    StorageClass,
 };
 
 #[derive(Clone)]
@@ -101,14 +105,6 @@ impl PvcProvisionerReconciler {
             return Ok(Action::await_change());
         };
 
-        if spec
-            .volume_name
-            .as_deref()
-            .is_some_and(|value| !value.is_empty())
-        {
-            return Ok(Action::await_change());
-        }
-
         let storage_class_api: Api<StorageClass> = Api::all(self.client.clone());
         let Some(storage_class) = storage_class_api.get(&storage_class_name).await? else {
             tracing::warn!(
@@ -121,35 +117,47 @@ impl PvcProvisionerReconciler {
         };
 
         let (provisioner, parameters) = storage_class_provisioner(&storage_class)?;
+        let csi_config = storage_class_csi_config(&storage_class)?;
         let Some(provisioner_config) = provisioner_config(&self.config, &provisioner) else {
             return Ok(Action::await_change());
         };
         let reclaim_policy = reclaim_policy_from_storage_class(&storage_class)?;
         let access_modes = claim_access_modes(&namespace, &name, &spec.access_modes)?;
         let access_type = claim_access_type(&namespace, &name, spec.volume_mode.as_deref())?;
-        let pv_name = dynamic_volume_name(&namespace, &name, uid.as_deref());
+        let requested_capacity_bytes = requested_capacity_bytes(&namespace, &name, spec)?;
+        let bound_volume_name = spec.volume_name.clone().filter(|value| !value.is_empty());
+        let pv_name = bound_volume_name
+            .clone()
+            .unwrap_or_else(|| dynamic_volume_name(&namespace, &name, uid.as_deref()));
 
         let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
         let mut created_pv = false;
         let mut provisioned_volume_id: Option<String> = None;
         if let Some(existing) = pv_api.get(&pv_name).await? {
-            if existing_pv_matches_claim(&existing, &namespace, &name, &storage_class_name)? {
-                // PV already exists and matches this claim; skip volume creation.
-            } else {
+            if !existing_pv_matches_claim(&existing, &namespace, &name, &storage_class_name)? {
                 return Err(ControllerError::ExistingVolumeConflict {
                     name: pv_name.clone(),
                     namespace: namespace.clone(),
                     claim: name.clone(),
                 });
             }
+        } else if bound_volume_name.is_some() {
+            tracing::warn!(
+                "PersistentVolumeClaim '{}/{}' references missing PersistentVolume '{}'",
+                namespace,
+                name,
+                pv_name
+            );
+            return Ok(self.requeue_action());
         } else {
             let provisioned_volume = self
                 .csi_operator
                 .create_volume(
                     &provisioner_config.socket_path,
                     pv_name.clone(),
+                    requested_capacity_bytes,
                     parameters,
-                    access_modes,
+                    access_modes.clone(),
                     access_type,
                 )
                 .await?;
@@ -165,6 +173,8 @@ impl PvcProvisionerReconciler {
                 reclaim_policy,
                 spec.access_modes.clone(),
                 spec.volume_mode.clone(),
+                Some(provisioned_volume.capacity_bytes),
+                csi_config.clone(),
                 volume_id.clone(),
                 provisioned_volume.volume_context.clone(),
             );
@@ -259,41 +269,142 @@ impl PvcProvisionerReconciler {
             return Ok(Action::await_change());
         }
 
+        let Some(mut current_pv) = pv_api.get(&pv_name).await? else {
+            tracing::warn!(
+                "PersistentVolume '{}' for PersistentVolumeClaim '{}/{}' is not available yet",
+                pv_name,
+                namespace,
+                name
+            );
+            return Ok(self.requeue_action());
+        };
+
         let latest_spec = latest.spec.as_mut().ok_or_else(|| {
             ControllerError::MissingPersistentVolumeClaimSpec {
                 namespace: namespace.clone(),
                 name: name.clone(),
             }
         })?;
+        let mut latest_changed = false;
         if let Some(existing_volume_name) = latest_spec
             .volume_name
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            if existing_volume_name == pv_name.as_str() {
+            if existing_volume_name != pv_name.as_str() {
+                if created_pv {
+                    tracing::warn!(
+                        "PersistentVolumeClaim '{}/{}' is already bound to '{}'; cleaning up orphaned PersistentVolume '{}'",
+                        namespace,
+                        name,
+                        existing_volume_name,
+                        pv_name
+                    );
+                    self.cleanup_orphaned_volume(
+                        &provisioner_config.socket_path,
+                        provisioned_volume_id.as_deref(),
+                        &pv_api,
+                        &pv_name,
+                    )
+                    .await;
+                }
                 return Ok(Action::await_change());
             }
-            if created_pv {
-                tracing::warn!(
-                    "PersistentVolumeClaim '{}/{}' is already bound to '{}'; cleaning up orphaned PersistentVolume '{}'",
-                    namespace,
-                    name,
-                    existing_volume_name,
-                    pv_name
-                );
-                self.cleanup_orphaned_volume(
-                    &provisioner_config.socket_path,
-                    provisioned_volume_id.as_deref(),
-                    &pv_api,
-                    &pv_name,
-                )
-                .await;
-            }
-            return Ok(Action::await_change());
+        } else {
+            latest_spec.volume_name = Some(pv_name.clone());
+            latest_changed = true;
         }
 
-        latest_spec.volume_name = Some(pv_name);
-        pvc_api.replace(&name, latest).await?;
+        let mut effective_capacity_bytes = persistent_volume_capacity_bytes(&current_pv)?;
+        let mut resize_pending = current_pv
+            .status
+            .as_ref()
+            .and_then(|status| status.node_expansion_required)
+            .unwrap_or(false);
+        if let Some(requested_capacity_bytes) = requested_capacity_bytes {
+            let needs_resize = match effective_capacity_bytes {
+                Some(current_capacity) => requested_capacity_bytes > current_capacity,
+                None => true,
+            };
+            if needs_resize {
+                if !csi_config.allow_volume_expansion {
+                    latest_changed |= apply_pvc_status(
+                        &mut latest,
+                        "ResizeRejected",
+                        effective_capacity_bytes,
+                        false,
+                    );
+                    if latest_changed {
+                        pvc_api.replace(&name, latest).await?;
+                    }
+                    return Ok(Action::await_change());
+                }
+
+                let (volume_id, fs_type, controller_expand_secret_ref) = {
+                    let spec = current_pv.spec.as_ref().ok_or_else(|| {
+                        ControllerError::MissingPersistentVolumeSpec {
+                            name: pv_name.clone(),
+                        }
+                    })?;
+                    let csi = spec.csi.as_ref().ok_or_else(|| {
+                        ControllerError::MissingPersistentVolumeCsi {
+                            name: pv_name.clone(),
+                        }
+                    })?;
+                    (
+                        csi.volume_handle.clone(),
+                        csi.fs_type.clone(),
+                        csi.controller_expand_secret_ref.as_ref(),
+                    )
+                };
+                let controller_expand_secrets = self
+                    .load_secret_reference(controller_expand_secret_ref)
+                    .await?;
+                let expanded = self
+                    .csi_operator
+                    .controller_expand(
+                        &provisioner_config.socket_path,
+                        volume_id,
+                        requested_capacity_bytes,
+                        access_modes[0],
+                        access_type,
+                        fs_type,
+                        controller_expand_secrets,
+                    )
+                    .await?;
+
+                if let Some(spec) = current_pv.spec.as_mut() {
+                    spec.capacity_bytes = Some(expanded.capacity_bytes);
+                }
+                apply_pv_status(
+                    &mut current_pv,
+                    if expanded.node_expansion_required {
+                        "NodeExpansionPending"
+                    } else {
+                        "Bound"
+                    },
+                    Some(expanded.capacity_bytes),
+                    expanded.node_expansion_required,
+                );
+                pv_api.replace(&pv_name, current_pv).await?;
+                effective_capacity_bytes = Some(expanded.capacity_bytes);
+                resize_pending = expanded.node_expansion_required;
+            }
+        }
+
+        latest_changed |= apply_pvc_status(
+            &mut latest,
+            if resize_pending {
+                "NodeExpansionPending"
+            } else {
+                "Bound"
+            },
+            effective_capacity_bytes,
+            resize_pending,
+        );
+        if latest_changed {
+            pvc_api.replace(&name, latest).await?;
+        }
         Ok(Action::await_change())
     }
 
@@ -334,4 +445,73 @@ impl PvcProvisionerReconciler {
             );
         }
     }
+
+    async fn load_secret_reference(
+        &self,
+        reference: Option<&SecretReference>,
+    ) -> Result<std::collections::HashMap<String, String>, ControllerError> {
+        let Some(reference) = reference else {
+            return Ok(Default::default());
+        };
+        let api: Api<Secret> = Api::namespaced(self.client.clone(), &reference.namespace);
+        let Some(secret) = api.get(&reference.name).await? else {
+            tracing::warn!(
+                "Secret '{}/{}' referenced by CSI configuration is not available yet",
+                reference.namespace,
+                reference.name
+            );
+            return Ok(Default::default());
+        };
+
+        let mut data = std::collections::HashMap::new();
+        for (key, value) in secret.data {
+            let decoded = BASE64_STANDARD
+                .decode(value)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok());
+            if let Some(decoded) = decoded {
+                data.insert(key, decoded);
+            }
+        }
+        data.extend(secret.string_data);
+        Ok(data)
+    }
+}
+
+fn apply_pvc_status(
+    pvc: &mut PersistentVolumeClaim,
+    phase: &str,
+    capacity_bytes: Option<i64>,
+    resize_pending: bool,
+) -> bool {
+    let status = pvc
+        .status
+        .get_or_insert_with(PersistentVolumeClaimStatus::default);
+    let normalized_capacity_bytes = capacity_bytes.filter(|value| *value > 0);
+    let mut changed = false;
+    if status.phase.as_deref() != Some(phase) {
+        status.phase = Some(phase.to_string());
+        changed = true;
+    }
+    if status.capacity_bytes != normalized_capacity_bytes {
+        status.capacity_bytes = normalized_capacity_bytes;
+        changed = true;
+    }
+    if status.resize_pending != Some(resize_pending) {
+        status.resize_pending = Some(resize_pending);
+        changed = true;
+    }
+    changed
+}
+
+fn apply_pv_status(
+    pv: &mut PersistentVolume,
+    phase: &str,
+    capacity_bytes: Option<i64>,
+    node_expansion_required: bool,
+) {
+    let status = pv.status.get_or_insert_with(Default::default);
+    status.phase = Some(phase.to_string());
+    status.capacity_bytes = capacity_bytes.filter(|value| *value > 0);
+    status.node_expansion_required = Some(node_expansion_required);
 }

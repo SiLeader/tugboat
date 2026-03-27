@@ -119,7 +119,7 @@ CSI volume を使う場合は、`volumeClaimRef` で同一 namespace の `Persis
 
 `Filesystem` volume は guest へ 9p share として公開され、mount tag には `volumeClaimRef[].name` が使われます。
 
-control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API と、`tugboat-controller-manager` による CSI の動的プロビジョニングおよび管理対象 PV の cleanup までは実装済みです。残りの大きな課題は、容量モデル、controller-side CSI operation、そして scheduler の storage 制約考慮です。
+control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context と `NodeExpandVolume` に対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone 系ワークフローです。
 
 ## Roadmap
 
@@ -137,7 +137,7 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [x] ネットワーク (CNI, NetworkClass / ClusterNetworkClass)
     - [ ] Ship Modifiedイベントのreconcile
     - [x] Ship Deletedイベントのreconcile
-    - [ ] ストレージ (CSI, node-side の publish/stage は実装済み。expansion と controller publish context 対応は未完)
+    - [ ] ストレージ (CSI の provision / publish / stage / expand までは実装済み。topology-aware scheduling と snapshot 系は今後の課題)
 - [x] Secret
 - [ ] tugboat-controller-manager
     - [x] CSIの動的プロビジョニング

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::csi::{ResolvedNodeSecrets, is_supported_access_mode};
+use crate::csi::{ResolvedCsiSecrets, is_supported_access_mode};
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::{InvalidCsiSecretDataError, ReconcileError};
 use base64::Engine;
@@ -21,8 +21,8 @@ use std::collections::HashSet;
 use tugboat_client::Api;
 use tugboat_resources::manifests::core::v1::{
     CsiPersistentVolumeSource, PersistentVolume, PersistentVolumeClaim,
-    PersistentVolumeClaimReference, PersistentVolumeClaimSpec, PersistentVolumeSpec, Secret,
-    SecretReference, ShipSpec,
+    PersistentVolumeClaimReference, PersistentVolumeClaimSpec, PersistentVolumeSpec,
+    PersistentVolumeStatus, Secret, SecretReference, ShipSpec,
 };
 
 #[derive(Debug, Clone)]
@@ -31,6 +31,7 @@ pub(crate) struct VolumeInfo {
     pub volume_name: String,
     pub claim: PersistentVolumeClaimSpec,
     pub volume: PersistentVolumeSpec,
+    pub status: Option<PersistentVolumeStatus>,
     pub source: CsiPersistentVolumeSource,
 }
 
@@ -77,6 +78,7 @@ impl ShipReconciler {
                     ));
                 }
             };
+            let volume_status = volume.status.clone();
             let volume_spec = volume
                 .spec
                 .ok_or_else(|| ReconcileError::PersistentVolumeMissingSpec(volume_name.clone()))?;
@@ -117,6 +119,7 @@ impl ShipReconciler {
                 volume_name: volume_name.clone(),
                 claim: claim_spec,
                 volume: volume_spec,
+                status: volume_status,
                 source,
             });
         }
@@ -126,11 +129,25 @@ impl ShipReconciler {
 }
 
 impl ShipReconciler {
-    pub(crate) async fn resolve_node_secrets(
+    pub(crate) async fn resolve_csi_secrets(
         &self,
         volume: &VolumeInfo,
-    ) -> Result<ResolvedNodeSecrets, ReconcileError> {
-        Ok(ResolvedNodeSecrets {
+    ) -> Result<ResolvedCsiSecrets, ReconcileError> {
+        Ok(ResolvedCsiSecrets {
+            controller_publish: self
+                .load_secret_reference(
+                    &volume.volume_name,
+                    "controller_publish_secret_ref",
+                    volume.source.controller_publish_secret_ref.as_ref(),
+                )
+                .await?,
+            node_expand: self
+                .load_secret_reference(
+                    &volume.volume_name,
+                    "node_expand_secret_ref",
+                    volume.source.node_expand_secret_ref.as_ref(),
+                )
+                .await?,
             node_publish: self
                 .load_secret_reference(
                     &volume.volume_name,
@@ -270,20 +287,10 @@ fn ensure_supported_csi_source(
     volume_name: &str,
     source: &CsiPersistentVolumeSource,
 ) -> Result<(), ReconcileError> {
-    let unsupported_features = [
-        (
-            "controller_expand_secret_ref",
-            source.controller_expand_secret_ref.as_ref(),
-        ),
-        (
-            "controller_publish_secret_ref",
-            source.controller_publish_secret_ref.as_ref(),
-        ),
-        (
-            "node_expand_secret_ref",
-            source.node_expand_secret_ref.as_ref(),
-        ),
-    ];
+    let unsupported_features = [(
+        "controller_expand_secret_ref",
+        source.controller_expand_secret_ref.as_ref(),
+    )];
 
     for (feature, reference) in unsupported_features {
         if reference.is_some() {
@@ -425,8 +432,8 @@ mod tests {
     #[test]
     fn rejects_secret_backed_csi_fields() {
         let source = CsiPersistentVolumeSource {
-            controller_publish_secret_ref: Some(SecretReference {
-                name: "publish-secret".to_string(),
+            controller_expand_secret_ref: Some(SecretReference {
+                name: "expand-secret".to_string(),
                 namespace: "alpha".to_string(),
             }),
             ..Default::default()

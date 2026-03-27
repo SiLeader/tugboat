@@ -16,6 +16,7 @@ syntax = "proto3";
 
 import "meta/v1/object_meta.proto";
 import "meta/v1/type_meta.proto";
+import "core/v1/secret.proto";
 
 package tugboat.core.v1;
 
@@ -29,4 +30,11 @@ message StorageClassSpec {
   string provisioner = 1;
   map<string, string> parameters = 2;
   optional string reclaim_policy = 3;
+  optional string fs_type = 4;
+  optional bool allow_volume_expansion = 5;
+  SecretReference controller_expand_secret_ref = 6;
+  SecretReference controller_publish_secret_ref = 7;
+  SecretReference node_expand_secret_ref = 8;
+  SecretReference node_publish_secret_ref = 9;
+  SecretReference node_stage_secret_ref = 10;
 }

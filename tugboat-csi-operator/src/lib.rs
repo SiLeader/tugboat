@@ -1,12 +1,17 @@
 use crate::proto::csi::v1::controller_client::ControllerClient;
+use crate::proto::csi::v1::controller_service_capability;
+use crate::proto::csi::v1::controller_service_capability::rpc::Type as ControllerServiceCapabilityType;
 use crate::proto::csi::v1::node_client::NodeClient;
 use crate::proto::csi::v1::node_service_capability;
 use crate::proto::csi::v1::node_service_capability::rpc::Type as NodeServiceCapabilityType;
 use crate::proto::csi::v1::volume_capability::access_mode::Mode;
 use crate::proto::csi::v1::volume_capability::{AccessMode, AccessType, BlockVolume, MountVolume};
 use crate::proto::csi::v1::{
-    CreateVolumeRequest, DeleteVolumeRequest, NodeGetCapabilitiesRequest, NodePublishVolumeRequest,
-    NodeStageVolumeRequest, NodeUnpublishVolumeRequest, NodeUnstageVolumeRequest, VolumeCapability,
+    CapacityRange, ControllerExpandVolumeRequest, ControllerGetCapabilitiesRequest,
+    ControllerPublishVolumeRequest, ControllerUnpublishVolumeRequest, CreateVolumeRequest,
+    DeleteVolumeRequest, NodeExpandVolumeRequest, NodeGetCapabilitiesRequest,
+    NodePublishVolumeRequest, NodeStageVolumeRequest, NodeUnpublishVolumeRequest,
+    NodeUnstageVolumeRequest, VolumeCapability,
 };
 pub use error::Error;
 use hyper_util::rt::TokioIo;
@@ -46,6 +51,13 @@ pub enum NodeCapability {
     VolumeMountGroup,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerCapability {
+    PublishUnpublishVolume,
+    PublishReadonly,
+    ExpandVolume,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvisionedVolume {
     pub volume_id: String,
@@ -53,18 +65,28 @@ pub struct ProvisionedVolume {
     pub volume_context: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControllerExpandedVolume {
+    pub capacity_bytes: i64,
+    pub node_expansion_required: bool,
+}
+
 impl TugboatCsiOperator {
     pub async fn create_volume(
         &self,
         socket_path: &str,
         name: String,
+        capacity_bytes: Option<i64>,
         parameters: HashMap<String, String>,
         access_modes: Vec<CsiAccessMode>,
         access_type: CsiAccessType,
     ) -> Result<ProvisionedVolume, error::Error> {
         let req = CreateVolumeRequest {
             name,
-            capacity_range: None,
+            capacity_range: capacity_bytes.map(|required_bytes| CapacityRange {
+                required_bytes,
+                limit_bytes: 0,
+            }),
             volume_capabilities: access_modes
                 .into_iter()
                 .map(|access_mode| volume_capability(access_mode, access_type, None))
@@ -107,6 +129,129 @@ impl TugboatCsiOperator {
             .await
             .map(|_| ())
             .map_err(map_controller_grpc_error)
+    }
+
+    pub async fn controller_capabilities(
+        &self,
+        socket_path: &str,
+    ) -> Result<Vec<ControllerCapability>, error::Error> {
+        let mut client = connect_controller_client(socket_path).await?;
+        let response = match client
+            .controller_get_capabilities(ControllerGetCapabilitiesRequest {})
+            .await
+        {
+            Ok(response) => response.into_inner(),
+            Err(status) if status.code() == Code::Unimplemented => return Ok(Vec::new()),
+            Err(status) => return Err(map_controller_grpc_error(status)),
+        };
+
+        Ok(response
+            .capabilities
+            .into_iter()
+            .filter_map(|capability| match capability.r#type {
+                Some(controller_service_capability::Type::Rpc(rpc)) => {
+                    match ControllerServiceCapabilityType::try_from(rpc.r#type).ok()? {
+                        ControllerServiceCapabilityType::Unknown => None,
+                        ControllerServiceCapabilityType::PublishUnpublishVolume => {
+                            Some(ControllerCapability::PublishUnpublishVolume)
+                        }
+                        ControllerServiceCapabilityType::PublishReadonly => {
+                            Some(ControllerCapability::PublishReadonly)
+                        }
+                        ControllerServiceCapabilityType::ExpandVolume => {
+                            Some(ControllerCapability::ExpandVolume)
+                        }
+                        _ => None,
+                    }
+                }
+                None => None,
+            })
+            .collect())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn controller_publish(
+        &self,
+        socket_path: &str,
+        volume_id: String,
+        node_id: String,
+        read_only: bool,
+        access_mode: CsiAccessMode,
+        access_type: CsiAccessType,
+        fs_type: Option<String>,
+        secrets: HashMap<String, String>,
+        volume_context: HashMap<String, String>,
+    ) -> Result<HashMap<String, String>, error::Error> {
+        let req = ControllerPublishVolumeRequest {
+            volume_id,
+            node_id,
+            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
+            readonly: read_only,
+            secrets,
+            volume_context,
+        };
+
+        let mut client = connect_controller_client(socket_path).await?;
+        let response = client
+            .controller_publish_volume(req)
+            .await
+            .map_err(map_controller_grpc_error)?
+            .into_inner();
+        Ok(response.publish_context)
+    }
+
+    pub async fn controller_unpublish(
+        &self,
+        socket_path: &str,
+        volume_id: String,
+        node_id: String,
+        secrets: HashMap<String, String>,
+    ) -> Result<(), error::Error> {
+        let req = ControllerUnpublishVolumeRequest {
+            volume_id,
+            node_id,
+            secrets,
+        };
+
+        let mut client = connect_controller_client(socket_path).await?;
+        client
+            .controller_unpublish_volume(req)
+            .await
+            .map(|_| ())
+            .map_err(map_controller_grpc_error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn controller_expand(
+        &self,
+        socket_path: &str,
+        volume_id: String,
+        capacity_bytes: i64,
+        access_mode: CsiAccessMode,
+        access_type: CsiAccessType,
+        fs_type: Option<String>,
+        secrets: HashMap<String, String>,
+    ) -> Result<ControllerExpandedVolume, error::Error> {
+        let req = ControllerExpandVolumeRequest {
+            volume_id,
+            capacity_range: Some(CapacityRange {
+                required_bytes: capacity_bytes,
+                limit_bytes: 0,
+            }),
+            secrets,
+            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
+        };
+
+        let mut client = connect_controller_client(socket_path).await?;
+        let response = client
+            .controller_expand_volume(req)
+            .await
+            .map_err(map_controller_grpc_error)?
+            .into_inner();
+        Ok(ControllerExpandedVolume {
+            capacity_bytes: response.capacity_bytes,
+            node_expansion_required: response.node_expansion_required,
+        })
     }
 
     pub async fn node_capabilities(
@@ -253,6 +398,40 @@ impl TugboatCsiOperator {
             .map(|_| ())
             .map_err(map_grpc_error)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn node_expand(
+        &self,
+        socket_path: &str,
+        volume_id: String,
+        volume_path: String,
+        capacity_bytes: i64,
+        staging_target_path: Option<String>,
+        access_mode: CsiAccessMode,
+        access_type: CsiAccessType,
+        fs_type: Option<String>,
+        secrets: HashMap<String, String>,
+    ) -> Result<i64, error::Error> {
+        let req = NodeExpandVolumeRequest {
+            volume_id,
+            volume_path,
+            capacity_range: Some(CapacityRange {
+                required_bytes: capacity_bytes,
+                limit_bytes: 0,
+            }),
+            staging_target_path: staging_target_path.unwrap_or_default(),
+            volume_capability: Some(volume_capability(access_mode, access_type, fs_type)),
+            secrets,
+        };
+
+        let mut client = connect_node_client(socket_path).await?;
+        let response = client
+            .node_expand_volume(req)
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+        Ok(response.capacity_bytes)
+    }
 }
 
 fn volume_capability(
@@ -355,6 +534,7 @@ mod tests {
     enum RecordedCall {
         Stage(NodeStageVolumeRequest),
         Publish(NodePublishVolumeRequest),
+        Expand(NodeExpandVolumeRequest),
         Unpublish(NodeUnpublishVolumeRequest),
         Unstage(NodeUnstageVolumeRequest),
     }
@@ -433,9 +613,15 @@ mod tests {
 
         async fn node_expand_volume(
             &self,
-            _request: Request<NodeExpandVolumeRequest>,
+            request: Request<NodeExpandVolumeRequest>,
         ) -> Result<Response<NodeExpandVolumeResponse>, Status> {
-            Ok(Response::new(NodeExpandVolumeResponse::default()))
+            self.calls
+                .lock()
+                .expect("lock should be available")
+                .push(RecordedCall::Expand(request.into_inner()));
+            Ok(Response::new(NodeExpandVolumeResponse {
+                capacity_bytes: 4096,
+            }))
         }
     }
 
@@ -602,5 +788,41 @@ mod tests {
             panic!("second call should be unstage");
         };
         assert_eq!(unstage_request.staging_target_path, "/staging/volume-1");
+    }
+
+    #[tokio::test]
+    async fn can_expand_volume_over_uds() {
+        let operator = TugboatCsiOperator::default();
+        let (socket_path, calls) = spawn_node_server().await;
+
+        let capacity = operator
+            .node_expand(
+                &socket_path,
+                "volume-1".to_string(),
+                "/publish/volume-1".to_string(),
+                4096,
+                Some("/staging/volume-1".to_string()),
+                CsiAccessMode::ReadWriteOnce,
+                CsiAccessType::Filesystem,
+                Some("xfs".to_string()),
+                HashMap::from([("token".to_string(), "secret".to_string())]),
+            )
+            .await
+            .expect("node expand should succeed");
+
+        assert_eq!(capacity, 4096);
+        let calls = calls.lock().expect("lock should be available").clone();
+        let Some(RecordedCall::Expand(request)) = calls.last() else {
+            panic!("last call should be node expand");
+        };
+        assert_eq!(request.volume_path, "/publish/volume-1");
+        assert_eq!(request.staging_target_path, "/staging/volume-1");
+        assert_eq!(
+            request
+                .capacity_range
+                .as_ref()
+                .map(|range| range.required_bytes),
+            Some(4096)
+        );
     }
 }
