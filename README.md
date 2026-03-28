@@ -1,6 +1,6 @@
 # Tugboat
 
-[日本語](./docs/README_ja.md)
+[日本語](./README_ja.md)
 
 Tugboat is a system for orchestrating virtual machines in a Kubernetes‑like manner.
 
@@ -117,10 +117,14 @@ Current node-side support matrix:
 - [x] drivers that require `NodeStageVolume` / `NodeUnstageVolume`
 - [x] `nodePublishSecretRef` / `nodeStageSecretRef`
 - [x] agent restart recovery from persisted publish state
-- [ ] `NodeExpandVolume` / volume expansion
-- [ ] drivers that require explicit `fs_type`, `volume_attributes`, or controller publish context
+- [x] explicit `fs_type` and `volume_attributes`
+- [x] `NodeExpandVolume` / volume expansion
+- [x] drivers that require controller publish context
+- [x] `NodeGetVolumeStats` / CSI volume health + usage surfacing on PV/PVC conditions
 
 `Filesystem` volumes are exposed to the guest as a 9p share. The mount tag is the referenced `volumeClaimRef[].name`.
+
+Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling, `NodeExpandVolume` when the driver advertises it, and `NodeGetVolumeStats`-backed PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
 
 ## Roadmap
 
@@ -136,11 +140,13 @@ Current node-side support matrix:
     - [x] Node auto-registration
     - [x] Reconcile on Ship Added events
     - [x] Networking (CNI, NetworkClass / ClusterNetworkClass)
-    - [ ] Reconcile on Ship Modified / Deleted events
-    - [ ] Storage (CSI, node-side attach partially supported)
+    - [ ] Reconcile on Ship Modified events
+    - [x] Reconcile on Ship Deleted events
+    - [ ] Storage (CSI provisioning, publish/stage, controller publish context, and expansion are implemented; topology-aware scheduling and snapshot-style workflows remain)
 - [x] Secret
 - [ ] tugboat-controller-manager
-    - [ ] Dynamic CSI volume provisioning
+    - [x] Dynamic CSI volume provisioning
+    - [x] CSI-backed managed PV cleanup
     - [ ] ReplicaSet (Maintaining the prescribed number of ships)
     - [ ] Deployment (Deploying same configuration Ships)
     - [ ] Fleet

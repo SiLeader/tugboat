@@ -37,6 +37,16 @@ pub(crate) enum ControllerError {
         mode: String,
     },
     #[error(
+        "PersistentVolumeClaim '{namespace}/{name}' has invalid requested capacity '{capacity_bytes}'"
+    )]
+    InvalidRequestedCapacity {
+        namespace: String,
+        name: String,
+        capacity_bytes: i64,
+    },
+    #[error("PersistentVolume '{name}' has invalid capacity '{capacity_bytes}'")]
+    InvalidPersistentVolumeCapacity { name: String, capacity_bytes: i64 },
+    #[error(
         "PersistentVolume '{name}' already exists but does not match managed claim '{namespace}/{claim}'"
     )]
     ExistingVolumeConflict {

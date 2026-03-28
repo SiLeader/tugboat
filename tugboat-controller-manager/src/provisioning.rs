@@ -1,11 +1,15 @@
 use crate::config::{ControllerManagerConfig, ProvisionerConfig};
 use crate::error::ControllerError;
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use std::collections::HashMap;
+use tugboat_client::{Api, TugboatClient};
 use tugboat_csi_operator::{CsiAccessMode, CsiAccessType};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
     CsiPersistentVolumeSource, PersistentVolume, PersistentVolumeClaim,
-    PersistentVolumeClaimReference, PersistentVolumeSpec, StorageClass,
+    PersistentVolumeClaimReference, PersistentVolumeSpec, PersistentVolumeStatus, Secret,
+    SecretReference, StorageClass, StorageClassSpec,
 };
 use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
@@ -21,6 +25,19 @@ const READ_ONLY_MANY: &str = "ReadOnlyMany";
 const READ_WRITE_ONCE: &str = "ReadWriteOnce";
 const READ_WRITE_MANY: &str = "ReadWriteMany";
 const RECLAIM_POLICY_DELETE: &str = "Delete";
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StorageClassCsiConfig {
+    pub fs_type: Option<String>,
+    pub mount_options: Vec<String>,
+    pub allow_volume_expansion: bool,
+    pub controller_create_secret_ref: Option<SecretReference>,
+    pub controller_expand_secret_ref: Option<SecretReference>,
+    pub controller_publish_secret_ref: Option<SecretReference>,
+    pub node_expand_secret_ref: Option<SecretReference>,
+    pub node_publish_secret_ref: Option<SecretReference>,
+    pub node_stage_secret_ref: Option<SecretReference>,
+}
 
 pub(crate) fn pvc_identity(
     pvc: &PersistentVolumeClaim,
@@ -61,17 +78,27 @@ pub(crate) fn storage_class_provisioner(
     Ok((spec.provisioner.clone(), spec.parameters.clone()))
 }
 
+pub(crate) fn storage_class_csi_config(
+    storage_class: &StorageClass,
+) -> Result<StorageClassCsiConfig, ControllerError> {
+    let spec = storage_class_spec(storage_class)?;
+    Ok(StorageClassCsiConfig {
+        fs_type: spec.fs_type.clone().filter(|value| !value.is_empty()),
+        mount_options: normalize_mount_options(&spec.mount_options),
+        allow_volume_expansion: spec.allow_volume_expansion.unwrap_or(false),
+        controller_create_secret_ref: spec.controller_create_secret_ref.clone(),
+        controller_expand_secret_ref: spec.controller_expand_secret_ref.clone(),
+        controller_publish_secret_ref: spec.controller_publish_secret_ref.clone(),
+        node_expand_secret_ref: spec.node_expand_secret_ref.clone(),
+        node_publish_secret_ref: spec.node_publish_secret_ref.clone(),
+        node_stage_secret_ref: spec.node_stage_secret_ref.clone(),
+    })
+}
+
 pub(crate) fn reclaim_policy_from_storage_class(
     storage_class: &StorageClass,
 ) -> Result<String, ControllerError> {
-    let name = storage_class
-        .name()
-        .ok_or(ControllerError::MissingName("StorageClass"))?
-        .to_string();
-    let spec = storage_class
-        .spec
-        .as_ref()
-        .ok_or_else(|| ControllerError::MissingStorageClassSpec { name: name.clone() })?;
+    let spec = storage_class_spec(storage_class)?;
     Ok(spec
         .reclaim_policy
         .clone()
@@ -120,11 +147,53 @@ pub(crate) fn claim_access_type(
 ) -> Result<CsiAccessType, ControllerError> {
     match volume_mode.unwrap_or(DEFAULT_VOLUME_MODE) {
         DEFAULT_VOLUME_MODE => Ok(CsiAccessType::Block),
+        "Filesystem" => Ok(CsiAccessType::Filesystem),
         mode => Err(ControllerError::UnsupportedVolumeMode {
             namespace: namespace.to_string(),
             name: name.to_string(),
             mode: mode.to_string(),
         }),
+    }
+}
+
+pub(crate) fn requested_capacity_bytes(
+    namespace: &str,
+    name: &str,
+    claim: &tugboat_resources::manifests::core::v1::PersistentVolumeClaimSpec,
+) -> Result<Option<i64>, ControllerError> {
+    match claim.requested_capacity_bytes {
+        Some(capacity_bytes) if capacity_bytes < 0 => {
+            Err(ControllerError::InvalidRequestedCapacity {
+                namespace: namespace.to_string(),
+                name: name.to_string(),
+                capacity_bytes,
+            })
+        }
+        Some(0) | None => Ok(None),
+        Some(capacity_bytes) => Ok(Some(capacity_bytes)),
+    }
+}
+
+pub(crate) fn persistent_volume_capacity_bytes(
+    pv: &PersistentVolume,
+) -> Result<Option<i64>, ControllerError> {
+    let name = pv
+        .name()
+        .ok_or(ControllerError::MissingName("PersistentVolume"))?
+        .to_string();
+    let spec = pv
+        .spec
+        .as_ref()
+        .ok_or_else(|| ControllerError::MissingPersistentVolumeSpec { name: name.clone() })?;
+    match spec.capacity_bytes {
+        Some(capacity_bytes) if capacity_bytes < 0 => {
+            Err(ControllerError::InvalidPersistentVolumeCapacity {
+                name,
+                capacity_bytes,
+            })
+        }
+        Some(0) | None => Ok(None),
+        Some(capacity_bytes) => Ok(Some(capacity_bytes)),
     }
 }
 
@@ -225,8 +294,12 @@ pub(crate) fn build_persistent_volume(
     reclaim_policy: String,
     access_modes: Vec<String>,
     volume_mode: Option<String>,
+    capacity_bytes: Option<i64>,
+    csi_config: StorageClassCsiConfig,
     volume_handle: String,
+    volume_attributes: HashMap<String, String>,
 ) -> PersistentVolume {
+    let normalized_capacity_bytes = normalize_capacity_bytes(capacity_bytes);
     PersistentVolume {
         object_meta: Some(ObjectMeta {
             name: Some(pv_name.to_string()),
@@ -246,23 +319,89 @@ pub(crate) fn build_persistent_volume(
             persistent_volume_reclaim_policy: Some(reclaim_policy),
             storage_class_name: Some(storage_class_name),
             volume_mode,
+            capacity_bytes: normalized_capacity_bytes,
             csi: Some(CsiPersistentVolumeSource {
                 driver: provisioner,
-                controller_expand_secret_ref: None,
-                controller_publish_secret_ref: None,
-                node_expand_secret_ref: None,
-                node_publish_secret_ref: None,
-                node_stage_secret_ref: None,
+                controller_create_secret_ref: csi_config.controller_create_secret_ref,
+                controller_expand_secret_ref: csi_config.controller_expand_secret_ref,
+                controller_publish_secret_ref: csi_config.controller_publish_secret_ref,
+                node_expand_secret_ref: csi_config.node_expand_secret_ref,
+                node_publish_secret_ref: csi_config.node_publish_secret_ref,
+                node_stage_secret_ref: csi_config.node_stage_secret_ref,
                 read_only: false,
                 volume_handle,
+                fs_type: csi_config.fs_type,
+                volume_attributes,
+                mount_options: csi_config.mount_options,
             }),
             claim_ref: Some(PersistentVolumeClaimReference {
                 name: claim_name.to_string(),
                 namespace: claim_namespace.to_string(),
             }),
         }),
+        status: Some(PersistentVolumeStatus {
+            conditions: Vec::new(),
+            phase: Some("Bound".to_string()),
+            capacity_bytes: normalized_capacity_bytes,
+            node_expansion_required: Some(false),
+            attached_node: None,
+        }),
         ..Default::default()
     }
+}
+
+pub(crate) async fn load_secret_reference(
+    client: &TugboatClient,
+    reference: Option<&SecretReference>,
+) -> Result<HashMap<String, String>, ControllerError> {
+    let Some(reference) = reference else {
+        return Ok(Default::default());
+    };
+    let api: Api<Secret> = Api::namespaced(client.clone(), &reference.namespace);
+    let Some(secret) = api.get(&reference.name).await? else {
+        tracing::warn!(
+            "Secret '{}/{}' referenced by CSI configuration is not available yet",
+            reference.namespace,
+            reference.name
+        );
+        return Ok(Default::default());
+    };
+
+    let mut data = HashMap::new();
+    for (key, value) in secret.data {
+        let decoded = BASE64_STANDARD
+            .decode(value)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        if let Some(decoded) = decoded {
+            data.insert(key, decoded);
+        }
+    }
+    data.extend(secret.string_data);
+    Ok(data)
+}
+
+fn storage_class_spec(storage_class: &StorageClass) -> Result<&StorageClassSpec, ControllerError> {
+    let name = storage_class
+        .name()
+        .ok_or(ControllerError::MissingName("StorageClass"))?
+        .to_string();
+    storage_class
+        .spec
+        .as_ref()
+        .ok_or(ControllerError::MissingStorageClassSpec { name })
+}
+
+fn normalize_capacity_bytes(capacity_bytes: Option<i64>) -> Option<i64> {
+    capacity_bytes.filter(|value| *value > 0)
+}
+
+fn normalize_mount_options(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .collect()
 }
 
 fn sanitize_resource_name(input: &str) -> String {
@@ -305,9 +444,11 @@ fn sanitize_resource_name(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        MANAGED_LABEL, MANAGED_LABEL_VALUE, build_persistent_volume, claim_access_modes,
-        claim_access_type, dynamic_volume_name, is_managed_pv, should_delete_backing_volume,
+        MANAGED_LABEL, MANAGED_LABEL_VALUE, StorageClassCsiConfig, build_persistent_volume,
+        claim_access_modes, claim_access_type, dynamic_volume_name, is_managed_pv,
+        should_delete_backing_volume,
     };
+    use std::collections::HashMap;
     use tugboat_csi_operator::{CsiAccessMode, CsiAccessType};
 
     #[test]
@@ -360,7 +501,10 @@ mod tests {
             "Delete".to_string(),
             vec!["ReadWriteOnce".to_string()],
             Some("Block".to_string()),
+            Some(1024),
+            StorageClassCsiConfig::default(),
             "volume-1".to_string(),
+            HashMap::new(),
         );
 
         assert!(is_managed_pv(&pv));
@@ -387,9 +531,89 @@ mod tests {
             "Retain".to_string(),
             vec!["ReadWriteOnce".to_string()],
             Some("Block".to_string()),
+            Some(1024),
+            StorageClassCsiConfig::default(),
             "volume-1".to_string(),
+            HashMap::new(),
         );
 
         assert!(!should_delete_backing_volume(&pv).unwrap());
+    }
+
+    #[test]
+    fn storage_class_config_carries_mount_options_and_create_secret() {
+        let storage_class = tugboat_resources::manifests::core::v1::StorageClass {
+            object_meta: Some(tugboat_resources::manifests::meta::v1::ObjectMeta {
+                name: Some("fast".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(tugboat_resources::manifests::core::v1::StorageClassSpec {
+                provisioner: "example.csi.driver".to_string(),
+                mount_options: vec![
+                    "noatime".to_string(),
+                    String::new(),
+                    "nodiratime".to_string(),
+                ],
+                controller_create_secret_ref: Some(
+                    tugboat_resources::manifests::core::v1::SecretReference {
+                        name: "provisioner".to_string(),
+                        namespace: "kube-system".to_string(),
+                    },
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let config =
+            super::storage_class_csi_config(&storage_class).expect("config should resolve");
+        assert_eq!(config.mount_options, vec!["noatime", "nodiratime"]);
+        assert_eq!(
+            config
+                .controller_create_secret_ref
+                .as_ref()
+                .map(|r| (&r.namespace, &r.name)),
+            Some((&"kube-system".to_string(), &"provisioner".to_string()))
+        );
+    }
+
+    #[test]
+    fn built_pv_carries_mount_options_and_create_secret() {
+        let pv = build_persistent_volume(
+            "pv-2",
+            "default",
+            "claim-b",
+            "fast".to_string(),
+            "example.csi.driver".to_string(),
+            "Delete".to_string(),
+            vec!["ReadWriteOnce".to_string()],
+            Some("Filesystem".to_string()),
+            Some(2048),
+            StorageClassCsiConfig {
+                mount_options: vec!["noatime".to_string(), "nodiratime".to_string()],
+                controller_create_secret_ref: Some(
+                    tugboat_resources::manifests::core::v1::SecretReference {
+                        name: "provisioner".to_string(),
+                        namespace: "kube-system".to_string(),
+                    },
+                ),
+                ..Default::default()
+            },
+            "volume-2".to_string(),
+            HashMap::new(),
+        );
+
+        let csi = pv
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.csi.as_ref())
+            .expect("csi source should exist");
+        assert_eq!(csi.mount_options, vec!["noatime", "nodiratime"]);
+        assert_eq!(
+            csi.controller_create_secret_ref
+                .as_ref()
+                .map(|r| (&r.namespace, &r.name)),
+            Some((&"kube-system".to_string(), &"provisioner".to_string()))
+        );
     }
 }

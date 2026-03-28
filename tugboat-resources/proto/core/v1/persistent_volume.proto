@@ -36,6 +36,7 @@ message PersistentVolumeSpec {
   optional string volume_mode = 4;
   CsiPersistentVolumeSource csi = 5;
   PersistentVolumeClaimReference claim_ref = 6;
+  optional int64 capacity_bytes = 7;
 }
 
 message PersistentVolumeClaimReference {
@@ -45,6 +46,10 @@ message PersistentVolumeClaimReference {
 
 message PersistentVolumeStatus {
   repeated PersistentVolumeCondition conditions = 1;
+  optional string phase = 2;
+  optional int64 capacity_bytes = 3;
+  optional bool node_expansion_required = 4;
+  optional string attached_node = 5;
 }
 
 message PersistentVolumeCondition {
@@ -62,4 +67,8 @@ message CsiPersistentVolumeSource {
   SecretReference node_stage_secret_ref = 6;
   bool read_only = 7;
   string volume_handle = 8;
+  optional string fs_type = 9;
+  map<string, string> volume_attributes = 10;
+  repeated string mount_options = 11;
+  SecretReference controller_create_secret_ref = 12;
 }

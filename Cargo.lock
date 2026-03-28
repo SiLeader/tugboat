@@ -3333,6 +3333,7 @@ name = "tugboat-controller-manager"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "clap",
  "serde",
  "thiserror 2.0.18",

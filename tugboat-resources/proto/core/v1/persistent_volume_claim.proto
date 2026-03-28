@@ -34,10 +34,14 @@ message PersistentVolumeClaimSpec {
   optional string storage_class_name = 2;
   optional string volume_mode = 3;
   optional string volume_name = 4;
+  optional int64 requested_capacity_bytes = 5;
 }
 
 message PersistentVolumeClaimStatus {
   repeated PersistentVolumeClaimCondition conditions = 1;
+  optional string phase = 2;
+  optional int64 capacity_bytes = 3;
+  optional bool resize_pending = 4;
 }
 
 message PersistentVolumeClaimCondition {
