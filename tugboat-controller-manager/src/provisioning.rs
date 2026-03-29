@@ -13,12 +13,12 @@ use tugboat_resources::manifests::core::v1::{
 };
 use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
-pub(crate) const MANAGED_LABEL: &str = "storage.tugboat.io/dynamic-provisioned";
+pub(crate) const MANAGED_LABEL: &str = "storage.tugboat.sileader.net/dynamic-provisioned";
 pub(crate) const MANAGED_LABEL_VALUE: &str = "true";
-pub(crate) const PROVISIONER_ANNOTATION: &str = "storage.tugboat.io/provisioner";
-pub(crate) const CLAIM_NAMESPACE_ANNOTATION: &str = "storage.tugboat.io/claim-namespace";
-pub(crate) const CLAIM_NAME_ANNOTATION: &str = "storage.tugboat.io/claim-name";
-pub(crate) const PV_FINALIZER: &str = "storage.tugboat.io/csi-provisioner";
+pub(crate) const PROVISIONER_ANNOTATION: &str = "storage.tugboat.sileader.net/provisioner";
+pub(crate) const CLAIM_NAMESPACE_ANNOTATION: &str = "storage.tugboat.sileader.net/claim-namespace";
+pub(crate) const CLAIM_NAME_ANNOTATION: &str = "storage.tugboat.sileader.net/claim-name";
+pub(crate) const PV_FINALIZER: &str = "storage.tugboat.sileader.net/csi-provisioner";
 
 const DEFAULT_VOLUME_MODE: &str = "Block";
 const READ_ONLY_MANY: &str = "ReadOnlyMany";
