@@ -73,7 +73,11 @@ fn default_scheduling_interval() -> u64 {
 }
 
 fn default_filter_plugins() -> Vec<String> {
-    vec!["TaintToleration".to_string(), "ResourceFit".to_string()]
+    vec![
+        "NetworkFit".to_string(),
+        "TaintToleration".to_string(),
+        "ResourceFit".to_string(),
+    ]
 }
 
 fn default_score_plugins() -> Vec<String> {

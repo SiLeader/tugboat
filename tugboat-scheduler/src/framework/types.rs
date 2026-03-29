@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
+use tugboat_resources::manifests::core::v1::{ClusterNetworkClass, NetworkClass, Ship, ShipClass};
 
 /// Context shared across plugin invocations for a single scheduling cycle.
 pub struct SchedulingContext {
@@ -20,6 +20,10 @@ pub struct SchedulingContext {
     pub ship: Ship,
     /// The ShipClass referenced by the Ship.
     pub ship_class: ShipClass,
+    /// All cluster-scoped network classes.
+    pub all_cluster_network_classes: Vec<ClusterNetworkClass>,
+    /// All namespaced network classes.
+    pub all_network_classes: Vec<NetworkClass>,
     /// All Ships currently in the cluster (for resource usage calculation).
     pub all_ships: Vec<Ship>,
     /// All ShipClasses (for resolving resource requirements of scheduled ships).
@@ -63,6 +67,34 @@ impl SchedulingContext {
         self.all_ship_classes
             .iter()
             .find(|sc| sc.object_meta.as_ref().and_then(|m| m.name.as_deref()) == Some(name))
+    }
+
+    pub fn ship_namespace(&self) -> &str {
+        self.ship
+            .object_meta
+            .as_ref()
+            .and_then(|meta| meta.namespace.as_deref())
+            .unwrap_or("default")
+    }
+
+    pub fn find_cluster_network_class(&self, name: &str) -> Option<&ClusterNetworkClass> {
+        self.all_cluster_network_classes
+            .iter()
+            .find(|network_class| {
+                network_class
+                    .object_meta
+                    .as_ref()
+                    .and_then(|meta| meta.name.as_deref())
+                    == Some(name)
+            })
+    }
+
+    pub fn find_network_class(&self, namespace: &str, name: &str) -> Option<&NetworkClass> {
+        self.all_network_classes.iter().find(|network_class| {
+            let meta = network_class.object_meta.as_ref();
+            meta.and_then(|item| item.name.as_deref()) == Some(name)
+                && meta.and_then(|item| item.namespace.as_deref()) == Some(namespace)
+        })
     }
 
     /// Get CPU and memory requested by the Ship being scheduled.

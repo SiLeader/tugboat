@@ -35,6 +35,8 @@ mod storage_class;
         clusternetworkclass::handle_clusternetworkclass_delete,
         clusternetworkclass::handle_clusternetworkclass_list,
         clusternetworkclass::handle_clusternetworkclass_read,
+        clusternetworkclass::handle_clusternetworkclass_status_patch,
+        clusternetworkclass::handle_clusternetworkclass_status_replace,
         configmap::handle_configmap_create,
         configmap::handle_configmap_delete,
         configmap::handle_configmap_list,
@@ -50,6 +52,8 @@ mod storage_class;
         node::handle_node_list,
         node::handle_node_read,
         node::handle_node_replace,
+        node::handle_node_status_patch,
+        node::handle_node_status_replace,
         persistent_volume::handle_persistent_volume_create,
         persistent_volume::handle_persistent_volume_delete,
         persistent_volume::handle_persistent_volume_list,
@@ -70,6 +74,8 @@ mod storage_class;
         networkclass::handle_networkclass_list,
         networkclass::handle_networkclass_list_all,
         networkclass::handle_networkclass_read,
+        networkclass::handle_networkclass_status_patch,
+        networkclass::handle_networkclass_status_replace,
         secret::handle_secret_create,
         secret::handle_secret_delete,
         secret::handle_secret_list,
@@ -122,7 +128,9 @@ pub(super) fn register_clusternetworkclass(service: &mut ServiceConfig) {
         .service(clusternetworkclass::handle_clusternetworkclass_create)
         .service(clusternetworkclass::handle_clusternetworkclass_delete)
         .service(clusternetworkclass::handle_clusternetworkclass_list)
-        .service(clusternetworkclass::handle_clusternetworkclass_read);
+        .service(clusternetworkclass::handle_clusternetworkclass_read)
+        .service(clusternetworkclass::handle_clusternetworkclass_status_patch)
+        .service(clusternetworkclass::handle_clusternetworkclass_status_replace);
 }
 
 pub(super) fn register_configmap(service: &mut ServiceConfig) {
@@ -149,7 +157,9 @@ pub(super) fn register_node(service: &mut ServiceConfig) {
         .service(node::handle_node_delete)
         .service(node::handle_node_list)
         .service(node::handle_node_read)
-        .service(node::handle_node_replace);
+        .service(node::handle_node_replace)
+        .service(node::handle_node_status_patch)
+        .service(node::handle_node_status_replace);
 }
 
 pub(super) fn register_persistent_volume(service: &mut ServiceConfig) {
@@ -181,7 +191,9 @@ pub(super) fn register_networkclass(service: &mut ServiceConfig) {
         .service(networkclass::handle_networkclass_delete)
         .service(networkclass::handle_networkclass_list)
         .service(networkclass::handle_networkclass_list_all)
-        .service(networkclass::handle_networkclass_read);
+        .service(networkclass::handle_networkclass_read)
+        .service(networkclass::handle_networkclass_status_patch)
+        .service(networkclass::handle_networkclass_status_replace);
 }
 
 pub(super) fn register_secret(service: &mut ServiceConfig) {

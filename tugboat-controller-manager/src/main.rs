@@ -1,5 +1,6 @@
 use crate::config::ControllerManagerConfig;
 use crate::manager::TugboatControllerManager;
+use crate::network_class_status::NetworkClassStatusController;
 use crate::pv_cleanup::PersistentVolumeCleanupController;
 use crate::pvc_provisioner::PvcProvisionerController;
 use clap::Parser;
@@ -11,6 +12,7 @@ mod base;
 mod config;
 mod error;
 mod manager;
+mod network_class_status;
 mod provisioning;
 mod pv_cleanup;
 mod pvc_provisioner;
@@ -36,6 +38,10 @@ async fn main() {
     let csi_operator = TugboatCsiOperator::default();
 
     let mut tcm = TugboatControllerManager::new();
+    tcm.add_controller(NetworkClassStatusController::new(
+        client.clone(),
+        config.clone(),
+    ));
     tcm.add_controller(PvcProvisionerController::new(
         client.clone(),
         csi_operator.clone(),

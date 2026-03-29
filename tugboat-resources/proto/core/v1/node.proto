@@ -16,6 +16,7 @@ syntax = "proto3";
 
 import "meta/v1/type_meta.proto";
 import "meta/v1/object_meta.proto";
+import "meta/v1/time.proto";
 
 package tugboat.core.v1;
 
@@ -23,6 +24,7 @@ message Node {
   meta.v1.TypeMeta type_meta = 1;
   meta.v1.ObjectMeta object_meta = 2;
   NodeSpec spec = 3;
+  optional NodeStatus status = 4;
 }
 
 message NodeSpec {
@@ -46,4 +48,22 @@ message NodeOvercommitSpec {
 message NodeResource {
   uint64 cpu = 1;
   uint64 memory = 2;
+}
+
+message NodeStatus {
+  repeated NodeCondition conditions = 1;
+  repeated NodeCniPluginStatus cni_plugins = 2;
+}
+
+message NodeCondition {
+  string type = 1;
+  string status = 2;
+  string message = 3;
+  meta.v1.Time timestamp = 4;
+}
+
+message NodeCniPluginStatus {
+  string name = 1;
+  optional bool ready = 2;
+  string message = 3;
 }

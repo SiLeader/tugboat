@@ -13,10 +13,16 @@
 // limitations under the License.
 
 use std::io;
-use tracing::info;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tracing::{debug, info, warn};
 use tugboat_client::{Api, TugboatClient};
-use tugboat_resources::manifests::core::v1::{Node, NodeOvercommitSpec, NodeResource, NodeSpec};
-use tugboat_resources::manifests::meta::v1::ObjectMeta;
+use tugboat_cni_operator::CniOperatorConfig;
+use tugboat_resources::manifests::core::v1::{
+    Node, NodeCniPluginStatus, NodeCondition, NodeOvercommitSpec, NodeResource, NodeSpec,
+    NodeStatus,
+};
+use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
 
 const PROC_CPUINFO_PATH: &str = "/proc/cpuinfo";
 const PROC_MEMINFO_PATH: &str = "/proc/meminfo";
@@ -26,6 +32,10 @@ const CGROUP_V1_CPU_QUOTA_PATH: &str = "/sys/fs/cgroup/cpu/cpu.cfs_quota_us";
 const CGROUP_V1_CPU_PERIOD_PATH: &str = "/sys/fs/cgroup/cpu/cpu.cfs_period_us";
 const CGROUP_V1_MEMORY_LIMIT_PATH: &str = "/sys/fs/cgroup/memory/memory.limit_in_bytes";
 const CGROUP_V1_MEMORY_UNLIMITED_THRESHOLD: u64 = 1 << 60;
+const DEFAULT_FLANNEL_SUBNET_FILE: &str = "/run/flannel/subnet.env";
+const DEFAULT_FLANNEL_DATA_DIR: &str = "/run/flannel";
+const REQUIRED_CNI_PLUGINS: [&str; 2] = ["bridge", "loopback"];
+const OPTIONAL_CNI_PLUGINS: [&str; 2] = ["flannel", "portmap"];
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum NodeRegistrationError {
@@ -33,6 +43,8 @@ pub(crate) enum NodeRegistrationError {
     Client(#[from] tugboat_client::Error),
     #[error("Capacity detection failed: {0}")]
     Io(#[from] io::Error),
+    #[error("Node resource '{0}' not found")]
+    NodeMissing(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +88,45 @@ pub(crate) async fn ensure_node_exists(
     }
 }
 
+pub(crate) async fn publish_node_status(
+    client: TugboatClient,
+    node_name: &str,
+    cni: &CniOperatorConfig,
+) -> Result<(), NodeRegistrationError> {
+    let api: Api<Node> = Api::all(client);
+    let Some(mut node) = api.get(node_name).await? else {
+        return Err(NodeRegistrationError::NodeMissing(node_name.to_string()));
+    };
+
+    node.status = Some(build_node_status(cni)?);
+    api.replace_status(node_name, node).await?;
+    debug!("Published CNI status for node '{node_name}'");
+    Ok(())
+}
+
+pub(crate) async fn refresh_node_status_loop(
+    client: TugboatClient,
+    node_name: String,
+    cni: CniOperatorConfig,
+    interval: Duration,
+) {
+    info!(
+        "Starting CNI capability reporter for node '{}' (interval={}s)",
+        node_name,
+        interval.as_secs()
+    );
+
+    loop {
+        if let Err(err) = publish_node_status(client.clone(), &node_name, &cni).await {
+            warn!(
+                "Failed to publish CNI capability for node '{}': {}",
+                node_name, err
+            );
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
 fn build_node(node_name: String, capacity: NodeCapacity) -> Node {
     Node {
         type_meta: None,
@@ -95,7 +146,120 @@ fn build_node(node_name: String, capacity: NodeCapacity) -> Node {
             }),
             taints: Vec::new(),
         }),
+        status: None,
     }
+}
+
+fn build_node_status(cni: &CniOperatorConfig) -> Result<NodeStatus, io::Error> {
+    build_node_status_with_flannel_paths(
+        cni,
+        Path::new(DEFAULT_FLANNEL_SUBNET_FILE),
+        Path::new(DEFAULT_FLANNEL_DATA_DIR),
+    )
+}
+
+fn build_node_status_with_flannel_paths(
+    cni: &CniOperatorConfig,
+    flannel_subnet_file: &Path,
+    flannel_data_dir: &Path,
+) -> Result<NodeStatus, io::Error> {
+    let mut cni_plugins = REQUIRED_CNI_PLUGINS
+        .iter()
+        .map(|plugin| probe_plugin_binary(cni.bin_dir(), plugin))
+        .collect::<Result<Vec<_>, _>>()?;
+    cni_plugins.push(probe_flannel_plugin(
+        cni.bin_dir(),
+        flannel_subnet_file,
+        flannel_data_dir,
+    )?);
+    cni_plugins.extend(
+        OPTIONAL_CNI_PLUGINS[1..]
+            .iter()
+            .map(|plugin| probe_plugin_binary(cni.bin_dir(), plugin))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+
+    let missing_required = cni_plugins
+        .iter()
+        .filter(|plugin| {
+            REQUIRED_CNI_PLUGINS.contains(&plugin.name.as_str()) && !plugin.ready.unwrap_or(false)
+        })
+        .map(|plugin| plugin.name.clone())
+        .collect::<Vec<_>>();
+
+    let condition = NodeCondition {
+        r#type: "CniReady".to_string(),
+        status: if missing_required.is_empty() {
+            "True".to_string()
+        } else {
+            "False".to_string()
+        },
+        message: if missing_required.is_empty() {
+            "Required CNI plugins are available on this node.".to_string()
+        } else {
+            format!(
+                "Missing required CNI plugins: {}",
+                missing_required.join(", ")
+            )
+        },
+        timestamp: Some(Time::now()),
+    };
+
+    Ok(NodeStatus {
+        conditions: vec![condition],
+        cni_plugins,
+    })
+}
+
+fn probe_plugin_binary(bin_dir: &str, plugin: &str) -> Result<NodeCniPluginStatus, io::Error> {
+    let binary = PathBuf::from(bin_dir).join(plugin);
+    let ready = binary.try_exists()?;
+    Ok(NodeCniPluginStatus {
+        name: plugin.to_string(),
+        ready: Some(ready),
+        message: if ready {
+            format!("Found plugin binary at '{}'.", binary.display())
+        } else {
+            format!("Missing plugin binary at '{}'.", binary.display())
+        },
+    })
+}
+
+fn probe_flannel_plugin(
+    bin_dir: &str,
+    subnet_file: &Path,
+    data_dir: &Path,
+) -> Result<NodeCniPluginStatus, io::Error> {
+    let binary = PathBuf::from(bin_dir).join("flannel");
+    let binary_ready = binary.try_exists()?;
+    let subnet_ready = subnet_file.try_exists()?;
+    let data_dir_ready = data_dir.try_exists()?;
+    let ready = binary_ready && subnet_ready && data_dir_ready;
+
+    let mut missing = Vec::new();
+    if !binary_ready {
+        missing.push(format!("plugin binary '{}'", binary.display()));
+    }
+    if !subnet_ready {
+        missing.push(format!("subnet file '{}'", subnet_file.display()));
+    }
+    if !data_dir_ready {
+        missing.push(format!("data dir '{}'", data_dir.display()));
+    }
+
+    Ok(NodeCniPluginStatus {
+        name: "flannel".to_string(),
+        ready: Some(ready),
+        message: if ready {
+            format!(
+                "Found flannel plugin binary and runtime state ('{}', '{}').",
+                subnet_file.display(),
+                data_dir.display()
+            )
+        } else {
+            format!("Missing flannel prerequisites: {}.", missing.join(", "))
+        },
+    })
 }
 
 fn detect_node_capacity() -> Result<NodeCapacity, io::Error> {
@@ -289,5 +453,88 @@ mod tests {
         assert_eq!(overcommit.memory_ratio, "1");
         assert_eq!(resource.cpu, 4);
         assert_eq!(resource.memory, 8_589_934_592);
+        assert!(node.status.is_none());
+    }
+
+    #[test]
+    fn build_node_status_reports_missing_required_plugins() {
+        let base = test_dir("missing-required");
+        let bin = base.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let config = test_cni_config(&bin);
+        let subnet = base.join("subnet.env");
+        let data_dir = base.join("flannel");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
+
+        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let condition = status.conditions.first().expect("condition should exist");
+
+        assert_eq!(condition.r#type, "CniReady");
+        assert_eq!(condition.status, "False");
+        assert!(condition.message.contains("bridge"));
+        assert!(condition.message.contains("loopback"));
+
+        cleanup_test_dir(&base);
+    }
+
+    #[test]
+    fn build_node_status_reports_flannel_prerequisites() {
+        let base = test_dir("flannel-prerequisites");
+        let bin = base.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for plugin in ["bridge", "loopback", "flannel", "portmap"] {
+            std::fs::write(bin.join(plugin), "").unwrap();
+        }
+        let subnet = base.join("subnet.env");
+        let data_dir = base.join("flannel");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
+
+        let config = test_cni_config(&bin);
+        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+
+        let flannel = status
+            .cni_plugins
+            .iter()
+            .find(|plugin| plugin.name == "flannel")
+            .expect("flannel plugin should exist");
+        let ready = flannel.ready.expect("flannel readiness should be present");
+
+        assert!(ready);
+        assert!(flannel.message.contains("runtime state"));
+        assert_eq!(status.conditions[0].status, "True");
+
+        cleanup_test_dir(&base);
+    }
+
+    fn test_cni_config(bin_dir: &Path) -> CniOperatorConfig {
+        toml::from_str(&format!(
+            r#"[location]
+bin = "{}"
+config = "{}"
+netns = "{}"
+"#,
+            bin_dir.display(),
+            bin_dir.join("config").display(),
+            bin_dir.join("netns").display()
+        ))
+        .unwrap()
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = format!(
+            "tugboat-node-registration-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    fn cleanup_test_dir(path: &Path) {
+        let _ = std::fs::remove_dir_all(path);
     }
 }

@@ -17,7 +17,7 @@ use crate::endpoints::resource_handlers::ReplaceOptions;
 use crate::endpoints::{ListQuery, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, delete, get, post, put};
+use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::Node;
 use utoipa::ToSchema;
@@ -132,9 +132,71 @@ pub(super) async fn handle_node_replace(
         path.into_inner().name,
         replacement.into_inner(),
         ReplaceOptions {
-            preserve_status: false,
-            use_client_resource_version: true,
+            preserve_status: true,
+            use_client_resource_version: false,
         },
+    )
+    .await
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct NodePatchPathParams {
+    name: String,
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = Node),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/api/v1/nodes/{name}/status")]
+pub(super) async fn handle_node_status_patch(
+    path: Path<NodePatchPathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Node>, Box<StatusResponse>> {
+    resource_handlers::status_patch_resource::<Node>(
+        &operator,
+        None,
+        path.into_inner().name,
+        patch.into_inner(),
+    )
+    .await
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct NodeStatusReplacePathParams {
+    name: String,
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = Node),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Node
+    )]
+#[put("/api/v1/nodes/{name}/status")]
+pub(super) async fn handle_node_status_replace(
+    path: Path<NodeStatusReplacePathParams>,
+    replacement: Json<Node>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Node>, Box<StatusResponse>> {
+    resource_handlers::status_replace_resource::<Node>(
+        &operator,
+        None,
+        path.into_inner().name,
+        replacement.into_inner(),
     )
     .await
 }

@@ -117,6 +117,12 @@ const CLUSTER_DEFAULT_OPS: ResourceOperations = ResourceOperations {
     status_update: false,
 };
 
+const CLUSTER_STATUS_OPS: ResourceOperations = ResourceOperations {
+    status_patch: true,
+    status_update: true,
+    ..CLUSTER_DEFAULT_OPS
+};
+
 const NAMESPACED_DEFAULT_OPS: ResourceOperations = ResourceOperations {
     create: true,
     list: true,
@@ -127,9 +133,17 @@ const NAMESPACED_DEFAULT_OPS: ResourceOperations = ResourceOperations {
     status_update: false,
 };
 
+const NAMESPACED_STATUS_OPS: ResourceOperations = ResourceOperations {
+    status_patch: true,
+    status_update: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
 const NODE_OPS: ResourceOperations = ResourceOperations {
     update: true,
     delete: true,
+    status_patch: true,
+    status_update: true,
     ..CLUSTER_DEFAULT_OPS
 };
 
@@ -181,7 +195,7 @@ const LEASE_OPS: ResourceOperations = ResourceOperations {
 pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
     vec![
         ResourceApiDescriptor::new::<ClusterNetworkClass>(
-            CLUSTER_DEFAULT_OPS,
+            CLUSTER_STATUS_OPS,
             v1_core::register_clusternetworkclass,
         ),
         ResourceApiDescriptor::new::<ConfigMap>(CONFIGMAP_OPS, v1_core::register_configmap),
@@ -192,7 +206,7 @@ pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
             v1_core::register_persistent_volume,
         ),
         ResourceApiDescriptor::new::<NetworkClass>(
-            NAMESPACED_DEFAULT_OPS,
+            NAMESPACED_STATUS_OPS,
             v1_core::register_networkclass,
         ),
         ResourceApiDescriptor::new::<PersistentVolumeClaim>(

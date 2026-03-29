@@ -16,7 +16,7 @@ use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::{ListQuery, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, delete, get, post};
+use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::ClusterNetworkClass;
 use utoipa::ToSchema;
@@ -107,4 +107,66 @@ pub(super) async fn handle_clusternetworkclass_read(
 ) -> Result<ReadResponse<ClusterNetworkClass>, Box<StatusResponse>> {
     resource_handlers::read_resource::<ClusterNetworkClass>(&operator, None, path.into_inner().name)
         .await
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct ClusterNetworkClassPatchPathParams {
+    name: String,
+}
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource updated", body = ClusterNetworkClass),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("name" = String, Path, description = "Name of the resource"),
+    ),
+    request_body = Object
+)]
+#[patch("/api/v1/clusternetworkclasses/{name}/status")]
+pub(super) async fn handle_clusternetworkclass_status_patch(
+    path: Path<ClusterNetworkClassPatchPathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<ClusterNetworkClass>, Box<StatusResponse>> {
+    resource_handlers::status_patch_resource::<ClusterNetworkClass>(
+        &operator,
+        None,
+        path.into_inner().name,
+        patch.into_inner(),
+    )
+    .await
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct ClusterNetworkClassStatusReplacePathParams {
+    name: String,
+}
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "Resource updated", body = ClusterNetworkClass),
+        (status = 404, description = "Resource not found", body = StatusResponse),
+        (status = 500, description = "Internal server error", body = StatusResponse),
+    ),
+    params(
+        ("name" = String, Path, description = "Name of the resource"),
+    ),
+    request_body = ClusterNetworkClass
+)]
+#[put("/api/v1/clusternetworkclasses/{name}/status")]
+pub(super) async fn handle_clusternetworkclass_status_replace(
+    path: Path<ClusterNetworkClassStatusReplacePathParams>,
+    replacement: Json<ClusterNetworkClass>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<ClusterNetworkClass>, Box<StatusResponse>> {
+    resource_handlers::status_replace_resource::<ClusterNetworkClass>(
+        &operator,
+        None,
+        path.into_inner().name,
+        replacement.into_inner(),
+    )
+    .await
 }

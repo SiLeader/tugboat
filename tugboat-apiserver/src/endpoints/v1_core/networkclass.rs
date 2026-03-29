@@ -16,7 +16,7 @@ use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::{ListQuery, NamespacedPathParams, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, delete, get, post};
+use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::NetworkClass;
 use utoipa::ToSchema;
@@ -145,4 +145,72 @@ pub(super) async fn handle_networkclass_read(
     let path = path.into_inner();
     resource_handlers::read_resource::<NetworkClass>(&operator, Some(path.namespace), path.name)
         .await
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct NetworkClassPatchPathParams {
+    namespace: String,
+    name: String,
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = NetworkClass),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/api/v1/namespaces/{namespace}/networkclasses/{name}/status")]
+pub(super) async fn handle_networkclass_status_patch(
+    path: Path<NetworkClassPatchPathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<NetworkClass>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::status_patch_resource::<NetworkClass>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        patch.into_inner(),
+    )
+    .await
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct NetworkClassStatusReplacePathParams {
+    namespace: String,
+    name: String,
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = NetworkClass),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = NetworkClass
+    )]
+#[put("/api/v1/namespaces/{namespace}/networkclasses/{name}/status")]
+pub(super) async fn handle_networkclass_status_replace(
+    path: Path<NetworkClassStatusReplacePathParams>,
+    replacement: Json<NetworkClass>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<NetworkClass>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::status_replace_resource::<NetworkClass>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        replacement.into_inner(),
+    )
+    .await
 }

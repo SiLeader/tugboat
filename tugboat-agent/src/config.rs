@@ -15,6 +15,7 @@
 use crate::runtime::RuntimeConfig;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 use tugboat_cni_operator::CniOperatorConfig;
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +32,8 @@ pub(crate) struct AgentConfig {
 #[derive(Debug, Deserialize)]
 pub(crate) struct NodeConfig {
     pub name: String,
+    #[serde(default = "default_network_probe_interval_seconds")]
+    pub network_probe_interval_seconds: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,9 +60,19 @@ fn default_csi_publish_dir() -> String {
     "/var/lib/tugboat-agent/csi".to_string()
 }
 
+fn default_network_probe_interval_seconds() -> u64 {
+    30
+}
+
 impl AgentConfig {
     pub(crate) fn load_or_panic(path: impl AsRef<std::path::Path>) -> Self {
         let content = std::fs::read_to_string(path).expect("Failed to read config file");
         toml::from_str(&content).expect("Failed to parse config file as TOML")
+    }
+}
+
+impl NodeConfig {
+    pub(crate) fn network_probe_interval(&self) -> Duration {
+        Duration::from_secs(self.network_probe_interval_seconds)
     }
 }

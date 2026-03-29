@@ -18,5 +18,8 @@ url = "http://localhost:8080"
 [csi]
 requeue_interval_seconds = 30
 
+[network]
+requeue_interval_seconds = 30
+
 [csi.provisioners."example.csi.driver"]
 socket_path = "/var/run/example-csi.sock"
