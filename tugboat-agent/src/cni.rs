@@ -15,10 +15,13 @@
 use sha2::Digest;
 use tracing::{debug, info};
 use tugboat_cni_operator::{
-    CniConfContent, CniConfHeader, CniIpam, CniIpamRoute, CniNetConfList, TugboatCniOperator,
+    CniConfContent, CniConfHeader, CniFlannelDelegate, CniIpam, CniIpamRoute, CniNetConfList,
+    CniPortmapCapabilities, TugboatCniOperator,
 };
 use tugboat_resources::manifests::core::v1::NetworkClassSpec;
 use tugboat_vm_runtime_interface::run::VmNetworkConfig;
+
+const CNI_VERSION: &str = "1.0.0";
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniWrapper {
@@ -111,26 +114,16 @@ impl CniWrapper {
     }
 
     async fn add_loopback(&self, ship_id: &str) -> Result<(), tugboat_cni_operator::Error> {
-        let conf = CniNetConfList {
-            header: CniConfHeader {
-                cni_version: "1.0.0".to_string(),
-                name: "loopback".to_string(),
-            },
-            plugins: vec![CniConfContent::Loopback],
-        };
-        self.operator.add(ship_id, "lo", "loopback", conf).await?;
+        self.operator
+            .add(ship_id, "lo", Self::loopback_conf())
+            .await?;
         Ok(())
     }
 
     async fn del_loopback(&self, ship_id: &str) -> Result<(), tugboat_cni_operator::Error> {
-        let conf = CniNetConfList {
-            header: CniConfHeader {
-                cni_version: "1.0.0".to_string(),
-                name: "loopback".to_string(),
-            },
-            plugins: vec![CniConfContent::Loopback],
-        };
-        self.operator.del(ship_id, "lo", "loopback", conf).await?;
+        self.operator
+            .del(ship_id, "lo", Self::loopback_conf())
+            .await?;
         Ok(())
     }
 
@@ -139,9 +132,9 @@ impl CniWrapper {
         ship_id: &str,
         config: PlannedNetworkConfig,
     ) -> Result<VmNetworkConfig, tugboat_cni_operator::Error> {
-        let conf = Self::bridge_conf(&config);
+        let conf = Self::network_conf(&config)?;
         self.operator
-            .add(ship_id, &config.vm.iface_name, "bridge", conf)
+            .add(ship_id, &config.vm.iface_name, conf)
             .await?;
         Ok(config.vm)
     }
@@ -151,17 +144,44 @@ impl CniWrapper {
         ship_id: &str,
         config: PlannedNetworkConfig,
     ) -> Result<(), tugboat_cni_operator::Error> {
-        let conf = Self::bridge_conf(&config);
+        let conf = Self::network_conf(&config)?;
         self.operator
-            .del(ship_id, &config.vm.iface_name, "bridge", conf)
+            .del(ship_id, &config.vm.iface_name, conf)
             .await?;
         Ok(())
+    }
+
+    fn loopback_conf() -> CniNetConfList {
+        CniNetConfList {
+            header: CniConfHeader {
+                cni_version: CNI_VERSION.to_string(),
+                name: "loopback".to_string(),
+            },
+            plugins: vec![CniConfContent::Loopback],
+        }
+    }
+
+    fn network_conf(
+        config: &PlannedNetworkConfig,
+    ) -> Result<CniNetConfList, tugboat_cni_operator::Error> {
+        let plugin = config.info.spec.cni_plugin.trim();
+        if plugin.is_empty() || plugin.eq_ignore_ascii_case("bridge") {
+            Ok(Self::bridge_conf(config))
+        } else if plugin.eq_ignore_ascii_case("flannel") {
+            Ok(Self::flannel_conf(config))
+        } else {
+            Err(tugboat_cni_operator::Error::InvalidConfiguration(format!(
+                "NetworkClass '{}' requests unsupported cniPlugin '{}'",
+                network_class_identifier(&config.info),
+                plugin
+            )))
+        }
     }
 
     fn bridge_conf(config: &PlannedNetworkConfig) -> CniNetConfList {
         CniNetConfList {
             header: CniConfHeader {
-                cni_version: "1.0.0".to_string(),
+                cni_version: CNI_VERSION.to_string(),
                 name: config.info.name.clone(),
             },
             plugins: vec![CniConfContent::Bridge {
@@ -183,6 +203,59 @@ impl CniWrapper {
                 },
             }],
         }
+    }
+
+    fn flannel_conf(config: &PlannedNetworkConfig) -> CniNetConfList {
+        let flannel = config.info.spec.flannel.as_ref();
+        let default_gateway = flannel
+            .and_then(|settings| settings.default_gateway)
+            .unwrap_or(config.info.spec.cluster_network.unwrap_or(true));
+
+        let mut plugins = vec![CniConfContent::Flannel {
+            subnet_file: flannel.and_then(|settings| option_if_not_empty(&settings.subnet_file)),
+            data_dir: flannel.and_then(|settings| option_if_not_empty(&settings.data_dir)),
+            delegate: Some(CniFlannelDelegate {
+                bridge: Some(config.bridge.clone()),
+                is_gateway: Some(default_gateway),
+                is_default_gateway: Some(default_gateway),
+                ip_masquerade: Some(config.info.spec.internet_access.unwrap_or(false)),
+                hairpin_mode: Some(
+                    flannel
+                        .and_then(|settings| settings.hairpin_mode)
+                        .unwrap_or(true),
+                ),
+            }),
+        }];
+
+        if flannel
+            .and_then(|settings| settings.port_mappings)
+            .unwrap_or(false)
+        {
+            plugins.push(CniConfContent::Portmap {
+                capabilities: CniPortmapCapabilities {
+                    port_mappings: true,
+                },
+            });
+        }
+
+        CniNetConfList {
+            header: CniConfHeader {
+                cni_version: CNI_VERSION.to_string(),
+                name: config.info.name.clone(),
+            },
+            plugins,
+        }
+    }
+}
+
+fn option_if_not_empty(value: &str) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.to_string())
+}
+
+fn network_class_identifier(info: &NetworkClassInfo) -> String {
+    match &info.namespace {
+        Some(namespace) => format!("{namespace}/{}", info.name),
+        None => info.name.clone(),
     }
 }
 
@@ -209,7 +282,27 @@ fn create_bridge_name(namespace: &Option<String>, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::cni::create_bridge_name;
+    use crate::cni::{CniWrapper, NetworkClassInfo, PlannedNetworkConfig, create_bridge_name};
+    use tugboat_cni_operator::{CniConfContent, CniFlannelDelegate, CniIpamRoute};
+    use tugboat_resources::manifests::core::v1::{
+        FlannelNetworkClass, NetworkClassRoute, NetworkClassSpec,
+    };
+    use tugboat_vm_runtime_interface::run::VmNetworkConfig;
+
+    fn planned_config(spec: NetworkClassSpec) -> PlannedNetworkConfig {
+        PlannedNetworkConfig {
+            bridge: "br-test".to_string(),
+            info: NetworkClassInfo {
+                name: "test-network".to_string(),
+                namespace: Some("default".to_string()),
+                spec,
+            },
+            vm: VmNetworkConfig {
+                iface_name: "eth0".to_string(),
+                mac_address: "52:54:00:aa:bb:cc".to_string(),
+            },
+        }
+    }
 
     #[test]
     fn test_create_bridge_name() {
@@ -220,5 +313,92 @@ mod tests {
         let actual = create_bridge_name(&None, "test");
         assert!(actual.len() < 15); // Linux's interface name length is 15 characters or fewer.
         assert_eq!(actual, "br-cl-d5b95190");
+    }
+
+    #[test]
+    fn default_plugin_uses_bridge_conflist() {
+        let conf = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
+            subnet: "10.42.0.0/24".to_string(),
+            routes: vec![NetworkClassRoute {
+                destination: "0.0.0.0/0".to_string(),
+            }],
+            cluster_network: Some(true),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        assert_eq!(conf.plugins.len(), 1);
+        assert!(matches!(
+            &conf.plugins[0],
+            CniConfContent::Bridge {
+                bridge,
+                is_gateway,
+                ip_masquerade,
+                ipam,
+            } if bridge == "br-test"
+                && *is_gateway
+                && !*ip_masquerade
+                && ipam.subnet == "10.42.0.0/24"
+                && ipam.routes == vec![CniIpamRoute {
+                    destination: "0.0.0.0/0".to_string(),
+                }]
+        ));
+    }
+
+    #[test]
+    fn flannel_plugin_generates_flannel_conflist() {
+        let conf = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
+            cni_plugin: "flannel".to_string(),
+            internet_access: Some(true),
+            flannel: Some(FlannelNetworkClass {
+                subnet_file: "/run/flannel/subnet.env".to_string(),
+                data_dir: "/run/flannel".to_string(),
+                hairpin_mode: Some(true),
+                default_gateway: Some(false),
+                port_mappings: Some(true),
+            }),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        assert_eq!(conf.plugins.len(), 2);
+        assert!(matches!(
+            &conf.plugins[0],
+            CniConfContent::Flannel {
+                subnet_file,
+                data_dir,
+                delegate: Some(CniFlannelDelegate {
+                    bridge,
+                    is_gateway,
+                    is_default_gateway,
+                    ip_masquerade,
+                    hairpin_mode,
+                }),
+            } if subnet_file.as_deref() == Some("/run/flannel/subnet.env")
+                && data_dir.as_deref() == Some("/run/flannel")
+                && bridge.as_deref() == Some("br-test")
+                && *is_gateway == Some(false)
+                && *is_default_gateway == Some(false)
+                && *ip_masquerade == Some(true)
+                && *hairpin_mode == Some(true)
+        ));
+        assert!(matches!(
+            &conf.plugins[1],
+            CniConfContent::Portmap { capabilities } if capabilities.port_mappings
+        ));
+    }
+
+    #[test]
+    fn unsupported_plugin_is_rejected() {
+        let err = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
+            cni_plugin: "bogus".to_string(),
+            ..Default::default()
+        }))
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            tugboat_cni_operator::Error::InvalidConfiguration(_)
+        ));
     }
 }

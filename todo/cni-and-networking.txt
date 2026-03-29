@@ -5,17 +5,44 @@ Goal
 Enable multi-node cluster networking with CNI and support for multiple network definitions.
 
 Current evidence
-- `tugboat-agent/src/cni.rs` and `tugboat-cni-operator` exist but seem focused on single-node or basic setup.
-- `tugboat-resources/proto/core/v1/network_class.proto` exists.
-- `tugboat-agent/src/reconciler/network.rs` implements some network setup logic.
+- `tugboat-resources/proto/core/v1/network_class.proto` now includes `cni_plugin` and
+  Flannel-specific settings (`flannel.subnet_file`, `data_dir`, `hairpin_mode`,
+  `default_gateway`, `port_mappings`).
+- `tugboat-cni-operator` can now serialize `Bridge`, `Flannel`, `Portmap`, and `Loopback`
+  plugins, and derives the CNI entry point from the generated config.
+- `tugboat-agent/src/cni.rs` resolves each `NetworkClass` / `ClusterNetworkClass` reference into
+  a per-interface plan and emits either `bridge` or `flannel` conflists; unsupported plugins fail
+  explicitly.
+- `tugboat-agent/src/reconciler/network.rs` already resolves namespaced and cluster-scoped network
+  classes for each `Ship`.
+- `tugboat-runtime/src/execute/vm/qemu/mod.rs` already maps `Vec<VmNetworkConfig>` to multiple
+  `virtio-net-pci` devices, so guest-side multi-NIC support exists.
+- `manifests/network_class.yaml` now includes a Flannel-backed `ClusterNetworkClass` example.
+- `tugboat-controller-manager` and `tugboat-scheduler` still do not reconcile or schedule against
+  network capabilities.
 
-What to implement
-- Support standard CNI plugins like Flannel, Calico, or Cilium for multi-node pod-to-pod (Ship-to-Ship) connectivity.
-- Implement `NetworkClass` and `ClusterNetworkClass` reconcilers/controllers to manage network configuration.
-- Add support for multiple network attachments per Ship (e.g., a primary network plus additional data networks).
-- Implement a Node IPAM (IP Address Management) controller if needed for certain CNI plugins.
-- Coordinate network configuration between the scheduler (ensuring node has the required network) and the agent.
-- Ensure QEMU/VM guests can properly use multiple network interfaces (virtio-net).
+Recent progress
+- Flannel was selected as the first multi-node backend to support.
+- The resource model can now express backend selection and Flannel-specific runtime settings.
+- The agent/CNI operator path is no longer hard-coded to `bridge` + `host-local`; it can emit a
+  Flannel-based primary network and optional `portmap`.
+- Unit tests cover `bridge`, `flannel`, and unsupported-plugin planning, and the workspace passes
+  `cargo fmt --check`, `cargo clippy`, and `cargo test`.
+
+What is still missing
+- Implement `NetworkClass` / `ClusterNetworkClass` reconcilers or controllers to ensure the chosen
+  backend is actually provisioned and consumable on nodes.
+- Extend node-side state (likely in `NodeSpec`/status or equivalent controller-managed metadata) so
+  the control plane can tell which networks/plugins are available on each node.
+- Add a scheduler plugin that rejects nodes lacking the required network capability for a `Ship`.
+- Prove end-to-end multi-node Ship-to-Ship connectivity with Flannel; current work is planner /
+  config generation, not full cluster validation.
+- Decide whether Flannel requires a dedicated Tugboat-managed IPAM/controller path, or whether node
+  bootstrap plus Flannel's existing model is sufficient.
+- After the Flannel path is stable, evaluate whether Calico/Cilium or richer secondary-network
+  semantics still need dedicated work.
+- Implement live update behavior for network attachment changes under Modified reconciliation if
+  hotplug or restart-required flows are desired.
 
 Implementation surfaces
 - `tugboat-cni-operator/src/`
@@ -23,11 +50,22 @@ Implementation surfaces
 - `tugboat-agent/src/reconciler/network.rs`
 - `tugboat-controller-manager/src/`
 - `tugboat-resources/proto/core/v1/network_class.proto`
+- `tugboat-resources/proto/core/v1/node.proto`
+- `tugboat-scheduler/src/plugins/`
+- `sample-configs/`
+- `manifests/network_class.yaml`
 - `tugboat-runtime/src/execute/vm/qemu/mod.rs`
 
 Acceptance criteria
-- At least one major CNI plugin (Flannel/Calico/Cilium) is functional across multiple nodes.
-- A `Ship` can be attached to 0 or more networks defined by `NetworkClass`.
-- Connectivity between Ships on different nodes is established and reliable.
-- `NetworkClass` and `ClusterNetworkClass` can be created and used to provision networks.
-- Multiple network interfaces are visible and functional within the VM guest.
+- ✓ `NetworkClass` / `ClusterNetworkClass` can express a backend choice via `cniPlugin`, and
+  Flannel-specific settings can be persisted in the API.
+- ✓ The agent can translate multiple `NetworkClass` references into multiple VM interfaces and
+  emit either `bridge` or `flannel` CNI conflists.
+- ✓ Multiple network interfaces are representable end-to-end through `ShipSpec.network_class_ref`
+  and the QEMU `virtio-net` wiring.
+- ☐ At least one major CNI plugin is proven functional across multiple nodes in an integration or
+  end-to-end environment.
+- ☐ `NetworkClass` and `ClusterNetworkClass` are reconciled into node-usable network state by the
+  control plane.
+- ☐ The scheduler ensures a `Ship` lands only on nodes that satisfy its required network setup.
+- ☐ Connectivity between Ships on different nodes is established and reliable.

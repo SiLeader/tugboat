@@ -25,6 +25,9 @@ kind: ClusterNetworkClass
 metadata:
   name: cluster-network
 spec:
-  subnet: 10.0.0.0/8
-  routes:
-    - destination: 0.0.0.0/0
+  cniPlugin: flannel
+  flannel:
+    subnetFile: /run/flannel/subnet.env
+    dataDir: /run/flannel
+    hairpinMode: true
+    defaultGateway: true

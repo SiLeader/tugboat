@@ -42,8 +42,18 @@ message NetworkClassSpec {
   repeated NetworkClassRoute routes = 2;
   optional bool internet_access = 3;
   optional bool cluster_network = 4;
+  string cni_plugin = 5;
+  optional FlannelNetworkClass flannel = 6;
 }
 
 message NetworkClassRoute {
   string destination = 1;
+}
+
+message FlannelNetworkClass {
+  string subnet_file = 1;
+  string data_dir = 2;
+  optional bool hairpin_mode = 3;
+  optional bool default_gateway = 4;
+  optional bool port_mappings = 5;
 }
