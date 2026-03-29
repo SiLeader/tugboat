@@ -5,6 +5,22 @@ use tracing::{info, warn};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Ship;
 
+fn finalize_volume_cleanup(
+    ship_id: &str,
+    cleanup_result: Result<(), ReconcileError>,
+    mount_namespace_result: Result<(), ReconcileError>,
+) -> Result<(), ReconcileError> {
+    if let (Err(_), Err(mount_err)) = (&cleanup_result, &mount_namespace_result) {
+        warn!(
+            "Failed to clean up mount namespace for ship '{}' after volume cleanup error: {}",
+            ship_id, mount_err
+        );
+    }
+    cleanup_result?;
+    mount_namespace_result?;
+    Ok(())
+}
+
 impl ShipReconciler {
     pub(crate) async fn reconcile_deleted(&self, ship: Ship) -> Result<(), ReconcileError> {
         let Some(meta) = ship.object_meta() else {
@@ -76,9 +92,11 @@ impl ShipReconciler {
                 );
             }
         }
-        cleanup_result?;
-        self.csi.cleanup_mount_namespace(ship_id)?;
-        Ok(())
+        let mount_namespace_result = self
+            .csi
+            .cleanup_mount_namespace(ship_id)
+            .map_err(ReconcileError::from);
+        finalize_volume_cleanup(ship_id, cleanup_result, mount_namespace_result)
     }
 
     async fn volume_cleanup_context_for_ship(
@@ -102,5 +120,51 @@ impl ShipReconciler {
         let volumes = self.get_related_volumes(&namespace, spec).await?;
         let secrets = self.controller_publish_secret_map(&volumes).await?;
         Ok((volumes, secrets))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finalize_volume_cleanup;
+    use crate::csi::CsiError;
+    use crate::reconciler::error::ReconcileError;
+
+    #[test]
+    fn returns_volume_cleanup_error_after_mount_namespace_attempt() {
+        let err = finalize_volume_cleanup(
+            "ship-1",
+            Err(ReconcileError::PublishedVolumeCleanupFailed(
+                "unpublish failed".to_string(),
+            )),
+            Err(ReconcileError::from(CsiError::MissingVolumeHandle)),
+        )
+        .unwrap_err();
+
+        match err {
+            ReconcileError::PublishedVolumeCleanupFailed(message) => {
+                assert_eq!(message, "unpublish failed");
+            }
+            other => panic!("expected volume cleanup error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn returns_mount_namespace_error_when_volume_cleanup_succeeds() {
+        let err = finalize_volume_cleanup(
+            "ship-1",
+            Ok(()),
+            Err(ReconcileError::from(CsiError::MissingVolumeHandle)),
+        )
+        .unwrap_err();
+
+        match err {
+            ReconcileError::Csi(CsiError::MissingVolumeHandle) => {}
+            other => panic!("expected mount namespace cleanup error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn succeeds_when_both_cleanup_steps_succeed() {
+        assert!(finalize_volume_cleanup("ship-1", Ok(()), Ok(())).is_ok());
     }
 }
