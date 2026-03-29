@@ -149,9 +149,12 @@ impl ShipReconciler {
             }
         };
         for volume in &volumes {
+            let Some(volume) = volume.persistent_volume_claim() else {
+                continue;
+            };
             let Some(published) = published_volumes
                 .iter()
-                .find(|p| p.claim_name == volume.claim_name)
+                .find(|p| p.claim_name == volume.name)
             else {
                 continue;
             };
@@ -160,7 +163,7 @@ impl ShipReconciler {
                 Err(err) => {
                     warn!(
                         "Failed to resolve CSI secrets for volume '{}' expansion check: {}",
-                        volume.claim_name, err
+                        volume.name, err
                     );
                     continue;
                 }
@@ -171,7 +174,7 @@ impl ShipReconciler {
             {
                 warn!(
                     "Failed to expand volume '{}' for ship '{}': {}",
-                    volume.claim_name, ship_id, err
+                    volume.name, ship_id, err
                 );
             }
             if let Err(err) = self
@@ -180,7 +183,7 @@ impl ShipReconciler {
             {
                 warn!(
                     "Failed to refresh volume stats for '{}' on ship '{}': {}",
-                    volume.claim_name, ship_id, err
+                    volume.name, ship_id, err
                 );
             }
         }

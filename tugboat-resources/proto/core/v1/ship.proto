@@ -38,10 +38,41 @@ message ShipSpec {
   repeated Toleration tolerations = 6;
   optional string scheduler_name = 7;
   repeated ShipVolumeClaimReference volume_claim_ref = 8;
+  repeated ShipVolume volumes = 9;
 }
 
 message ShipVolumeClaimReference {
   string name = 1;
+}
+
+message ShipVolume {
+  string name = 1;
+  optional PersistentVolumeClaimVolumeSource persistent_volume_claim = 2;
+  optional ConfigMapVolumeSource config_map = 3;
+  optional SecretVolumeSource secret = 4;
+}
+
+message PersistentVolumeClaimVolumeSource {
+  string claim_name = 1;
+}
+
+message KeyToPath {
+  string key = 1;
+  string path = 2;
+}
+
+message ConfigMapVolumeSource {
+  string name = 1;
+  repeated KeyToPath items = 2;
+  optional int32 default_mode = 3;
+  optional bool optional = 4;
+}
+
+message SecretVolumeSource {
+  string secret_name = 1;
+  repeated KeyToPath items = 2;
+  optional int32 default_mode = 3;
+  optional bool optional = 4;
 }
 
 message Toleration {

@@ -100,11 +100,21 @@ metadata:
 spec:
   image: example.com/vm-images/ubuntu:24.04
   shipClass: lightweight
-  volumeClaimRef:
+  volumes:
     - name: data-disk
+      persistentVolumeClaim:
+        claimName: data-disk
+    - name: app-config
+      configMap:
+        name: app-config
+    - name: app-secret
+      secret:
+        secretName: app-secret
 ```
 
-CSI volume を使う場合は、`volumeClaimRef` で同一 namespace の `PersistentVolumeClaim` を参照します。
+CSI volume は `spec.volumes[].persistentVolumeClaim` で同一 namespace の
+`PersistentVolumeClaim` を参照できます。後方互換のため、従来の
+`volumeClaimRef` も引き続き受け付けます。
 
 現時点の node-side CSI サポート範囲:
 
@@ -118,7 +128,9 @@ CSI volume を使う場合は、`volumeClaimRef` で同一 namespace の `Persis
 - [x] controller publish context を必須とする driver
 - [x] `NodeGetVolumeStats` による CSI volume の health / usage を PV/PVC condition へ反映
 
-`Filesystem` volume は guest へ 9p share として公開され、mount tag には `volumeClaimRef[].name` が使われます。
+`Filesystem` volume は guest へ 9p share として公開され、mount tag には
+Ship volume の名前が使われます。そのため、CSI の `Filesystem` claim だけでなく
+`ConfigMap` / `Secret` の projected volume も同じ経路で guest へ渡されます。
 
 control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context、稼働中の Ship を停止させない live `NodeExpandVolume`、`NodeGetVolumeStats` による CSI health / usage の PV/PVC condition 反映まで対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone 系ワークフローです。
 

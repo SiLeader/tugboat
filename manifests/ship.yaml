@@ -20,8 +20,16 @@ metadata:
 spec:
   image: example.com/vm-images/ubuntu:24.04
   shipClass: lightweight
-  volumeClaimRef:
+  volumes:
     - name: data-disk
+      persistentVolumeClaim:
+        claimName: data-disk
+    - name: app-config
+      configMap:
+        name: app-config
+    - name: app-secret
+      secret:
+        secretName: app-secret
   networkClassRef:
     - name: namespaced-network
       apiGroup: core

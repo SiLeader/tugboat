@@ -18,7 +18,7 @@ use crate::csi::{
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::reconcile::AppendStatus;
-use crate::reconciler::volume::VolumeInfo;
+use crate::reconciler::volume::{PersistentVolumeClaimVolumeInfo, VolumeInfo};
 use crate::runtime::RuntimeCreateRequest;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
@@ -118,6 +118,7 @@ impl ShipReconciler {
                 .await?;
             self.csi.cleanup_mount_namespace(ship_id)?;
         }
+        self.cleanup_materialized_volumes(ship_id)?;
 
         {
             debug!("Updating Ship status");
@@ -182,97 +183,117 @@ impl ShipReconciler {
         let mut published_volumes = Vec::new();
         let mut vm_volumes = Vec::new();
         let mut controller_publish_secrets = HashMap::new();
-        if !volumes.is_empty() {
+        if volumes
+            .iter()
+            .any(|volume| volume.persistent_volume_claim().is_some())
+        {
             self.csi.ensure_mount_namespace(ship_id)?;
         }
         for volume in volumes {
-            let (_, read_only) = effective_publish_settings(
-                &volume.claim.access_modes,
-                &volume.volume.access_modes,
-                volume.source.read_only,
-            )?;
-            let secrets = match self.resolve_csi_secrets(volume).await {
-                Ok(secrets) => secrets,
-                Err(err) => {
-                    self.cleanup_after_volume_setup_error(
+            if let Some(volume) = volume.persistent_volume_claim() {
+                let (_, read_only) = effective_publish_settings(
+                    &volume.claim.access_modes,
+                    &volume.volume.access_modes,
+                    volume.source.read_only,
+                )?;
+                let secrets = match self.resolve_csi_secrets(volume).await {
+                    Ok(secrets) => secrets,
+                    Err(err) => {
+                        self.cleanup_after_volume_setup_error(
+                            ship_id,
+                            &published_volumes,
+                            &controller_publish_secrets,
+                            "secret resolution error",
+                        )
+                        .await;
+                        return Err(err);
+                    }
+                };
+                match self
+                    .csi
+                    .publish(
+                        &self.node_name,
                         ship_id,
-                        &published_volumes,
-                        &controller_publish_secrets,
-                        "secret resolution error",
+                        &volume.name,
+                        &volume.volume,
+                        &volume.claim,
+                        &volume.source,
+                        &secrets,
                     )
-                    .await;
-                    return Err(err);
-                }
-            };
-            match self
-                .csi
-                .publish(
-                    &self.node_name,
-                    ship_id,
-                    &volume.claim_name,
-                    &volume.volume,
-                    &volume.claim,
-                    &volume.source,
-                    &secrets,
-                )
-                .await
-            {
-                Ok(published) => {
-                    controller_publish_secrets.insert(
-                        volume.claim_name.clone(),
-                        secrets.controller_publish.clone(),
-                    );
-                    let mut cleanup_targets = published_volumes.clone();
-                    cleanup_targets.push(published.clone());
-                    if let Err(err) = self
-                        .ensure_node_expansion(namespace, volume, &published, &secrets)
-                        .await
-                    {
+                    .await
+                {
+                    Ok(published) => {
+                        controller_publish_secrets
+                            .insert(volume.name.clone(), secrets.controller_publish.clone());
+                        let mut cleanup_targets = published_volumes.clone();
+                        cleanup_targets.push(published.clone());
+                        if let Err(err) = self
+                            .ensure_node_expansion(namespace, volume, &published, &secrets)
+                            .await
+                        {
+                            self.cleanup_after_volume_setup_error(
+                                ship_id,
+                                &cleanup_targets,
+                                &controller_publish_secrets,
+                                "node expansion error",
+                            )
+                            .await;
+                            return Err(err);
+                        }
+                        if let Err(err) = self
+                            .refresh_volume_stats(namespace, volume, &published)
+                            .await
+                        {
+                            self.cleanup_after_volume_setup_error(
+                                ship_id,
+                                &cleanup_targets,
+                                &controller_publish_secrets,
+                                "volume stats refresh error",
+                            )
+                            .await;
+                            return Err(err);
+                        }
+                        if let Err(err) = self.mark_volume_attached(&volume.volume_name, true).await
+                        {
+                            self.cleanup_after_volume_setup_error(
+                                ship_id,
+                                &cleanup_targets,
+                                &controller_publish_secrets,
+                                "attachment status error",
+                            )
+                            .await;
+                            return Err(err);
+                        }
+                        vm_volumes.push(vm_volume_config(volume, &published, read_only));
+                        published_volumes.push(published);
+                    }
+                    Err(err) => {
                         self.cleanup_after_volume_setup_error(
                             ship_id,
-                            &cleanup_targets,
+                            &published_volumes,
                             &controller_publish_secrets,
-                            "node expansion error",
+                            "publish error",
+                        )
+                        .await;
+                        return Err(err.into());
+                    }
+                }
+            } else if let Some(volume) = volume.materialized() {
+                match self.materialize_volume(ship_id, volume) {
+                    Ok(path) => {
+                        vm_volumes.push(VmVolumeConfig::filesystem(path, volume.name.clone(), true))
+                    }
+                    Err(err) => {
+                        self.cleanup_after_volume_setup_error(
+                            ship_id,
+                            &published_volumes,
+                            &controller_publish_secrets,
+                            "materialization error",
                         )
                         .await;
                         return Err(err);
                     }
-                    if let Err(err) = self
-                        .refresh_volume_stats(namespace, volume, &published)
-                        .await
-                    {
-                        self.cleanup_after_volume_setup_error(
-                            ship_id,
-                            &cleanup_targets,
-                            &controller_publish_secrets,
-                            "volume stats refresh error",
-                        )
-                        .await;
-                        return Err(err);
-                    }
-                    if let Err(err) = self.mark_volume_attached(&volume.volume_name, true).await {
-                        self.cleanup_after_volume_setup_error(
-                            ship_id,
-                            &cleanup_targets,
-                            &controller_publish_secrets,
-                            "attachment status error",
-                        )
-                        .await;
-                        return Err(err);
-                    }
-                    vm_volumes.push(vm_volume_config(volume, &published, read_only));
-                    published_volumes.push(published);
-                }
-                Err(err) => {
-                    self.cleanup_after_volume_setup_error(
-                        ship_id,
-                        &published_volumes,
-                        &controller_publish_secrets,
-                        "publish error",
-                    )
-                    .await;
-                    return Err(err.into());
-                }
+                };
             }
         }
         Ok((published_volumes, vm_volumes))
@@ -291,6 +312,9 @@ impl ShipReconciler {
         {
             error!("Failed to clean up published volumes after {context}: {cleanup_err}");
         }
+        if let Err(cleanup_err) = self.cleanup_materialized_volumes(ship_id) {
+            error!("Failed to clean up materialized volumes after {context}: {cleanup_err}");
+        }
         if let Err(cleanup_err) = self.csi.cleanup_mount_namespace(ship_id) {
             error!("Failed to clean up mount namespace after {context}: {cleanup_err}");
         }
@@ -303,6 +327,9 @@ impl ShipReconciler {
     ) -> Result<Vec<PublishedVolume>, ReconcileError> {
         let mut planned = Vec::with_capacity(volumes.len());
         for volume in volumes {
+            let Some(volume) = volume.persistent_volume_claim() else {
+                continue;
+            };
             let access_type = PublishedAccessType::from(access_type_from_volume_mode(
                 volume.volume.volume_mode.as_deref(),
             )?);
@@ -312,7 +339,7 @@ impl ShipReconciler {
                 .await?;
             planned.push(self.csi.plan_published_volume(
                 ship_id,
-                &volume.claim_name,
+                &volume.name,
                 &volume.source,
                 access_type,
                 requires_staging,
@@ -394,6 +421,7 @@ impl ShipReconciler {
             self.cleanup_published_volumes(&runtime_published_volumes, &controller_publish_secrets)
                 .await?;
         }
+        self.cleanup_materialized_volumes(ship_id)?;
         self.csi.cleanup_mount_namespace(ship_id)?;
         Ok(())
     }
@@ -404,8 +432,11 @@ impl ShipReconciler {
     ) -> Result<HashMap<String, HashMap<String, String>>, ReconcileError> {
         let mut secrets = HashMap::with_capacity(volumes.len());
         for volume in volumes {
+            let Some(volume) = volume.persistent_volume_claim() else {
+                continue;
+            };
             let resolved = self.resolve_csi_secrets(volume).await?;
-            secrets.insert(volume.claim_name.clone(), resolved.controller_publish);
+            secrets.insert(volume.name.clone(), resolved.controller_publish);
         }
         Ok(secrets)
     }
@@ -413,7 +444,7 @@ impl ShipReconciler {
     pub(super) async fn ensure_node_expansion(
         &self,
         namespace: &str,
-        volume: &VolumeInfo,
+        volume: &PersistentVolumeClaimVolumeInfo,
         published: &PublishedVolume,
         secrets: &crate::csi::ResolvedCsiSecrets,
     ) -> Result<(), ReconcileError> {
@@ -465,7 +496,7 @@ impl ShipReconciler {
     pub(super) async fn refresh_volume_stats(
         &self,
         namespace: &str,
-        volume: &VolumeInfo,
+        volume: &PersistentVolumeClaimVolumeInfo,
         published: &PublishedVolume,
     ) -> Result<(), ReconcileError> {
         let Some(stats) = self.csi.volume_stats(published).await? else {
@@ -586,7 +617,7 @@ impl ShipReconciler {
 }
 
 fn vm_volume_config(
-    volume: &VolumeInfo,
+    volume: &PersistentVolumeClaimVolumeInfo,
     published: &PublishedVolume,
     read_only: bool,
 ) -> VmVolumeConfig {
@@ -596,7 +627,7 @@ fn vm_volume_config(
         }
         PublishedAccessType::Filesystem => VmVolumeConfig::filesystem(
             published.target_path.clone(),
-            volume.claim_name.clone(),
+            volume.name.clone(),
             read_only,
         ),
     }

@@ -85,6 +85,9 @@ impl ShipReconciler {
         // completed the CSI teardown, causing cleanup_published_volumes to fail,
         // while the PV status still shows an attached node.
         for volume in &volumes {
+            let Some(volume) = volume.persistent_volume_claim() else {
+                continue;
+            };
             if let Err(err) = self.mark_volume_attached(&volume.volume_name, false).await {
                 warn!(
                     "Failed to clear attachment status for PersistentVolume '{}': {}",
@@ -96,6 +99,18 @@ impl ShipReconciler {
             .csi
             .cleanup_mount_namespace(ship_id)
             .map_err(ReconcileError::from);
+        let cleanup_result = match (cleanup_result, self.cleanup_materialized_volumes(ship_id)) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(err), Ok(())) => Err(err),
+            (Ok(()), Err(err)) => Err(err),
+            (Err(err), Err(materialized_err)) => {
+                warn!(
+                    "Failed to clean up materialized volumes for ship '{}': {}",
+                    ship_id, materialized_err
+                );
+                Err(err)
+            }
+        };
         finalize_volume_cleanup(ship_id, cleanup_result, mount_namespace_result)
     }
 

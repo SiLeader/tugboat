@@ -37,6 +37,18 @@ pub(crate) struct InvalidCsiSecretDataError {
 }
 
 #[derive(Debug, Error)]
+#[error(
+    "Secret '{namespace}/{name}' referenced by Ship volume '{volume}' has invalid data for key '{key}': {reason}"
+)]
+pub(crate) struct InvalidSecretVolumeDataError {
+    pub(crate) volume: String,
+    pub(crate) namespace: String,
+    pub(crate) name: String,
+    pub(crate) key: String,
+    pub(crate) reason: String,
+}
+
+#[derive(Debug, Error)]
 pub(crate) enum ReconcileError {
     #[error("API error: {0}")]
     Api(#[from] tugboat_client::Error),
@@ -52,6 +64,10 @@ pub(crate) enum ReconcileError {
     InvalidNetworkClassRef(NetworkClassRefForError),
     #[error("NetworkClass '{0}' not found")]
     NetworkClassNotFound(NetworkClassRefForError),
+    #[error("Invalid Ship volume '{volume}': {reason}")]
+    InvalidShipVolume { volume: String, reason: String },
+    #[error("Duplicate Ship volume name '{0}'")]
+    DuplicateShipVolume(String),
     #[error("Invalid VolumeClaimRef: {0}")]
     InvalidVolumeClaimRef(VolumeClaimRefForError),
     #[error("Duplicate VolumeClaimRef '{0}'")]
@@ -133,6 +149,37 @@ pub(crate) enum ReconcileError {
     },
     #[error(transparent)]
     InvalidCsiSecretData(Box<InvalidCsiSecretDataError>),
+    #[error("ConfigMap '{namespace}/{name}' referenced by Ship volume '{volume}' was not found")]
+    ConfigMapNotFound {
+        volume: String,
+        namespace: String,
+        name: String,
+    },
+    #[error("Secret '{namespace}/{name}' referenced by Ship volume '{volume}' was not found")]
+    SecretVolumeNotFound {
+        volume: String,
+        namespace: String,
+        name: String,
+    },
+    #[error("Ship volume '{volume}' references missing key '{key}' in {kind} '{resource}'")]
+    MissingVolumeItemKey {
+        volume: String,
+        kind: String,
+        resource: String,
+        key: String,
+    },
+    #[error("Ship volume '{volume}' defines duplicate target path '{path}'")]
+    DuplicateVolumeItemPath { volume: String, path: String },
+    #[error("Ship volume '{volume}' has invalid target path '{path}'")]
+    InvalidVolumeItemPath { volume: String, path: String },
+    #[error("Failed to materialize Ship volume '{volume}' at '{path}': {reason}")]
+    MaterializedVolumeIo {
+        volume: String,
+        path: String,
+        reason: String,
+    },
+    #[error(transparent)]
+    InvalidSecretVolumeData(Box<InvalidSecretVolumeDataError>),
     #[error("Failed to clean up one or more published CSI volumes: {0}")]
     PublishedVolumeCleanupFailed(String),
     #[error("Finalizer error: {0}")]
