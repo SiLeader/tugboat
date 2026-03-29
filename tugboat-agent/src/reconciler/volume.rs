@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub(crate) mod normalize;
+
 use crate::csi::{ResolvedCsiSecrets, is_supported_access_mode};
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::{
@@ -19,17 +21,17 @@ use crate::reconciler::error::{
 };
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
-use serde::Serialize;
+pub(crate) use normalize::{
+    MaterializedFile, MaterializedVolumeSourceKind, NormalizedKeyToPath, NormalizedVolumeSource,
+    build_materialized_files, normalized_ship_volumes,
+};
 use std::collections::{HashMap, HashSet};
 use tugboat_client::Api;
 use tugboat_resources::manifests::core::v1::{
-    ConfigMap, ConfigMapVolumeSource, CsiPersistentVolumeSource, KeyToPath, PersistentVolume,
-    PersistentVolumeClaim, PersistentVolumeClaimReference, PersistentVolumeClaimSpec,
-    PersistentVolumeClaimVolumeSource, PersistentVolumeSpec, PersistentVolumeStatus, Secret,
-    SecretReference, SecretVolumeSource, ShipSpec, ShipVolume,
+    ConfigMap, CsiPersistentVolumeSource, PersistentVolume, PersistentVolumeClaim,
+    PersistentVolumeClaimReference, PersistentVolumeClaimSpec, PersistentVolumeSpec,
+    PersistentVolumeStatus, Secret, SecretReference, ShipSpec,
 };
-
-const DEFAULT_FILE_MODE: u32 = 0o644;
 
 #[derive(Debug, Clone)]
 pub(crate) enum VolumeInfo {
@@ -54,28 +56,6 @@ pub(crate) struct MaterializedVolumeInfo {
     pub files: Vec<MaterializedFile>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MaterializedFile {
-    pub path: String,
-    pub contents: Vec<u8>,
-    pub mode: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MaterializedVolumeSourceKind {
-    ConfigMap,
-    Secret,
-}
-
-impl MaterializedVolumeSourceKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::ConfigMap => "ConfigMap",
-            Self::Secret => "Secret",
-        }
-    }
-}
-
 impl VolumeInfo {
     pub(crate) fn persistent_volume_claim(&self) -> Option<&PersistentVolumeClaimVolumeInfo> {
         match self {
@@ -90,37 +70,6 @@ impl VolumeInfo {
             Self::Materialized(volume) => Some(volume),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct NormalizedVolume {
-    pub name: String,
-    pub source: NormalizedVolumeSource,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) enum NormalizedVolumeSource {
-    PersistentVolumeClaim {
-        claim_name: String,
-    },
-    ConfigMap {
-        name: String,
-        items: Vec<NormalizedKeyToPath>,
-        default_mode: u32,
-        optional: bool,
-    },
-    Secret {
-        secret_name: String,
-        items: Vec<NormalizedKeyToPath>,
-        default_mode: u32,
-        optional: bool,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct NormalizedKeyToPath {
-    pub key: String,
-    pub path: String,
 }
 
 impl ShipReconciler {
@@ -428,300 +377,11 @@ impl ShipReconciler {
     }
 }
 
-pub(crate) fn normalized_ship_volumes(
-    ship_spec: &ShipSpec,
-) -> Result<Vec<NormalizedVolume>, ReconcileError> {
-    let mut seen_legacy_claims = HashSet::new();
-    let mut seen_names = HashSet::new();
-    let mut volumes = Vec::new();
-
-    for claim_ref in &ship_spec.volume_claim_ref {
-        if claim_ref.name.is_empty() {
-            return Err(ReconcileError::InvalidVolumeClaimRef(
-                claim_ref.clone().into(),
-            ));
-        }
-        if !seen_legacy_claims.insert(claim_ref.name.clone()) {
-            return Err(ReconcileError::DuplicateVolumeClaimRef(
-                claim_ref.name.clone(),
-            ));
-        }
-        if !seen_names.insert(claim_ref.name.clone()) {
-            return Err(ReconcileError::DuplicateShipVolume(claim_ref.name.clone()));
-        }
-        volumes.push(NormalizedVolume {
-            name: claim_ref.name.clone(),
-            source: NormalizedVolumeSource::PersistentVolumeClaim {
-                claim_name: claim_ref.name.clone(),
-            },
-        });
-    }
-
-    for volume in &ship_spec.volumes {
-        let normalized = normalize_ship_volume(volume)?;
-        if !seen_names.insert(normalized.name.clone()) {
-            return Err(ReconcileError::DuplicateShipVolume(normalized.name));
-        }
-        volumes.push(normalized);
-    }
-
-    Ok(volumes)
-}
-
-fn normalize_ship_volume(volume: &ShipVolume) -> Result<NormalizedVolume, ReconcileError> {
-    if volume.name.is_empty() {
-        return Err(ReconcileError::InvalidShipVolume {
-            volume: "<unnamed>".to_string(),
-            reason: "volume name must not be empty".to_string(),
-        });
-    }
-    validate_materialized_volume_name(&volume.name)?;
-
-    let source_count = usize::from(volume.persistent_volume_claim.is_some())
-        + usize::from(volume.config_map.is_some())
-        + usize::from(volume.secret.is_some());
-    if source_count != 1 {
-        return Err(ReconcileError::InvalidShipVolume {
-            volume: volume.name.clone(),
-            reason: "exactly one of persistentVolumeClaim, configMap, or secret must be set"
-                .to_string(),
-        });
-    }
-
-    let source = if let Some(source) = volume.persistent_volume_claim.as_ref() {
-        normalize_persistent_volume_claim_source(&volume.name, source)?
-    } else if let Some(source) = volume.config_map.as_ref() {
-        normalize_config_map_source(&volume.name, source)?
-    } else if let Some(source) = volume.secret.as_ref() {
-        normalize_secret_source(&volume.name, source)?
-    } else {
-        unreachable!("volume source_count was validated above")
-    };
-
-    Ok(NormalizedVolume {
-        name: volume.name.clone(),
-        source,
-    })
-}
-
-fn normalize_persistent_volume_claim_source(
-    volume_name: &str,
-    source: &PersistentVolumeClaimVolumeSource,
-) -> Result<NormalizedVolumeSource, ReconcileError> {
-    if source.claim_name.is_empty() {
-        return Err(ReconcileError::InvalidShipVolume {
-            volume: volume_name.to_string(),
-            reason: "persistentVolumeClaim.claimName must not be empty".to_string(),
-        });
-    }
-    Ok(NormalizedVolumeSource::PersistentVolumeClaim {
-        claim_name: source.claim_name.clone(),
-    })
-}
-
-fn normalize_config_map_source(
-    volume_name: &str,
-    source: &ConfigMapVolumeSource,
-) -> Result<NormalizedVolumeSource, ReconcileError> {
-    if source.name.is_empty() {
-        return Err(ReconcileError::InvalidShipVolume {
-            volume: volume_name.to_string(),
-            reason: "configMap.name must not be empty".to_string(),
-        });
-    }
-    Ok(NormalizedVolumeSource::ConfigMap {
-        name: source.name.clone(),
-        items: normalize_items(volume_name, &source.items)?,
-        default_mode: normalize_default_mode(volume_name, source.default_mode)?,
-        optional: source.optional.unwrap_or(false),
-    })
-}
-
-fn normalize_secret_source(
-    volume_name: &str,
-    source: &SecretVolumeSource,
-) -> Result<NormalizedVolumeSource, ReconcileError> {
-    if source.secret_name.is_empty() {
-        return Err(ReconcileError::InvalidShipVolume {
-            volume: volume_name.to_string(),
-            reason: "secret.secretName must not be empty".to_string(),
-        });
-    }
-    Ok(NormalizedVolumeSource::Secret {
-        secret_name: source.secret_name.clone(),
-        items: normalize_items(volume_name, &source.items)?,
-        default_mode: normalize_default_mode(volume_name, source.default_mode)?,
-        optional: source.optional.unwrap_or(false),
-    })
-}
-
-fn normalize_items(
-    volume_name: &str,
-    items: &[KeyToPath],
-) -> Result<Vec<NormalizedKeyToPath>, ReconcileError> {
-    let mut seen_paths = HashSet::new();
-    let mut normalized = Vec::with_capacity(items.len());
-    for item in items {
-        if item.key.is_empty() {
-            return Err(ReconcileError::InvalidShipVolume {
-                volume: volume_name.to_string(),
-                reason: "volume items[].key must not be empty".to_string(),
-            });
-        }
-        validate_relative_target_path(volume_name, &item.path)?;
-        if !seen_paths.insert(item.path.clone()) {
-            return Err(ReconcileError::DuplicateVolumeItemPath {
-                volume: volume_name.to_string(),
-                path: item.path.clone(),
-            });
-        }
-        normalized.push(NormalizedKeyToPath {
-            key: item.key.clone(),
-            path: item.path.clone(),
-        });
-    }
-    Ok(normalized)
-}
-
-fn normalize_default_mode(volume_name: &str, mode: Option<i32>) -> Result<u32, ReconcileError> {
-    let Some(mode) = mode else {
-        return Ok(DEFAULT_FILE_MODE);
-    };
-    let mode = u32::try_from(mode).map_err(|_| ReconcileError::InvalidShipVolume {
-        volume: volume_name.to_string(),
-        reason: "defaultMode must be a positive integer".to_string(),
-    })?;
-    if mode > 0o777 {
-        return Err(ReconcileError::InvalidShipVolume {
-            volume: volume_name.to_string(),
-            reason: "defaultMode must be between 0 and 0o777".to_string(),
-        });
-    }
-    Ok(mode)
-}
-
-fn build_materialized_files(
-    volume_name: &str,
-    source_kind: MaterializedVolumeSourceKind,
-    resource_name: &str,
-    data: HashMap<String, Vec<u8>>,
-    items: &[NormalizedKeyToPath],
-    default_mode: u32,
-    optional: bool,
-) -> Result<Vec<MaterializedFile>, ReconcileError> {
-    let mut files = Vec::new();
-    let mut seen_paths = HashSet::new();
-
-    if items.is_empty() {
-        let mut entries = data.into_iter().collect::<Vec<_>>();
-        entries.sort_by(|left, right| left.0.cmp(&right.0));
-        for (key, contents) in entries {
-            validate_relative_target_path(volume_name, &key)?;
-            if !seen_paths.insert(key.clone()) {
-                return Err(ReconcileError::DuplicateVolumeItemPath {
-                    volume: volume_name.to_string(),
-                    path: key,
-                });
-            }
-            files.push(MaterializedFile {
-                path: key,
-                contents,
-                mode: default_mode,
-            });
-        }
-        return Ok(files);
-    }
-
-    for item in items {
-        if !seen_paths.insert(item.path.clone()) {
-            return Err(ReconcileError::DuplicateVolumeItemPath {
-                volume: volume_name.to_string(),
-                path: item.path.clone(),
-            });
-        }
-        let Some(contents) = data.get(&item.key) else {
-            if optional {
-                continue;
-            }
-            return Err(ReconcileError::MissingVolumeItemKey {
-                volume: volume_name.to_string(),
-                kind: source_kind.as_str().to_string(),
-                resource: resource_name.to_string(),
-                key: item.key.clone(),
-            });
-        };
-        files.push(MaterializedFile {
-            path: item.path.clone(),
-            contents: contents.clone(),
-            mode: default_mode,
-        });
-    }
-
-    Ok(files)
-}
-
-fn validate_relative_target_path(volume_name: &str, path: &str) -> Result<(), ReconcileError> {
-    if path.is_empty() {
-        return Err(ReconcileError::InvalidVolumeItemPath {
-            volume: volume_name.to_string(),
-            path: path.to_string(),
-        });
-    }
-    let candidate = std::path::Path::new(path);
-    if candidate.is_absolute() {
-        return Err(ReconcileError::InvalidVolumeItemPath {
-            volume: volume_name.to_string(),
-            path: path.to_string(),
-        });
-    }
-    if path
-        .split('/')
-        .any(|segment| matches!(segment, "" | "." | ".."))
-    {
-        return Err(ReconcileError::InvalidVolumeItemPath {
-            volume: volume_name.to_string(),
-            path: path.to_string(),
-        });
-    }
-
-    for component in candidate.components() {
-        match component {
-            std::path::Component::Normal(_) => {}
-            _ => {
-                return Err(ReconcileError::InvalidVolumeItemPath {
-                    volume: volume_name.to_string(),
-                    path: path.to_string(),
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_materialized_volume_name(volume_name: &str) -> Result<(), ReconcileError> {
-    let candidate = std::path::Path::new(volume_name);
-    if candidate.is_absolute() || volume_name.contains('/') {
-        return Err(ReconcileError::InvalidShipVolume {
-            volume: volume_name.to_string(),
-            reason: "volume name must be a single relative path segment".to_string(),
-        });
-    }
-
-    let mut components = candidate.components();
-    match (components.next(), components.next()) {
-        (Some(std::path::Component::Normal(_)), None) => Ok(()),
-        _ => Err(ReconcileError::InvalidShipVolume {
-            volume: volume_name.to_string(),
-            reason: "volume name must be a single relative path segment".to_string(),
-        }),
-    }
-}
-
-fn effective_volume_mode(mode: Option<&str>) -> &str {
+pub(crate) fn effective_volume_mode(mode: Option<&str>) -> &str {
     mode.unwrap_or("Block")
 }
 
-fn ensure_volume_claim_binding(
+pub(crate) fn ensure_volume_claim_binding(
     volume_name: &str,
     claim_ref: Option<&PersistentVolumeClaimReference>,
     claim_namespace: &str,
@@ -746,7 +406,7 @@ fn ensure_volume_claim_binding(
     }
 }
 
-fn ensure_access_modes_compatible(
+pub(crate) fn ensure_access_modes_compatible(
     claim_name: &str,
     claim_access_modes: &[String],
     volume_name: &str,
@@ -799,14 +459,17 @@ fn ensure_access_modes_compatible(
     Ok(())
 }
 
-fn ensure_supported_csi_source(
+pub(crate) fn ensure_supported_csi_source(
     _volume_name: &str,
     _source: &CsiPersistentVolumeSource,
 ) -> Result<(), ReconcileError> {
     Ok(())
 }
 
-fn ensure_supported_claim_mode(claim_name: &str, mode: &str) -> Result<(), ReconcileError> {
+pub(crate) fn ensure_supported_claim_mode(
+    claim_name: &str,
+    mode: &str,
+) -> Result<(), ReconcileError> {
     if matches!(mode, "Block" | "Filesystem") {
         Ok(())
     } else {
@@ -817,7 +480,7 @@ fn ensure_supported_claim_mode(claim_name: &str, mode: &str) -> Result<(), Recon
     }
 }
 
-fn ensure_supported_persistent_volume_mode(
+pub(crate) fn ensure_supported_persistent_volume_mode(
     volume_name: &str,
     mode: &str,
 ) -> Result<(), ReconcileError> {
@@ -831,7 +494,7 @@ fn ensure_supported_persistent_volume_mode(
     }
 }
 
-fn decode_csi_secret_data(
+pub(crate) fn decode_csi_secret_data(
     volume_name: &str,
     field: &str,
     namespace: &str,
@@ -866,7 +529,7 @@ fn decode_csi_secret_data(
     Ok(data)
 }
 
-fn decode_secret_volume_data(
+pub(crate) fn decode_secret_volume_data(
     volume_name: &str,
     namespace: &str,
     secret_name: &str,
@@ -910,305 +573,4 @@ fn invalid_csi_secret_data(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        MaterializedFile, MaterializedVolumeSourceKind, build_materialized_files,
-        decode_csi_secret_data, decode_secret_volume_data, effective_volume_mode,
-        ensure_access_modes_compatible, ensure_supported_claim_mode, ensure_supported_csi_source,
-        ensure_supported_persistent_volume_mode, ensure_volume_claim_binding,
-        normalized_ship_volumes, validate_materialized_volume_name, validate_relative_target_path,
-    };
-    use tugboat_resources::manifests::core::v1::{
-        ConfigMapVolumeSource, CsiPersistentVolumeSource, KeyToPath,
-        PersistentVolumeClaimReference, PersistentVolumeClaimVolumeSource, Secret, SecretReference,
-        SecretVolumeSource, ShipSpec, ShipVolume, ShipVolumeClaimReference,
-    };
-
-    #[test]
-    fn defaults_volume_mode_to_block() {
-        assert_eq!(effective_volume_mode(None), "Block");
-    }
-
-    #[test]
-    fn allows_supported_volume_modes() {
-        assert!(ensure_supported_claim_mode("claim", "Filesystem").is_ok());
-        assert!(ensure_supported_persistent_volume_mode("volume", "Filesystem").is_ok());
-    }
-
-    #[test]
-    fn requires_volume_to_be_bound_to_exact_claim() {
-        let claim_ref = PersistentVolumeClaimReference {
-            name: "data".to_string(),
-            namespace: "alpha".to_string(),
-        };
-
-        assert!(ensure_volume_claim_binding("pv-1", Some(&claim_ref), "alpha", "data").is_ok());
-        assert!(ensure_volume_claim_binding("pv-1", Some(&claim_ref), "beta", "data").is_err());
-        assert!(ensure_volume_claim_binding("pv-1", None, "alpha", "data").is_err());
-    }
-
-    #[test]
-    fn rejects_access_mode_mismatches() {
-        assert!(
-            ensure_access_modes_compatible(
-                "claim",
-                &["ReadWriteMany".to_string()],
-                "pv",
-                &["ReadOnlyMany".to_string()],
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn allows_controller_expand_secret_ref() {
-        let source = CsiPersistentVolumeSource {
-            controller_expand_secret_ref: Some(SecretReference {
-                name: "expand-secret".to_string(),
-                namespace: "alpha".to_string(),
-            }),
-            ..Default::default()
-        };
-
-        assert!(ensure_supported_csi_source("pv", &source).is_ok());
-    }
-
-    #[test]
-    fn allows_node_publish_and_stage_secrets() {
-        let source = CsiPersistentVolumeSource {
-            node_publish_secret_ref: Some(SecretReference {
-                name: "publish-secret".to_string(),
-                namespace: "alpha".to_string(),
-            }),
-            node_stage_secret_ref: Some(SecretReference {
-                name: "stage-secret".to_string(),
-                namespace: "alpha".to_string(),
-            }),
-            fs_type: Some("xfs".to_string()),
-            volume_attributes: std::collections::HashMap::from([(
-                "storage.kubernetes.io/csiProvisionerIdentity".to_string(),
-                "test".to_string(),
-            )]),
-            ..Default::default()
-        };
-
-        assert!(ensure_supported_csi_source("pv", &source).is_ok());
-    }
-
-    #[test]
-    fn decodes_base64_csi_secret_data() {
-        let secret = Secret {
-            data: std::collections::HashMap::from([("token".to_string(), "c2VjcmV0".to_string())]),
-            ..Default::default()
-        };
-
-        let decoded =
-            decode_csi_secret_data("pv", "node_publish_secret_ref", "alpha", "publish", secret)
-                .expect("secret decoding should succeed");
-        assert_eq!(decoded.get("token"), Some(&"secret".to_string()));
-    }
-
-    #[test]
-    fn decodes_binary_secret_volume_data() {
-        let secret = Secret {
-            data: std::collections::HashMap::from([("cert".to_string(), "AAE=".to_string())]),
-            string_data: std::collections::HashMap::from([(
-                "token".to_string(),
-                "plain".to_string(),
-            )]),
-            ..Default::default()
-        };
-
-        let decoded = decode_secret_volume_data("secret-vol", "alpha", "app-secret", secret)
-            .expect("secret decoding should succeed");
-        assert_eq!(decoded.get("cert"), Some(&vec![0, 1]));
-        assert_eq!(decoded.get("token"), Some(&b"plain".to_vec()));
-    }
-
-    #[test]
-    fn normalizes_legacy_and_named_volumes() {
-        let spec = ShipSpec {
-            volume_claim_ref: vec![ShipVolumeClaimReference {
-                name: "legacy-data".to_string(),
-            }],
-            volumes: vec![
-                ShipVolume {
-                    name: "cfg".to_string(),
-                    config_map: Some(ConfigMapVolumeSource {
-                        name: "app-config".to_string(),
-                        items: vec![KeyToPath {
-                            key: "app.toml".to_string(),
-                            path: "config/app.toml".to_string(),
-                        }],
-                        default_mode: Some(0o640),
-                        optional: Some(true),
-                    }),
-                    ..Default::default()
-                },
-                ShipVolume {
-                    name: "secret".to_string(),
-                    secret: Some(SecretVolumeSource {
-                        secret_name: "app-secret".to_string(),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                ShipVolume {
-                    name: "pvc".to_string(),
-                    persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
-                        claim_name: "data".to_string(),
-                    }),
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-
-        let normalized = normalized_ship_volumes(&spec).expect("volume normalization must succeed");
-        assert_eq!(normalized.len(), 4);
-        assert_eq!(normalized[0].name, "legacy-data");
-        assert_eq!(normalized[1].name, "cfg");
-        assert_eq!(normalized[2].name, "secret");
-        assert_eq!(normalized[3].name, "pvc");
-    }
-
-    #[test]
-    fn rejects_multiple_named_volume_sources() {
-        let spec = ShipSpec {
-            volumes: vec![ShipVolume {
-                name: "invalid".to_string(),
-                config_map: Some(ConfigMapVolumeSource {
-                    name: "cfg".to_string(),
-                    ..Default::default()
-                }),
-                secret: Some(SecretVolumeSource {
-                    secret_name: "secret".to_string(),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        assert!(normalized_ship_volumes(&spec).is_err());
-    }
-
-    #[test]
-    fn rejects_duplicate_named_volume_paths() {
-        let err = normalized_ship_volumes(&ShipSpec {
-            volumes: vec![ShipVolume {
-                name: "cfg".to_string(),
-                config_map: Some(ConfigMapVolumeSource {
-                    name: "app-config".to_string(),
-                    items: vec![
-                        KeyToPath {
-                            key: "a".to_string(),
-                            path: "config/app".to_string(),
-                        },
-                        KeyToPath {
-                            key: "b".to_string(),
-                            path: "config/app".to_string(),
-                        },
-                    ],
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }],
-            ..Default::default()
-        })
-        .unwrap_err();
-
-        assert!(format!("{err}").contains("duplicate target path"));
-    }
-
-    #[test]
-    fn rejects_parent_dir_volume_paths() {
-        assert!(validate_relative_target_path("cfg", "../etc/passwd").is_err());
-        assert!(validate_relative_target_path("cfg", "/etc/passwd").is_err());
-        assert!(validate_relative_target_path("cfg", "a/./b").is_err());
-    }
-
-    #[test]
-    fn rejects_unsafe_volume_names() {
-        assert!(validate_materialized_volume_name("../cfg").is_err());
-        assert!(validate_materialized_volume_name("/etc/passwd").is_err());
-        assert!(validate_materialized_volume_name("nested/cfg").is_err());
-        assert!(validate_materialized_volume_name("cfg/").is_err());
-        assert!(validate_materialized_volume_name("cfg").is_ok());
-        assert!(validate_materialized_volume_name("cfg.v1").is_ok());
-    }
-
-    #[test]
-    fn rejects_named_volumes_with_unsafe_names() {
-        let err = normalized_ship_volumes(&ShipSpec {
-            volumes: vec![ShipVolume {
-                name: "../cfg".to_string(),
-                config_map: Some(ConfigMapVolumeSource {
-                    name: "app-config".to_string(),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }],
-            ..Default::default()
-        })
-        .unwrap_err();
-
-        assert!(format!("{err}").contains("single relative path segment"));
-    }
-
-    #[test]
-    fn materializes_all_keys_when_items_are_empty() {
-        let mut files = build_materialized_files(
-            "cfg",
-            MaterializedVolumeSourceKind::ConfigMap,
-            "app-config",
-            std::collections::HashMap::from([
-                ("app.toml".to_string(), b"[app]".to_vec()),
-                ("log.toml".to_string(), b"[log]".to_vec()),
-            ]),
-            &[],
-            0o640,
-            false,
-        )
-        .expect("file projection should succeed");
-        files.sort_by(|left, right| left.path.cmp(&right.path));
-
-        assert_eq!(
-            files,
-            vec![
-                MaterializedFile {
-                    path: "app.toml".to_string(),
-                    contents: b"[app]".to_vec(),
-                    mode: 0o640,
-                },
-                MaterializedFile {
-                    path: "log.toml".to_string(),
-                    contents: b"[log]".to_vec(),
-                    mode: 0o640,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn projects_selected_keys_to_custom_paths() {
-        let files = build_materialized_files(
-            "cfg",
-            MaterializedVolumeSourceKind::ConfigMap,
-            "app-config",
-            std::collections::HashMap::from([("app".to_string(), b"hello".to_vec())]),
-            &[super::NormalizedKeyToPath {
-                key: "app".to_string(),
-                path: "config/app.txt".to_string(),
-            }],
-            0o600,
-            false,
-        )
-        .expect("file projection should succeed");
-
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "config/app.txt");
-        assert_eq!(files[0].contents, b"hello".to_vec());
-        assert_eq!(files[0].mode, 0o600);
-    }
-}
+mod tests;

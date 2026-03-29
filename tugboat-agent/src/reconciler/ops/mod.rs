@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub(crate) mod add;
+pub(crate) mod add_helpers;
 pub(crate) mod delete;
 pub(crate) mod modify;
 
