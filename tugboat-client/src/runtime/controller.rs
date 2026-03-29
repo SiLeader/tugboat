@@ -148,6 +148,7 @@ where
         let api = self.api.clone();
         let parent_token = self.cancellation_token.clone();
         let in_flight = self.in_flight.clone();
+        let this_backoff = self.backoff.clone();
         // Capture counter for the branch that uses it
         let counter = self.counter.clone();
 
@@ -180,7 +181,6 @@ where
         };
 
         let id = counter.fetch_add(1, Ordering::Relaxed);
-        let this_backoff = self.backoff.clone();
 
         tokio::spawn(async move {
             // Cancel any previous reconciliation for this resource.
@@ -233,7 +233,7 @@ async fn process_reconcile_result<T, R>(
     event: &ReconcileEvent<T>,
     result: Result<Action, R::Error>,
     backoff: &BackoffConfig,
-    attempt: usize,
+    attempt: u32,
 ) where
     T: StaticResource
         + ObjectMetaResource
@@ -261,7 +261,7 @@ async fn process_reconcile_result<T, R>(
                 event,
                 delay,
                 backoff,
-                attempt + 1,
+                attempt.saturating_add(1),
             )
             .await;
         }
@@ -308,7 +308,7 @@ async fn process_requeue<T, R>(
     event: &ReconcileEvent<T>,
     mut delay: Duration,
     backoff: &BackoffConfig,
-    mut attempt: usize,
+    mut attempt: u32,
 ) where
     T: StaticResource
         + ObjectMetaResource
@@ -337,7 +337,7 @@ async fn process_requeue<T, R>(
                 error!("failed to requeue {} {name}: {err}", T::kind());
                 // On API error, retry with backoff
                 delay = backoff.delay_for(attempt);
-                attempt += 1;
+                attempt = attempt.saturating_add(1);
                 continue;
             }
         };
@@ -353,7 +353,7 @@ async fn process_requeue<T, R>(
             Err(err) => {
                 error!("failed to reconcile requeued {} {name}: {err}", T::kind());
                 delay = backoff.delay_for(attempt);
-                attempt += 1;
+                attempt = attempt.saturating_add(1);
             }
         }
     }

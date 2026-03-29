@@ -79,10 +79,10 @@ pub(super) trait AppendStatus {
 
 impl AppendStatus for ShipStatus {
     fn append_status(&mut self, condition: ShipCondition) {
-        if let Some(last) = self.conditions.last() {
-            if last.status == condition.status && last.message == condition.message {
-                return;
-            }
+        if let Some(last) = self.conditions.last()
+            && last.status == condition.status && last.message == condition.message
+        {
+            return;
         }
         self.conditions.push(condition);
     }
