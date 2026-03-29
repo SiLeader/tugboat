@@ -25,7 +25,7 @@ use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::{PersistentVolumeClaimVolumeInfo, VolumeInfo};
 use crate::runtime::RuntimeCreateRequest;
 use std::collections::HashMap;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
@@ -110,7 +110,9 @@ impl ShipReconciler {
         let stale_published_volumes = self.csi.load_published_volumes(ship_id)?;
         if !stale_published_volumes.is_empty() {
             info!("Cleaning up stale CSI publish state for ship '{}'", ship_id);
-            let controller_publish_secrets = self.controller_publish_secret_map(&volumes).await?;
+            let controller_publish_secrets = self
+                .controller_publish_secret_map(&namespace, &volumes, &stale_published_volumes)
+                .await?;
             self.cleanup_published_volumes(&stale_published_volumes, &controller_publish_secrets)
                 .await?;
             self.csi.cleanup_mount_namespace(ship_id)?;
@@ -407,7 +409,25 @@ impl ShipReconciler {
     ) -> Result<(), ReconcileError> {
         let mut runtime_published_volumes =
             self.runtime_operator.delete(ship_id.to_string()).await?;
-        let controller_publish_secrets = self.controller_publish_secret_map(volumes).await?;
+
+        let ship = self.ship_all_api.get(ship_id).await?;
+        let namespace = ship
+            .as_ref()
+            .and_then(|s| s.object_meta().as_ref().and_then(|m| m.namespace.as_ref()))
+            .map(|s| s.as_str())
+            .unwrap_or("default");
+
+        let controller_publish_secrets = self
+            .controller_publish_secret_map(
+                namespace,
+                volumes,
+                if runtime_published_volumes.is_empty() {
+                    fallback_published_volumes
+                } else {
+                    &runtime_published_volumes
+                },
+            )
+            .await?;
         if runtime_published_volumes.is_empty() {
             runtime_published_volumes = self.csi.load_published_volumes(ship_id)?;
         }
@@ -425,9 +445,11 @@ impl ShipReconciler {
 
     pub(super) async fn controller_publish_secret_map(
         &self,
+        namespace: &str,
         volumes: &[VolumeInfo],
+        stale_volumes: &[PublishedVolume],
     ) -> Result<HashMap<String, HashMap<String, String>>, ReconcileError> {
-        let mut secrets = HashMap::with_capacity(volumes.len());
+        let mut secrets = HashMap::with_capacity(volumes.len() + stale_volumes.len());
         for volume in volumes {
             let Some(volume) = volume.persistent_volume_claim() else {
                 continue;
@@ -435,6 +457,35 @@ impl ShipReconciler {
             let resolved = self.resolve_csi_secrets(volume).await?;
             secrets.insert(volume.name.clone(), resolved.controller_publish);
         }
+
+        for published in stale_volumes {
+            if secrets.contains_key(&published.claim_name) {
+                continue;
+            }
+
+            let volume_info = match self
+                .load_persistent_volume_claim(
+                    namespace,
+                    &Api::namespaced(self.client.clone(), namespace),
+                    &Api::all(self.client.clone()),
+                    published.claim_name.clone(),
+                    published.claim_name.clone(),
+                )
+                .await
+            {
+                Ok(info) => info,
+                Err(err) => {
+                    warn!(
+                        "Failed to resolve stale volume '{}' secrets in namespace '{}': {}",
+                        published.claim_name, namespace, err
+                    );
+                    continue;
+                }
+            };
+            let resolved = self.resolve_csi_secrets(&volume_info).await?;
+            secrets.insert(published.claim_name.clone(), resolved.controller_publish);
+        }
+
         Ok(secrets)
     }
 

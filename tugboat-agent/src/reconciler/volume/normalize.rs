@@ -328,7 +328,7 @@ pub(crate) fn validate_relative_target_path(
     }
     if path
         .split('/')
-        .any(|segment| matches!(segment, "" | "." | ".."))
+        .any(|segment| matches!(segment, "." | ".."))
     {
         return Err(ReconcileError::InvalidVolumeItemPath {
             volume: volume_name.to_string(),

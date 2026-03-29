@@ -1,3 +1,4 @@
+use crate::csi::PublishedVolume;
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use std::collections::HashMap;
@@ -37,13 +38,13 @@ impl ShipReconciler {
         };
 
         info!("Deleting ship: {}", ship_id);
+        let namespace = meta
+            .namespace
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
 
         // Tear down CNI network interfaces (best-effort).
         if let Some(spec) = ship.spec.as_ref() {
-            let namespace = meta
-                .namespace
-                .clone()
-                .unwrap_or_else(|| "default".to_string());
             match self.get_related_network_classes(&namespace, spec).await {
                 Ok(network_classes) => {
                     let networks = self.cni.create_network_configs(ship_id, network_classes);
@@ -63,8 +64,13 @@ impl ShipReconciler {
             }
         }
 
+        let mut published_volumes = self.runtime_operator.delete(ship_id.clone()).await?;
+        if published_volumes.is_empty() {
+            published_volumes = self.csi.load_published_volumes(ship_id)?;
+        }
+
         let (volumes, controller_publish_secrets) = self
-            .volume_cleanup_context_for_ship(&ship)
+            .volume_cleanup_context_for_ship(&namespace, &ship, &published_volumes)
             .await
             .unwrap_or_else(|err| {
                 warn!(
@@ -73,10 +79,7 @@ impl ShipReconciler {
                 );
                 (Vec::new(), HashMap::new())
             });
-        let mut published_volumes = self.runtime_operator.delete(ship_id.clone()).await?;
-        if published_volumes.is_empty() {
-            published_volumes = self.csi.load_published_volumes(ship_id)?;
-        }
+
         let cleanup_result = self
             .cleanup_published_volumes(&published_volumes, &controller_publish_secrets)
             .await;
@@ -116,7 +119,9 @@ impl ShipReconciler {
 
     async fn volume_cleanup_context_for_ship(
         &self,
+        namespace: &str,
         ship: &Ship,
+        published_volumes: &[PublishedVolume],
     ) -> Result<
         (
             Vec<crate::reconciler::volume::VolumeInfo>,
@@ -124,16 +129,13 @@ impl ShipReconciler {
         ),
         ReconcileError,
     > {
-        let namespace = ship
-            .object_meta()
-            .as_ref()
-            .and_then(|meta| meta.namespace.clone())
-            .unwrap_or_else(|| "default".to_string());
         let Some(spec) = ship.spec.as_ref() else {
             return Ok((Vec::new(), HashMap::new()));
         };
-        let volumes = self.get_related_volumes(&namespace, spec).await?;
-        let secrets = self.controller_publish_secret_map(&volumes).await?;
+        let volumes = self.get_related_volumes(namespace, spec).await?;
+        let secrets = self
+            .controller_publish_secret_map(namespace, &volumes, published_volumes)
+            .await?;
         Ok((volumes, secrets))
     }
 }

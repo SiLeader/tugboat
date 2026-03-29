@@ -25,7 +25,7 @@ impl ShipReconciler {
             }
         }
 
-        create_dir_with_mode(&volume_dir, 0o755)
+        create_dir_with_mode(&volume_dir, 0o700)
             .map_err(|err| materialized_io_error(&volume.name, &volume_dir, err.to_string()))?;
         for file in &volume.files {
             let path = volume_dir.join(&file.path);
@@ -36,7 +36,7 @@ impl ShipReconciler {
                     "projected file has no parent directory".to_string(),
                 ));
             };
-            create_dir_with_mode(parent, 0o755)
+            create_dir_with_mode(parent, 0o700)
                 .map_err(|err| materialized_io_error(&volume.name, parent, err.to_string()))?;
             write_file_with_mode(&path, &file.contents, file.mode)
                 .map_err(|err| materialized_io_error(&volume.name, &path, err.to_string()))?;

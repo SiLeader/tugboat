@@ -139,7 +139,7 @@ impl ShipReconciler {
         Ok(volumes)
     }
 
-    async fn load_persistent_volume_claim(
+    pub(crate) async fn load_persistent_volume_claim(
         &self,
         namespace: &str,
         claim_api: &Api<PersistentVolumeClaim>,
