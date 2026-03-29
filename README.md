@@ -124,7 +124,7 @@ Current node-side support matrix:
 
 `Filesystem` volumes are exposed to the guest as a 9p share. The mount tag is the referenced `volumeClaimRef[].name`.
 
-Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling, `NodeExpandVolume` when the driver advertises it, and `NodeGetVolumeStats`-backed PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
+Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling, live `NodeExpandVolume` (without Ship recreate) when the driver advertises it, and `NodeGetVolumeStats`-backed PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
 
 ## Roadmap
 
@@ -142,7 +142,8 @@ Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClai
     - [x] Networking (CNI, NetworkClass / ClusterNetworkClass)
     - [x] Reconcile on Ship Modified events
     - [x] Reconcile on Ship Deleted events
-    - [ ] Storage (CSI provisioning, publish/stage, controller publish context, and expansion are implemented; topology-aware scheduling and snapshot-style workflows remain)
+    - [x] Storage (CSI publish/stage, controller publish context, and live expansion)
+    - [ ] Topology-aware scheduling and snapshot-style workflows
 - [x] Secret
 - [ ] tugboat-controller-manager
     - [x] Dynamic CSI volume provisioning

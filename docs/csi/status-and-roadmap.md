@@ -8,23 +8,22 @@ Tugboat's CSI implementation is under active development. This document outlines
 - [x] **Provisioner Secrets**: `StorageClassSpec` supports `controller_create_secret_ref`.
 - [x] **Mount Options**: `StorageClassSpec` supports `mount_options`, propagated to `NodeStage`/`NodePublish`.
 - [x] **Volume Lifecycle**: Full `NodeStage` → `NodePublish` → `NodeUnpublish` → `NodeUnstage` pipeline.
-- [x] **Volume Expansion**: Support for `ControllerExpandVolume` and `NodeExpandVolume` (during Ship creation).
+- [x] **Volume Expansion**: Support for `ControllerExpandVolume` and `NodeExpandVolume` (both during Ship creation and live for running Ships).
 - [x] **Mount Isolation**: Execution of CSI operations within Ship-specific mount namespaces.
 - [x] **VM Runtime**: Support for `virtio-blk` (Block) and `virtio-9p` (Filesystem) devices.
 - [x] **Monitoring**: Volume usage and health monitoring via `NodeGetVolumeStats`.
 
 ## Known Limitations
 
-- **Live Resize**: Volume expansion is currently only applied during Ship creation/restart. `reconciler/ops/modify.rs` treats resize as recreate-required.
 - **Topology Support**: Topology-aware scheduling and late binding are not yet supported.
-- **Live Attach/Detach**: Volume-related Ship updates require a full Ship recreate.
+- **Live Attach/Detach**: Adding or removing volumes in a Ship's spec requires a full Ship recreate.
 
 ## Roadmap
 
 ### Phase 1: Feature Completeness
 - [x] Add `mount_options` support.
 - [x] Add `controller_create_secret_ref` for provisioning-time secrets.
-- [ ] Support live volume expansion in `reconciler/ops/modify.rs` without requiring Ship recreate.
+- [x] Support live volume expansion in `reconciler/ops/modify.rs` without requiring Ship recreate.
 - [ ] Improve agent recovery for missing or corrupted volume state files.
 
 ### Phase 2: Advanced Scheduling

@@ -53,7 +53,7 @@ Tugboatはこれらの問題を解決するために生まれました。
 
 ## Architecture overview
 
-![architecture overview](./images/tugboat-structure.svg)
+![architecture overview](./docs/images/tugboat-structure.svg)
 
 ### Kubernetesリソースとの対応
 
@@ -120,7 +120,7 @@ CSI volume を使う場合は、`volumeClaimRef` で同一 namespace の `Persis
 
 `Filesystem` volume は guest へ 9p share として公開され、mount tag には `volumeClaimRef[].name` が使われます。
 
-control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context、`NodeExpandVolume`、`NodeGetVolumeStats` による CSI health / usage の PV/PVC condition 反映まで対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone 系ワークフローです。
+control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context、稼働中の Ship を停止させない live `NodeExpandVolume`、`NodeGetVolumeStats` による CSI health / usage の PV/PVC condition 反映まで対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone 系ワークフローです。
 
 ## Roadmap
 
@@ -138,7 +138,8 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [x] ネットワーク (CNI, NetworkClass / ClusterNetworkClass)
     - [x] Ship Modifiedイベントのreconcile
     - [x] Ship Deletedイベントのreconcile
-    - [ ] ストレージ (CSI の provision / publish / stage / expand までは実装済み。topology-aware scheduling と snapshot 系は今後の課題)
+    - [x] ストレージ (CSI publish/stage, controller publish context, および live expansion)
+    - [ ] Topology-aware scheduling と snapshot 系ワークフロー
 - [x] Secret
 - [ ] tugboat-controller-manager
     - [x] CSIの動的プロビジョニング
