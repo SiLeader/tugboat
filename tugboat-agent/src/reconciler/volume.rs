@@ -475,6 +475,7 @@ fn normalize_ship_volume(volume: &ShipVolume) -> Result<NormalizedVolume, Reconc
             reason: "volume name must not be empty".to_string(),
         });
     }
+    validate_materialized_volume_name(&volume.name)?;
 
     let source_count = usize::from(volume.persistent_volume_claim.is_some())
         + usize::from(volume.config_map.is_some())
@@ -697,6 +698,25 @@ fn validate_relative_target_path(volume_name: &str, path: &str) -> Result<(), Re
     Ok(())
 }
 
+fn validate_materialized_volume_name(volume_name: &str) -> Result<(), ReconcileError> {
+    let candidate = std::path::Path::new(volume_name);
+    if candidate.is_absolute() || volume_name.contains('/') {
+        return Err(ReconcileError::InvalidShipVolume {
+            volume: volume_name.to_string(),
+            reason: "volume name must be a single relative path segment".to_string(),
+        });
+    }
+
+    let mut components = candidate.components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(()),
+        _ => Err(ReconcileError::InvalidShipVolume {
+            volume: volume_name.to_string(),
+            reason: "volume name must be a single relative path segment".to_string(),
+        }),
+    }
+}
+
 fn effective_volume_mode(mode: Option<&str>) -> &str {
     mode.unwrap_or("Block")
 }
@@ -896,7 +916,7 @@ mod tests {
         decode_csi_secret_data, decode_secret_volume_data, effective_volume_mode,
         ensure_access_modes_compatible, ensure_supported_claim_mode, ensure_supported_csi_source,
         ensure_supported_persistent_volume_mode, ensure_volume_claim_binding,
-        normalized_ship_volumes, validate_relative_target_path,
+        normalized_ship_volumes, validate_materialized_volume_name, validate_relative_target_path,
     };
     use tugboat_resources::manifests::core::v1::{
         ConfigMapVolumeSource, CsiPersistentVolumeSource, KeyToPath,
@@ -1106,6 +1126,34 @@ mod tests {
         assert!(validate_relative_target_path("cfg", "../etc/passwd").is_err());
         assert!(validate_relative_target_path("cfg", "/etc/passwd").is_err());
         assert!(validate_relative_target_path("cfg", "a/./b").is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_volume_names() {
+        assert!(validate_materialized_volume_name("../cfg").is_err());
+        assert!(validate_materialized_volume_name("/etc/passwd").is_err());
+        assert!(validate_materialized_volume_name("nested/cfg").is_err());
+        assert!(validate_materialized_volume_name("cfg/").is_err());
+        assert!(validate_materialized_volume_name("cfg").is_ok());
+        assert!(validate_materialized_volume_name("cfg.v1").is_ok());
+    }
+
+    #[test]
+    fn rejects_named_volumes_with_unsafe_names() {
+        let err = normalized_ship_volumes(&ShipSpec {
+            volumes: vec![ShipVolume {
+                name: "../cfg".to_string(),
+                config_map: Some(ConfigMapVolumeSource {
+                    name: "app-config".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap_err();
+
+        assert!(format!("{err}").contains("single relative path segment"));
     }
 
     #[test]
