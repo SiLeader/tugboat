@@ -2,8 +2,8 @@ use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::volume::MaterializedVolumeInfo;
 use std::fs;
-use std::io;
-use std::os::unix::fs::PermissionsExt;
+use std::io::{self, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 impl ShipReconciler {
@@ -38,9 +38,7 @@ impl ShipReconciler {
             };
             create_dir_with_mode(parent, 0o755)
                 .map_err(|err| materialized_io_error(&volume.name, parent, err.to_string()))?;
-            fs::write(&path, &file.contents)
-                .map_err(|err| materialized_io_error(&volume.name, &path, err.to_string()))?;
-            fs::set_permissions(&path, fs::Permissions::from_mode(file.mode))
+            write_file_with_mode(&path, &file.contents, file.mode)
                 .map_err(|err| materialized_io_error(&volume.name, &path, err.to_string()))?;
         }
 
@@ -71,6 +69,17 @@ fn create_dir_with_mode(path: &Path, mode: u32) -> io::Result<()> {
     Ok(())
 }
 
+fn write_file_with_mode(path: &Path, contents: &[u8], mode: u32) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(mode)
+        .open(path)?;
+    file.write_all(contents)?;
+    Ok(())
+}
+
 fn materialized_io_error(volume: &str, path: &Path, reason: String) -> ReconcileError {
     ReconcileError::MaterializedVolumeIo {
         volume: volume.to_string(),
@@ -81,7 +90,7 @@ fn materialized_io_error(volume: &str, path: &Path, reason: String) -> Reconcile
 
 #[cfg(test)]
 mod tests {
-    use super::create_dir_with_mode;
+    use super::{create_dir_with_mode, write_file_with_mode};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -101,6 +110,30 @@ mod tests {
 
         let metadata = fs::metadata(&path).expect("metadata should exist");
         assert_eq!(metadata.permissions().mode() & 0o777, 0o750);
+        fs::remove_dir_all(root).expect("temporary directory should be removed");
+    }
+
+    #[test]
+    fn creates_file_with_requested_mode() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "tugboat-agent-materialized-file-test-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("temporary directory should be created");
+        let path = root.join("secret.txt");
+
+        write_file_with_mode(&path, b"top-secret", 0o600).expect("file creation should succeed");
+
+        let metadata = fs::metadata(&path).expect("metadata should exist");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::read_to_string(&path).expect("file should be readable"),
+            "top-secret"
+        );
         fs::remove_dir_all(root).expect("temporary directory should be removed");
     }
 }
