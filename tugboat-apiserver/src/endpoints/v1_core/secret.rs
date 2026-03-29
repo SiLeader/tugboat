@@ -188,11 +188,24 @@ pub(super) async fn handle_secret_replace(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Secret>, Box<StatusResponse>> {
     let path = path.into_inner();
+    let replacement = replacement.into_inner();
+    let mut data = replacement.data;
+    data.extend(
+        replacement
+            .string_data
+            .into_iter()
+            .map(|(k, v)| (k, base64_encode(&v))),
+    );
+    let replacement = Secret {
+        data,
+        string_data: Default::default(),
+        ..replacement
+    };
     resource_handlers::replace_resource::<Secret>(
         &operator,
         Some(path.namespace),
         path.name,
-        replacement.into_inner(),
+        replacement,
         ReplaceOptions {
             preserve_status: false,
             use_client_resource_version: true,
