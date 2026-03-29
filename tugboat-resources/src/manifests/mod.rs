@@ -25,6 +25,14 @@ pub mod core {
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.core.v1.rs"));
 
+        apply_resource!(
+            ConfigMap,
+            "core",
+            "v1",
+            "configmaps",
+            "configmap",
+            namespaced
+        );
         apply_resource!(Namespace, "core", "v1", "namespaces", "namespace", cluster);
         apply_resource!(
             NetworkClass,
@@ -71,6 +79,7 @@ pub mod core {
         apply_resource!(Ship, "core", "v1", "ships", "ship", namespaced);
         apply_resource!(ShipClass, "core", "v1", "shipclasses", "shipclass", cluster);
 
+        apply_validators!(ConfigMap, validators NameValidator);
         apply_validators!(Namespace, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(NetworkClass, validators NameValidator);
         apply_validators!(ClusterNetworkClass, validators NameValidator, NamespaceProhibitedValidator);
@@ -87,6 +96,41 @@ pub mod core {
         }
         apply_validators!(Ship, validators NameValidator);
         apply_validators!(ShipClass, validators NameValidator, NamespaceProhibitedValidator);
+
+        #[cfg(test)]
+        mod tests {
+            use super::ConfigMap;
+            use crate::manifests::meta::v1::ObjectMeta;
+            use crate::validators::Validatable;
+
+            #[test]
+            fn configmap_with_valid_name_passes_validation() {
+                let config_map = ConfigMap {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("example-config".to_string()),
+                        namespace: Some("default".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(config_map.validate());
+            }
+
+            #[test]
+            fn configmap_with_invalid_name_fails_validation() {
+                let config_map = ConfigMap {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("Invalid_Config".to_string()),
+                        namespace: Some("default".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(!config_map.validate());
+            }
+        }
     }
 }
 

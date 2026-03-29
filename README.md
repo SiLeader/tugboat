@@ -151,7 +151,7 @@ Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClai
     - [ ] ReplicaSet (Maintaining the prescribed number of ships)
     - [ ] Deployment (Deploying same configuration Ships)
     - [ ] Fleet
-- [ ] ConfigMap
+- [x] ConfigMap
 - [ ] Live migration
 - [ ] RBAC / ServiceAccount
 - [ ] CRD

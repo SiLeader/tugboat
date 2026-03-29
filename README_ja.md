@@ -147,7 +147,7 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [ ] ReplicaSet (Shipの規定数維持)
     - [ ] Deployment (同形式のShipのデプロイ)
     - [ ] Fleet
-- [ ] ConfigMap
+- [x] ConfigMap
 - [ ] Live migration
 - [ ] RBAC / ServiceAccount
 - [ ] CRD

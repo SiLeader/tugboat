@@ -52,6 +52,7 @@ mod tests {
     use crate::endpoints::v1_coordination::openapi_coordination_v1;
     use crate::endpoints::v1_core::openapi_core_v1;
     use actix_web::{App, test};
+    use serde_json::Value;
 
     #[actix_web::test]
     async fn test_openapi_endpoints() {
@@ -83,6 +84,10 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
+        let body = test::read_body(resp).await;
+        let schema: Value = serde_json::from_slice(&body).unwrap();
+        assert!(schema["paths"]["/api/v1/configmaps"].is_object());
+        assert!(schema["paths"]["/api/v1/namespaces/{namespace}/configmaps"].is_object());
 
         // Test Coordination V1 Schema
         let req = test::TestRequest::get()

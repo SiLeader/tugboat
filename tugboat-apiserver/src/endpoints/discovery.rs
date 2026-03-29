@@ -209,3 +209,33 @@ pub(super) async fn handle_api_group_version_resources(
         resources: expand_resources(resources),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{App, test};
+    use serde_json::Value;
+
+    #[actix_web::test]
+    async fn core_discovery_includes_configmap_with_watch_verb() {
+        let app = test::init_service(App::new().service(handle_api_v1_resources)).await;
+
+        let req = test::TestRequest::get().uri("/api/v1").to_request();
+        let resp: Value = test::call_and_read_body_json(&app, req).await;
+        let resources = resp["resources"].as_array().unwrap();
+        let configmaps = resources
+            .iter()
+            .find(|resource| resource["name"] == "configmaps")
+            .unwrap();
+
+        assert_eq!(configmaps["kind"], "ConfigMap");
+        assert_eq!(configmaps["namespaced"], true);
+        assert!(
+            configmaps["verbs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|verb| verb == "watch")
+        );
+    }
+}
