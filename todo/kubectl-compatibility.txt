@@ -1,0 +1,31 @@
+Kubectl Compatibility
+=====================
+
+Goal
+Enable the use of `kubectl` to create, view, delete, and modify Tugboat resources.
+
+Current evidence
+- `tugboat-apiserver` implements `/api/v1` discovery and some resource endpoints.
+- `tugboat-cli` exists, but the user prefers `kubectl`.
+- `ListQuery` supports `label_selector` and `field_selector`.
+
+What to implement
+- Implement full API discovery compatibility: `/api`, `/api/v1`, `/apis`, and specific group versions (e.g., `/apis/apps/v1`).
+- Ensure all required metadata for `kubectl` is present in responses (e.g., `selfLink` if needed, `kind`, `apiVersion`).
+- Implement Table conversion for `kubectl get`: `kubectl` often requests `Table` objects via `Accept: application/json;as=Table;v=v1;g=meta.k8s.io` to display columns.
+- Support `PATCH` requests (Strategic Merge Patch and JSON Patch) as `kubectl edit` and `kubectl apply` rely on them.
+- Map Tugboat-specific resources to K8s-like names if necessary, or ensure they are discoverable as custom resources.
+- Verify authentication compatibility (if `kubectl` uses Bearer tokens or certificates, the apiserver should handle them).
+
+Implementation surfaces
+- `tugboat-apiserver/src/endpoints/discovery.rs`
+- `tugboat-apiserver/src/endpoints/resource_handlers.rs`
+- `tugboat-apiserver/src/endpoints/utils.rs`
+- `tugboat-resource-store/src/serializer/`
+
+Acceptance criteria
+- `kubectl get ships` (or equivalent) lists resources with correct columns.
+- `kubectl create -f ship.yaml` successfully creates a Ship.
+- `kubectl describe ship <name>` shows detailed information.
+- `kubectl edit ship <name>` allows interactive modification.
+- `kubectl delete ship <name>` removes the resource.

@@ -1,0 +1,32 @@
+Advanced CSI Storage Support
+============================
+
+Goal
+Fully support CSI-based Block and Filesystem storage, including integration with major providers.
+
+Current evidence
+- `tugboat-agent/src/csi.rs` and `tugboat-csi-operator` implement the core CSI pipeline.
+- Existing TODOs cover basic expansion and status reporting.
+- QEMU-based block and filesystem (virtio-9p) translation is present.
+
+What to implement
+- Verify and document compatibility with major CSI providers: Longhorn, OpenEBS, Ceph (RBD and CephFS), and TopoLVM.
+- Ensure that both Block (`VolumeMode: Block`) and Filesystem (`VolumeMode: Filesystem`) storage modes are fully supported and correctly translated to VM devices.
+- Implement TopoLVM-specific logic if needed (e.g., node-local storage discovery and scheduling integration).
+- Ensure high-performance I/O for Ceph and Longhorn (e.g., direct-path vs. host-mount).
+- Support standard StorageClass features: provisioning, binding, and cleanup.
+- Test and optimize the virtio-fs path (as an alternative to virtio-9p) for Filesystem storage.
+
+Implementation surfaces
+- `tugboat-csi-operator/src/`
+- `tugboat-agent/src/csi.rs`
+- `tugboat-controller-manager/src/pvc_provisioner.rs`
+- `tugboat-runtime/src/execute/vm/qemu/mod.rs`
+- `tugboat-resources/proto/core/v1/persistent_volume.proto`
+
+Acceptance criteria
+- Successful provisioning and attachment of volumes from Longhorn, OpenEBS, or Ceph.
+- Filesystem mode volumes are correctly mounted within the VM guest with appropriate permissions.
+- Block mode volumes are visible as raw block devices within the VM guest.
+- TopoLVM can be used to provision and mount node-local storage.
+- Performance meets expectations for standard VM-based workloads.

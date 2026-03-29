@@ -1,0 +1,33 @@
+CNI and Multi-node Networking
+===========================
+
+Goal
+Enable multi-node cluster networking with CNI and support for multiple network definitions.
+
+Current evidence
+- `tugboat-agent/src/cni.rs` and `tugboat-cni-operator` exist but seem focused on single-node or basic setup.
+- `tugboat-resources/proto/core/v1/network_class.proto` exists.
+- `tugboat-agent/src/reconciler/network.rs` implements some network setup logic.
+
+What to implement
+- Support standard CNI plugins like Flannel, Calico, or Cilium for multi-node pod-to-pod (Ship-to-Ship) connectivity.
+- Implement `NetworkClass` and `ClusterNetworkClass` reconcilers/controllers to manage network configuration.
+- Add support for multiple network attachments per Ship (e.g., a primary network plus additional data networks).
+- Implement a Node IPAM (IP Address Management) controller if needed for certain CNI plugins.
+- Coordinate network configuration between the scheduler (ensuring node has the required network) and the agent.
+- Ensure QEMU/VM guests can properly use multiple network interfaces (virtio-net).
+
+Implementation surfaces
+- `tugboat-cni-operator/src/`
+- `tugboat-agent/src/cni.rs`
+- `tugboat-agent/src/reconciler/network.rs`
+- `tugboat-controller-manager/src/`
+- `tugboat-resources/proto/core/v1/network_class.proto`
+- `tugboat-runtime/src/execute/vm/qemu/mod.rs`
+
+Acceptance criteria
+- At least one major CNI plugin (Flannel/Calico/Cilium) is functional across multiple nodes.
+- A `Ship` can be attached to 0 or more networks defined by `NetworkClass`.
+- Connectivity between Ships on different nodes is established and reliable.
+- `NetworkClass` and `ClusterNetworkClass` can be created and used to provision networks.
+- Multiple network interfaces are visible and functional within the VM guest.
