@@ -106,3 +106,11 @@ Key patterns:
 ### Configuration
 
 All components use TOML config files. Examples in `sample-configs/`. Default paths: `/etc/tugboat/{component}/config.toml`.
+
+### Editing guidance
+
+- Recommended: Keep file length to about 800 lines maximum. Very large files are harder to review and understand.
+- Recommended (not mandatory): Keep individual functions to approximately 100 lines or less when possible. Prefer splitting complex logic into smaller functions to improve readability and testability.
+
+Note: The function-size guideline is a recommendation, not a strict rule — apply it flexibly based on context.
+

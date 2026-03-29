@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod error;
+mod materialized_volume;
 mod network;
 mod ops;
 mod reconcile;
@@ -22,6 +23,7 @@ use crate::cni::CniWrapper;
 use crate::csi::{CsiDrivers, CsiWrapper};
 use crate::reconciler::reconcile::AppendStatus;
 use crate::runtime::RuntimeOperator;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::select;
 use tokio::signal::unix::SignalKind;
@@ -44,6 +46,7 @@ pub(crate) struct ShipReconciler {
     runtime_operator: RuntimeOperator,
     cni: CniWrapper,
     csi: CsiWrapper,
+    volume_data_dir: PathBuf,
     cancellation_token: CancellationToken,
 }
 
@@ -64,7 +67,8 @@ impl ShipReconciler {
             client,
             runtime_operator,
             cni: CniWrapper::new(cni),
-            csi: CsiWrapper::new(csi, csi_drivers, csi_publish_dir),
+            csi: CsiWrapper::new(csi, csi_drivers, csi_publish_dir.clone()),
+            volume_data_dir: PathBuf::from(csi_publish_dir),
             cancellation_token: CancellationToken::new(),
         }
     }

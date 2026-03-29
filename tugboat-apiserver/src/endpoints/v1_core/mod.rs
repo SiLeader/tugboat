@@ -17,6 +17,7 @@ use utoipa::OpenApi;
 use utoipa_actix_web::service_config::ServiceConfig;
 
 mod clusternetworkclass;
+mod configmap;
 mod namespace;
 mod networkclass;
 mod node;
@@ -34,6 +35,12 @@ mod storage_class;
         clusternetworkclass::handle_clusternetworkclass_delete,
         clusternetworkclass::handle_clusternetworkclass_list,
         clusternetworkclass::handle_clusternetworkclass_read,
+        configmap::handle_configmap_create,
+        configmap::handle_configmap_delete,
+        configmap::handle_configmap_list,
+        configmap::handle_configmap_list_all,
+        configmap::handle_configmap_read,
+        configmap::handle_configmap_replace,
         namespace::handle_namespace_create,
         namespace::handle_namespace_delete,
         namespace::handle_namespace_list,
@@ -90,6 +97,7 @@ mod storage_class;
         tugboat_resources::manifests::core::v1::Namespace,
         tugboat_resources::manifests::core::v1::PersistentVolume,
         tugboat_resources::manifests::core::v1::PersistentVolumeClaim,
+        tugboat_resources::manifests::core::v1::ConfigMap,
         tugboat_resources::manifests::core::v1::Node,
         tugboat_resources::manifests::core::v1::Secret,
         tugboat_resources::manifests::core::v1::StorageClass,
@@ -115,6 +123,16 @@ pub(super) fn register_clusternetworkclass(service: &mut ServiceConfig) {
         .service(clusternetworkclass::handle_clusternetworkclass_delete)
         .service(clusternetworkclass::handle_clusternetworkclass_list)
         .service(clusternetworkclass::handle_clusternetworkclass_read);
+}
+
+pub(super) fn register_configmap(service: &mut ServiceConfig) {
+    service
+        .service(configmap::handle_configmap_create)
+        .service(configmap::handle_configmap_delete)
+        .service(configmap::handle_configmap_list)
+        .service(configmap::handle_configmap_list_all)
+        .service(configmap::handle_configmap_read)
+        .service(configmap::handle_configmap_replace);
 }
 
 pub(super) fn register_namespace(service: &mut ServiceConfig) {
@@ -208,6 +226,7 @@ pub(super) fn register_shipclass(service: &mut ServiceConfig) {
 pub(super) fn register_v1_core(service: &mut ServiceConfig) {
     service
         .configure(register_clusternetworkclass)
+        .configure(register_configmap)
         .configure(register_namespace)
         .configure(register_node)
         .configure(register_persistent_volume)

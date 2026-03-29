@@ -19,59 +19,40 @@ use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, post, put};
-use base64::Engine;
-use base64::prelude::BASE64_STANDARD;
 use serde::Deserialize;
-use tugboat_resources::manifests::core::v1::Secret;
+use tugboat_resources::manifests::core::v1::ConfigMap;
 use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource created", body = Secret),
+            (status = 200, description = "Resource created", body = ConfigMap),
             (status = 409, description = "Resource already exists", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
         params(
             ("namespace" = String, Path, description = "Namespace of the resource"),
         ),
-        request_body = Secret
+        request_body = ConfigMap
     )]
-#[post("/api/v1/namespaces/{namespace}/secrets")]
-pub(super) async fn handle_secret_create(
+#[post("/api/v1/namespaces/{namespace}/configmaps")]
+pub(super) async fn handle_configmap_create(
     path: Path<NamespacedPathParams>,
-    json: Json<Secret>,
+    json: Json<ConfigMap>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Secret>, Box<StatusResponse>> {
-    let json = json.into_inner();
-    let mut data = json.data;
-    data.extend(
-        json.string_data
-            .into_iter()
-            .map(|(k, v)| (k, base64_encode(&v))),
-    );
-    let json = Secret {
-        data,
-        string_data: Default::default(),
-        ..json
-    };
-    resource_handlers::create_namespaced(json, path.into_inner().namespace, operator).await
-}
-
-fn base64_encode(s: &str) -> String {
-    let mut str = String::with_capacity(s.len());
-    BASE64_STANDARD.encode_string(s, &mut str);
-    str
+) -> Result<ModifyResponse<ConfigMap>, Box<StatusResponse>> {
+    resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
+        .await
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct SecretDeletePathParams {
+pub(super) struct ConfigMapDeletePathParams {
     namespace: String,
     name: String,
 }
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource deleted", body = Secret),
+            (status = 200, description = "Resource deleted", body = ConfigMap),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -80,19 +61,19 @@ pub(super) struct SecretDeletePathParams {
             ("name" = String, Path, description = "Name of the resource"),
         )
     )]
-#[delete("/api/v1/namespaces/{namespace}/secrets/{name}")]
-pub(super) async fn handle_secret_delete(
-    path: Path<SecretDeletePathParams>,
+#[delete("/api/v1/namespaces/{namespace}/configmaps/{name}")]
+pub(super) async fn handle_configmap_delete(
+    path: Path<ConfigMapDeletePathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Secret>, Box<StatusResponse>> {
+) -> Result<ReadResponse<ConfigMap>, Box<StatusResponse>> {
     let params = path.into_inner();
-    resource_handlers::delete_resource::<Secret>(&operator, Some(params.namespace), params.name)
+    resource_handlers::delete_resource::<ConfigMap>(&operator, Some(params.namespace), params.name)
         .await
 }
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "List of resources", body = [Secret]),
+            (status = 200, description = "List of resources", body = [ConfigMap]),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
         params(
@@ -103,13 +84,13 @@ pub(super) async fn handle_secret_delete(
             ("labelSelector" = Option<String>, Query, description = "Filter by label"),
         )
     )]
-#[get("/api/v1/namespaces/{namespace}/secrets")]
-pub(super) async fn handle_secret_list(
+#[get("/api/v1/namespaces/{namespace}/configmaps")]
+pub(super) async fn handle_configmap_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
 ) -> Result<HttpResponse, Box<StatusResponse>> {
-    resource_handlers::list_resources::<Secret>(
+    resource_handlers::list_resources::<ConfigMap>(
         &operator,
         query.into_inner(),
         Some(path.into_inner().namespace),
@@ -119,7 +100,7 @@ pub(super) async fn handle_secret_list(
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "List of resources", body = [Secret]),
+            (status = 200, description = "List of resources", body = [ConfigMap]),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
         params(
@@ -129,23 +110,23 @@ pub(super) async fn handle_secret_list(
             ("labelSelector" = Option<String>, Query, description = "Filter by label"),
         )
     )]
-#[get("/api/v1/secrets")]
-pub(super) async fn handle_secret_list_all(
+#[get("/api/v1/configmaps")]
+pub(super) async fn handle_configmap_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
 ) -> Result<HttpResponse, Box<StatusResponse>> {
-    resource_handlers::list_resources::<Secret>(&operator, query.into_inner(), None).await
+    resource_handlers::list_resources::<ConfigMap>(&operator, query.into_inner(), None).await
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct SecretReadPathParams {
+pub(super) struct ConfigMapReadPathParams {
     namespace: String,
     name: String,
 }
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource details", body = Secret),
+            (status = 200, description = "Resource details", body = ConfigMap),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -154,24 +135,24 @@ pub(super) struct SecretReadPathParams {
             ("name" = String, Path, description = "Name of the resource"),
         )
     )]
-#[get("/api/v1/namespaces/{namespace}/secrets/{name}")]
-pub(super) async fn handle_secret_read(
-    path: Path<SecretReadPathParams>,
+#[get("/api/v1/namespaces/{namespace}/configmaps/{name}")]
+pub(super) async fn handle_configmap_read(
+    path: Path<ConfigMapReadPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Secret>, Box<StatusResponse>> {
+) -> Result<ReadResponse<ConfigMap>, Box<StatusResponse>> {
     let path = path.into_inner();
-    resource_handlers::read_resource::<Secret>(&operator, Some(path.namespace), path.name).await
+    resource_handlers::read_resource::<ConfigMap>(&operator, Some(path.namespace), path.name).await
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct SecretReplacePathParams {
+pub(super) struct ConfigMapReplacePathParams {
     namespace: String,
     name: String,
 }
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource updated", body = Secret),
+            (status = 200, description = "Resource updated", body = ConfigMap),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -179,33 +160,20 @@ pub(super) struct SecretReplacePathParams {
             ("namespace" = String, Path, description = "Namespace of the resource"),
             ("name" = String, Path, description = "Name of the resource"),
         ),
-        request_body = Secret
+        request_body = ConfigMap
     )]
-#[put("/api/v1/namespaces/{namespace}/secrets/{name}")]
-pub(super) async fn handle_secret_replace(
-    path: Path<SecretReplacePathParams>,
-    replacement: Json<Secret>,
+#[put("/api/v1/namespaces/{namespace}/configmaps/{name}")]
+pub(super) async fn handle_configmap_replace(
+    path: Path<ConfigMapReplacePathParams>,
+    replacement: Json<ConfigMap>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Secret>, Box<StatusResponse>> {
+) -> Result<ModifyResponse<ConfigMap>, Box<StatusResponse>> {
     let path = path.into_inner();
-    let replacement = replacement.into_inner();
-    let mut data = replacement.data;
-    data.extend(
-        replacement
-            .string_data
-            .into_iter()
-            .map(|(k, v)| (k, base64_encode(&v))),
-    );
-    let replacement = Secret {
-        data,
-        string_data: Default::default(),
-        ..replacement
-    };
-    resource_handlers::replace_resource::<Secret>(
+    resource_handlers::replace_resource::<ConfigMap>(
         &operator,
         Some(path.namespace),
         path.name,
-        replacement,
+        replacement.into_inner(),
         ReplaceOptions {
             preserve_status: false,
             use_client_resource_version: true,

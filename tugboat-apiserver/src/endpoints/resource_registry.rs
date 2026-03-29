@@ -17,8 +17,8 @@ use crate::endpoints::v1_core;
 use tugboat_resources::StaticResource;
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
-    ClusterNetworkClass, Namespace, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim,
-    Secret, Ship, ShipClass, StorageClass,
+    ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
+    PersistentVolumeClaim, Secret, Ship, ShipClass, StorageClass,
 };
 use utoipa_actix_web::service_config::ServiceConfig;
 
@@ -155,6 +155,12 @@ const SECRET_OPS: ResourceOperations = ResourceOperations {
     ..NAMESPACED_DEFAULT_OPS
 };
 
+const CONFIGMAP_OPS: ResourceOperations = ResourceOperations {
+    update: true,
+    delete: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
 const STORAGE_CLASS_OPS: ResourceOperations = ResourceOperations {
     delete: true,
     ..CLUSTER_DEFAULT_OPS
@@ -178,6 +184,7 @@ pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
             CLUSTER_DEFAULT_OPS,
             v1_core::register_clusternetworkclass,
         ),
+        ResourceApiDescriptor::new::<ConfigMap>(CONFIGMAP_OPS, v1_core::register_configmap),
         ResourceApiDescriptor::new::<Namespace>(CLUSTER_DEFAULT_OPS, v1_core::register_namespace),
         ResourceApiDescriptor::new::<Node>(NODE_OPS, v1_core::register_node),
         ResourceApiDescriptor::new::<PersistentVolume>(

@@ -104,11 +104,22 @@ metadata:
 spec:
   image: example.com/vm-images/ubuntu:24.04
   shipClass: lightweight
+  volumes:
+    - name: data-disk
+      persistentVolumeClaim:
+        claimName: data-disk
+    - name: app-config
+      configMap:
+        name: app-config
+    - name: app-secret
+      secret:
+        secretName: app-secret
 ```
 
 ### CSI support
 
-CSI-backed volumes are referenced through `volumeClaimRef`.
+CSI-backed volumes can be referenced through `spec.volumes[].persistentVolumeClaim`. The
+legacy `volumeClaimRef` field is still accepted for backward compatibility.
 
 Current node-side support matrix:
 
@@ -122,7 +133,9 @@ Current node-side support matrix:
 - [x] drivers that require controller publish context
 - [x] `NodeGetVolumeStats` / CSI volume health + usage surfacing on PV/PVC conditions
 
-`Filesystem` volumes are exposed to the guest as a 9p share. The mount tag is the referenced `volumeClaimRef[].name`.
+`Filesystem` volumes are exposed to the guest as a 9p share. The mount tag is the Ship
+volume name, so both CSI `Filesystem` claims and projected `ConfigMap` / `Secret`
+volumes are passed to the guest through the same mechanism.
 
 Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling, live `NodeExpandVolume` (without Ship recreate) when the driver advertises it, and `NodeGetVolumeStats`-backed PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
 
@@ -151,7 +164,7 @@ Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClai
     - [ ] ReplicaSet (Maintaining the prescribed number of ships)
     - [ ] Deployment (Deploying same configuration Ships)
     - [ ] Fleet
-- [ ] ConfigMap
+- [x] ConfigMap
 - [ ] Live migration
 - [ ] RBAC / ServiceAccount
 - [ ] CRD

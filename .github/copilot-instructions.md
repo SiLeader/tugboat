@@ -55,3 +55,11 @@ As a final verification before merging or releasing, run the following commands 
   - Namespaced: `/v1/namespaces/{namespace}/{plural}`, `/v1/namespaces/{namespace}/{plural}/{name}`, plus `/v1/{plural}` for list-all where implemented.
 - Reuse endpoint helper macros in `tugboat-apiserver/src/endpoints/utils.rs` for create handlers: `extract_object_meta!`, `check_namespace_absent!`, `create_object!`.
 - Component configs are TOML; default CLI config paths are `/etc/tugboat/{apiserver|agent|runtime}/config.toml`, with examples in `sample-configs/`.
+
+### Editing guidance
+
+- Recommended: Keep file length to about 800 lines maximum. Very large files are harder to review and understand.
+- Recommended (not mandatory): Keep individual functions to approximately 100 lines or less when possible. Prefer splitting complex logic into smaller functions to improve readability and testability.
+
+Note: The function-size guideline is a recommendation, not a strict rule — apply it flexibly based on context.
+

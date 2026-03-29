@@ -17,25 +17,22 @@ use crate::csi::{
 };
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
+use crate::reconciler::ops::add_helpers::{
+    apply_persistent_volume_claim_csi_observation, apply_persistent_volume_csi_observation,
+    validate_recovered_published_volumes, vm_volume_config,
+};
 use crate::reconciler::reconcile::AppendStatus;
-use crate::reconciler::volume::VolumeInfo;
+use crate::reconciler::volume::{PersistentVolumeClaimVolumeInfo, VolumeInfo};
 use crate::runtime::RuntimeCreateRequest;
 use std::collections::HashMap;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
-use tugboat_csi_operator::{
-    NodeVolumeStats, VolumeHealthCondition, VolumeUsageStats, VolumeUsageUnit,
-};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimCondition,
-    PersistentVolumeClaimStatus, PersistentVolumeCondition, Ship, ShipCondition,
+    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship, ShipCondition,
 };
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
-
-const CSI_VOLUME_STATS_CONDITION: &str = "CsiVolumeStats";
-const CSI_VOLUME_HEALTH_CONDITION: &str = "CsiVolumeHealth";
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_added(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -113,11 +110,14 @@ impl ShipReconciler {
         let stale_published_volumes = self.csi.load_published_volumes(ship_id)?;
         if !stale_published_volumes.is_empty() {
             info!("Cleaning up stale CSI publish state for ship '{}'", ship_id);
-            let controller_publish_secrets = self.controller_publish_secret_map(&volumes).await?;
+            let controller_publish_secrets = self
+                .controller_publish_secret_map(&namespace, &volumes, &stale_published_volumes)
+                .await?;
             self.cleanup_published_volumes(&stale_published_volumes, &controller_publish_secrets)
                 .await?;
             self.csi.cleanup_mount_namespace(ship_id)?;
         }
+        self.cleanup_materialized_volumes(ship_id)?;
 
         {
             debug!("Updating Ship status");
@@ -182,97 +182,117 @@ impl ShipReconciler {
         let mut published_volumes = Vec::new();
         let mut vm_volumes = Vec::new();
         let mut controller_publish_secrets = HashMap::new();
-        if !volumes.is_empty() {
+        if volumes
+            .iter()
+            .any(|volume| volume.persistent_volume_claim().is_some())
+        {
             self.csi.ensure_mount_namespace(ship_id)?;
         }
         for volume in volumes {
-            let (_, read_only) = effective_publish_settings(
-                &volume.claim.access_modes,
-                &volume.volume.access_modes,
-                volume.source.read_only,
-            )?;
-            let secrets = match self.resolve_csi_secrets(volume).await {
-                Ok(secrets) => secrets,
-                Err(err) => {
-                    self.cleanup_after_volume_setup_error(
+            if let Some(volume) = volume.persistent_volume_claim() {
+                let (_, read_only) = effective_publish_settings(
+                    &volume.claim.access_modes,
+                    &volume.volume.access_modes,
+                    volume.source.read_only,
+                )?;
+                let secrets = match self.resolve_csi_secrets(volume).await {
+                    Ok(secrets) => secrets,
+                    Err(err) => {
+                        self.cleanup_after_volume_setup_error(
+                            ship_id,
+                            &published_volumes,
+                            &controller_publish_secrets,
+                            "secret resolution error",
+                        )
+                        .await;
+                        return Err(err);
+                    }
+                };
+                match self
+                    .csi
+                    .publish(
+                        &self.node_name,
                         ship_id,
-                        &published_volumes,
-                        &controller_publish_secrets,
-                        "secret resolution error",
+                        &volume.name,
+                        &volume.volume,
+                        &volume.claim,
+                        &volume.source,
+                        &secrets,
                     )
-                    .await;
-                    return Err(err);
-                }
-            };
-            match self
-                .csi
-                .publish(
-                    &self.node_name,
-                    ship_id,
-                    &volume.claim_name,
-                    &volume.volume,
-                    &volume.claim,
-                    &volume.source,
-                    &secrets,
-                )
-                .await
-            {
-                Ok(published) => {
-                    controller_publish_secrets.insert(
-                        volume.claim_name.clone(),
-                        secrets.controller_publish.clone(),
-                    );
-                    let mut cleanup_targets = published_volumes.clone();
-                    cleanup_targets.push(published.clone());
-                    if let Err(err) = self
-                        .ensure_node_expansion(namespace, volume, &published, &secrets)
-                        .await
-                    {
+                    .await
+                {
+                    Ok(published) => {
+                        controller_publish_secrets
+                            .insert(volume.name.clone(), secrets.controller_publish.clone());
+                        let mut cleanup_targets = published_volumes.clone();
+                        cleanup_targets.push(published.clone());
+                        if let Err(err) = self
+                            .ensure_node_expansion(namespace, volume, &published, &secrets)
+                            .await
+                        {
+                            self.cleanup_after_volume_setup_error(
+                                ship_id,
+                                &cleanup_targets,
+                                &controller_publish_secrets,
+                                "node expansion error",
+                            )
+                            .await;
+                            return Err(err);
+                        }
+                        if let Err(err) = self
+                            .refresh_volume_stats(namespace, volume, &published)
+                            .await
+                        {
+                            self.cleanup_after_volume_setup_error(
+                                ship_id,
+                                &cleanup_targets,
+                                &controller_publish_secrets,
+                                "volume stats refresh error",
+                            )
+                            .await;
+                            return Err(err);
+                        }
+                        if let Err(err) = self.mark_volume_attached(&volume.volume_name, true).await
+                        {
+                            self.cleanup_after_volume_setup_error(
+                                ship_id,
+                                &cleanup_targets,
+                                &controller_publish_secrets,
+                                "attachment status error",
+                            )
+                            .await;
+                            return Err(err);
+                        }
+                        vm_volumes.push(vm_volume_config(volume, &published, read_only));
+                        published_volumes.push(published);
+                    }
+                    Err(err) => {
                         self.cleanup_after_volume_setup_error(
                             ship_id,
-                            &cleanup_targets,
+                            &published_volumes,
                             &controller_publish_secrets,
-                            "node expansion error",
+                            "publish error",
+                        )
+                        .await;
+                        return Err(err.into());
+                    }
+                }
+            } else if let Some(volume) = volume.materialized() {
+                match self.materialize_volume(ship_id, volume) {
+                    Ok(path) => {
+                        vm_volumes.push(VmVolumeConfig::filesystem(path, volume.name.clone(), true))
+                    }
+                    Err(err) => {
+                        self.cleanup_after_volume_setup_error(
+                            ship_id,
+                            &published_volumes,
+                            &controller_publish_secrets,
+                            "materialization error",
                         )
                         .await;
                         return Err(err);
                     }
-                    if let Err(err) = self
-                        .refresh_volume_stats(namespace, volume, &published)
-                        .await
-                    {
-                        self.cleanup_after_volume_setup_error(
-                            ship_id,
-                            &cleanup_targets,
-                            &controller_publish_secrets,
-                            "volume stats refresh error",
-                        )
-                        .await;
-                        return Err(err);
-                    }
-                    if let Err(err) = self.mark_volume_attached(&volume.volume_name, true).await {
-                        self.cleanup_after_volume_setup_error(
-                            ship_id,
-                            &cleanup_targets,
-                            &controller_publish_secrets,
-                            "attachment status error",
-                        )
-                        .await;
-                        return Err(err);
-                    }
-                    vm_volumes.push(vm_volume_config(volume, &published, read_only));
-                    published_volumes.push(published);
-                }
-                Err(err) => {
-                    self.cleanup_after_volume_setup_error(
-                        ship_id,
-                        &published_volumes,
-                        &controller_publish_secrets,
-                        "publish error",
-                    )
-                    .await;
-                    return Err(err.into());
-                }
+                };
             }
         }
         Ok((published_volumes, vm_volumes))
@@ -291,6 +311,9 @@ impl ShipReconciler {
         {
             error!("Failed to clean up published volumes after {context}: {cleanup_err}");
         }
+        if let Err(cleanup_err) = self.cleanup_materialized_volumes(ship_id) {
+            error!("Failed to clean up materialized volumes after {context}: {cleanup_err}");
+        }
         if let Err(cleanup_err) = self.csi.cleanup_mount_namespace(ship_id) {
             error!("Failed to clean up mount namespace after {context}: {cleanup_err}");
         }
@@ -303,6 +326,9 @@ impl ShipReconciler {
     ) -> Result<Vec<PublishedVolume>, ReconcileError> {
         let mut planned = Vec::with_capacity(volumes.len());
         for volume in volumes {
+            let Some(volume) = volume.persistent_volume_claim() else {
+                continue;
+            };
             let access_type = PublishedAccessType::from(access_type_from_volume_mode(
                 volume.volume.volume_mode.as_deref(),
             )?);
@@ -312,7 +338,7 @@ impl ShipReconciler {
                 .await?;
             planned.push(self.csi.plan_published_volume(
                 ship_id,
-                &volume.claim_name,
+                &volume.name,
                 &volume.source,
                 access_type,
                 requires_staging,
@@ -383,7 +409,25 @@ impl ShipReconciler {
     ) -> Result<(), ReconcileError> {
         let mut runtime_published_volumes =
             self.runtime_operator.delete(ship_id.to_string()).await?;
-        let controller_publish_secrets = self.controller_publish_secret_map(volumes).await?;
+
+        let ship = self.ship_all_api.get(ship_id).await?;
+        let namespace = ship
+            .as_ref()
+            .and_then(|s| s.object_meta().as_ref().and_then(|m| m.namespace.as_ref()))
+            .map(|s| s.as_str())
+            .unwrap_or("default");
+
+        let controller_publish_secrets = self
+            .controller_publish_secret_map(
+                namespace,
+                volumes,
+                if runtime_published_volumes.is_empty() {
+                    fallback_published_volumes
+                } else {
+                    &runtime_published_volumes
+                },
+            )
+            .await?;
         if runtime_published_volumes.is_empty() {
             runtime_published_volumes = self.csi.load_published_volumes(ship_id)?;
         }
@@ -394,26 +438,61 @@ impl ShipReconciler {
             self.cleanup_published_volumes(&runtime_published_volumes, &controller_publish_secrets)
                 .await?;
         }
+        self.cleanup_materialized_volumes(ship_id)?;
         self.csi.cleanup_mount_namespace(ship_id)?;
         Ok(())
     }
 
     pub(super) async fn controller_publish_secret_map(
         &self,
+        namespace: &str,
         volumes: &[VolumeInfo],
+        stale_volumes: &[PublishedVolume],
     ) -> Result<HashMap<String, HashMap<String, String>>, ReconcileError> {
-        let mut secrets = HashMap::with_capacity(volumes.len());
+        let mut secrets = HashMap::with_capacity(volumes.len() + stale_volumes.len());
         for volume in volumes {
+            let Some(volume) = volume.persistent_volume_claim() else {
+                continue;
+            };
             let resolved = self.resolve_csi_secrets(volume).await?;
-            secrets.insert(volume.claim_name.clone(), resolved.controller_publish);
+            secrets.insert(volume.name.clone(), resolved.controller_publish);
         }
+
+        for published in stale_volumes {
+            if secrets.contains_key(&published.claim_name) {
+                continue;
+            }
+
+            let volume_info = match self
+                .load_persistent_volume_claim(
+                    namespace,
+                    &Api::namespaced(self.client.clone(), namespace),
+                    &Api::all(self.client.clone()),
+                    published.claim_name.clone(),
+                    published.claim_name.clone(),
+                )
+                .await
+            {
+                Ok(info) => info,
+                Err(err) => {
+                    warn!(
+                        "Failed to resolve stale volume '{}' secrets in namespace '{}': {}",
+                        published.claim_name, namespace, err
+                    );
+                    continue;
+                }
+            };
+            let resolved = self.resolve_csi_secrets(&volume_info).await?;
+            secrets.insert(published.claim_name.clone(), resolved.controller_publish);
+        }
+
         Ok(secrets)
     }
 
     pub(super) async fn ensure_node_expansion(
         &self,
         namespace: &str,
-        volume: &VolumeInfo,
+        volume: &PersistentVolumeClaimVolumeInfo,
         published: &PublishedVolume,
         secrets: &crate::csi::ResolvedCsiSecrets,
     ) -> Result<(), ReconcileError> {
@@ -465,7 +544,7 @@ impl ShipReconciler {
     pub(super) async fn refresh_volume_stats(
         &self,
         namespace: &str,
-        volume: &VolumeInfo,
+        volume: &PersistentVolumeClaimVolumeInfo,
         published: &PublishedVolume,
     ) -> Result<(), ReconcileError> {
         let Some(stats) = self.csi.volume_stats(published).await? else {
@@ -582,432 +661,5 @@ impl ShipReconciler {
             api.replace(claim_name, claim).await?;
         }
         Ok(())
-    }
-}
-
-fn vm_volume_config(
-    volume: &VolumeInfo,
-    published: &PublishedVolume,
-    read_only: bool,
-) -> VmVolumeConfig {
-    match published.access_type {
-        PublishedAccessType::Block => {
-            VmVolumeConfig::block(published.target_path.clone(), "raw", read_only)
-        }
-        PublishedAccessType::Filesystem => VmVolumeConfig::filesystem(
-            published.target_path.clone(),
-            volume.claim_name.clone(),
-            read_only,
-        ),
-    }
-}
-
-fn apply_persistent_volume_csi_observation(
-    conditions: &mut Vec<PersistentVolumeCondition>,
-    stats: &NodeVolumeStats,
-) -> bool {
-    let mut changed = false;
-    if let Some(message) = volume_usage_message(&stats.usage) {
-        changed |=
-            upsert_persistent_volume_condition(conditions, CSI_VOLUME_STATS_CONDITION, message);
-    } else {
-        changed |= remove_persistent_volume_condition(conditions, CSI_VOLUME_STATS_CONDITION);
-    }
-    if let Some(condition) = stats.condition.as_ref() {
-        changed |= upsert_persistent_volume_condition(
-            conditions,
-            CSI_VOLUME_HEALTH_CONDITION,
-            volume_health_message(condition),
-        );
-    } else {
-        changed |= remove_persistent_volume_condition(conditions, CSI_VOLUME_HEALTH_CONDITION);
-    }
-    changed
-}
-
-fn apply_persistent_volume_claim_csi_observation(
-    conditions: &mut Vec<PersistentVolumeClaimCondition>,
-    stats: &NodeVolumeStats,
-) -> bool {
-    let mut changed = false;
-    if let Some(message) = volume_usage_message(&stats.usage) {
-        changed |= upsert_persistent_volume_claim_condition(
-            conditions,
-            CSI_VOLUME_STATS_CONDITION,
-            message,
-        );
-    } else {
-        changed |= remove_persistent_volume_claim_condition(conditions, CSI_VOLUME_STATS_CONDITION);
-    }
-    if let Some(condition) = stats.condition.as_ref() {
-        changed |= upsert_persistent_volume_claim_condition(
-            conditions,
-            CSI_VOLUME_HEALTH_CONDITION,
-            volume_health_message(condition),
-        );
-    } else {
-        changed |=
-            remove_persistent_volume_claim_condition(conditions, CSI_VOLUME_HEALTH_CONDITION);
-    }
-    changed
-}
-
-fn volume_usage_message(usage: &[VolumeUsageStats]) -> Option<String> {
-    if usage.is_empty() {
-        return None;
-    }
-
-    Some(format!(
-        "CSI driver reported volume usage: {}",
-        usage
-            .iter()
-            .map(volume_usage_summary)
-            .collect::<Vec<_>>()
-            .join("; ")
-    ))
-}
-
-fn volume_usage_summary(usage: &VolumeUsageStats) -> String {
-    let unit = match usage.unit {
-        VolumeUsageUnit::Bytes => "bytes",
-        VolumeUsageUnit::Inodes => "inodes",
-        VolumeUsageUnit::Unknown => "units",
-    };
-    let mut parts = vec![format!("total={}", usage.total)];
-    if let Some(used) = usage.used {
-        parts.push(format!("used={used}"));
-    }
-    if let Some(available) = usage.available {
-        parts.push(format!("available={available}"));
-    }
-    format!("{unit}({})", parts.join(", "))
-}
-
-fn volume_health_message(condition: &VolumeHealthCondition) -> String {
-    match (condition.abnormal, condition.message.trim()) {
-        (true, "") => "CSI driver reported an abnormal volume condition.".to_string(),
-        (true, message) => {
-            format!("CSI driver reported an abnormal volume condition: {message}")
-        }
-        (false, "") => "CSI driver reports the volume is healthy.".to_string(),
-        (false, message) => format!("CSI driver reports the volume is healthy: {message}"),
-    }
-}
-
-fn upsert_persistent_volume_condition(
-    conditions: &mut Vec<PersistentVolumeCondition>,
-    status: &str,
-    message: String,
-) -> bool {
-    upsert_condition(
-        conditions,
-        status,
-        message,
-        |condition| &condition.status,
-        |condition| &mut condition.message,
-        |condition| &mut condition.timestamp,
-    )
-}
-
-fn remove_persistent_volume_condition(
-    conditions: &mut Vec<PersistentVolumeCondition>,
-    status: &str,
-) -> bool {
-    remove_condition(conditions, status, |condition| &condition.status)
-}
-
-fn upsert_persistent_volume_claim_condition(
-    conditions: &mut Vec<PersistentVolumeClaimCondition>,
-    status: &str,
-    message: String,
-) -> bool {
-    upsert_condition(
-        conditions,
-        status,
-        message,
-        |condition| &condition.status,
-        |condition| &mut condition.message,
-        |condition| &mut condition.timestamp,
-    )
-}
-
-fn remove_persistent_volume_claim_condition(
-    conditions: &mut Vec<PersistentVolumeClaimCondition>,
-    status: &str,
-) -> bool {
-    remove_condition(conditions, status, |condition| &condition.status)
-}
-
-fn upsert_condition<T, FStatus, FMessage, FTimestamp>(
-    conditions: &mut Vec<T>,
-    status: &str,
-    message: String,
-    status_ref: FStatus,
-    message_ref: FMessage,
-    timestamp_ref: FTimestamp,
-) -> bool
-where
-    T: Default + ConditionStatus,
-    FStatus: Fn(&T) -> &String,
-    FMessage: Fn(&mut T) -> &mut String,
-    FTimestamp: Fn(&mut T) -> &mut Option<Time>,
-{
-    if let Some(existing) = conditions
-        .iter_mut()
-        .find(|condition| status_ref(condition) == status)
-    {
-        let existing_message = message_ref(existing);
-        if existing_message.as_str() == message.as_str() {
-            return false;
-        }
-        *existing_message = message;
-        *timestamp_ref(existing) = Some(Time::now());
-        return true;
-    }
-
-    let mut condition = T::default();
-    *condition.status_mut() = status.to_string();
-    *message_ref(&mut condition) = message;
-    *timestamp_ref(&mut condition) = Some(Time::now());
-    conditions.push(condition);
-    true
-}
-
-fn remove_condition<T, FStatus>(conditions: &mut Vec<T>, status: &str, status_ref: FStatus) -> bool
-where
-    FStatus: Fn(&T) -> &String,
-{
-    let original_len = conditions.len();
-    conditions.retain(|condition| status_ref(condition) != status);
-    original_len != conditions.len()
-}
-
-trait ConditionStatus {
-    fn status_mut(&mut self) -> &mut String;
-}
-
-impl ConditionStatus for PersistentVolumeCondition {
-    fn status_mut(&mut self) -> &mut String {
-        &mut self.status
-    }
-}
-
-impl ConditionStatus for PersistentVolumeClaimCondition {
-    fn status_mut(&mut self) -> &mut String {
-        &mut self.status
-    }
-}
-
-fn validate_recovered_published_volumes(
-    ship_id: &str,
-    mut persisted: Vec<PublishedVolume>,
-    planned: &[PublishedVolume],
-) -> Result<Vec<PublishedVolume>, ReconcileError> {
-    if persisted.is_empty() {
-        if planned.is_empty() {
-            return Ok(persisted);
-        }
-        return Err(ReconcileError::MissingRecoveredPublishedVolumeState(
-            ship_id.to_string(),
-        ));
-    }
-
-    persisted.sort_by(|left, right| left.target_path.cmp(&right.target_path));
-    let mut planned_sorted = planned.to_vec();
-    planned_sorted.sort_by(|left, right| left.target_path.cmp(&right.target_path));
-
-    if persisted != planned_sorted {
-        return Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(
-            ship_id.to_string(),
-        ));
-    }
-
-    Ok(persisted)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        CSI_VOLUME_HEALTH_CONDITION, CSI_VOLUME_STATS_CONDITION,
-        apply_persistent_volume_claim_csi_observation, apply_persistent_volume_csi_observation,
-        validate_recovered_published_volumes,
-    };
-    use crate::csi::{PublishedAccessType, PublishedVolume};
-    use crate::reconciler::error::ReconcileError;
-    use tugboat_csi_operator::{
-        NodeVolumeStats, VolumeHealthCondition, VolumeUsageStats, VolumeUsageUnit,
-    };
-    use tugboat_resources::manifests::core::v1::{
-        PersistentVolumeClaimCondition, PersistentVolumeCondition,
-    };
-    use tugboat_resources::manifests::meta::v1::Time;
-
-    fn published_volume(target_path: &str) -> PublishedVolume {
-        PublishedVolume {
-            claim_name: "data".to_string(),
-            driver: "example.csi".to_string(),
-            volume_id: format!("volume-{target_path}"),
-            target_path: target_path.to_string(),
-            access_type: PublishedAccessType::Filesystem,
-            mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
-            staging_target_path: Some(format!("{target_path}.staging")),
-            controller_published: false,
-        }
-    }
-
-    #[test]
-    fn csi_observation_upserts_usage_and_health_conditions() {
-        let stats = NodeVolumeStats {
-            usage: vec![VolumeUsageStats {
-                available: Some(3072),
-                total: 4096,
-                used: Some(1024),
-                unit: VolumeUsageUnit::Bytes,
-            }],
-            condition: Some(VolumeHealthCondition {
-                abnormal: true,
-                message: "filesystem is read-only".to_string(),
-            }),
-        };
-        let mut conditions = vec![PersistentVolumeCondition {
-            status: "Existing".to_string(),
-            message: "keep me".to_string(),
-            timestamp: None,
-        }];
-
-        let changed = apply_persistent_volume_csi_observation(&mut conditions, &stats);
-
-        assert!(changed);
-        assert_eq!(conditions.len(), 3);
-        assert!(conditions.iter().any(|condition| {
-            condition.status == CSI_VOLUME_STATS_CONDITION
-                && condition
-                    .message
-                    .contains("CSI driver reported volume usage: bytes(total=4096, used=1024, available=3072)")
-                && condition.timestamp.is_some()
-        }));
-        assert!(conditions.iter().any(|condition| {
-            condition.status == CSI_VOLUME_HEALTH_CONDITION
-                && condition.message.contains(
-                    "CSI driver reported an abnormal volume condition: filesystem is read-only",
-                )
-                && condition.timestamp.is_some()
-        }));
-        assert!(
-            conditions
-                .iter()
-                .any(|condition| condition.status == "Existing" && condition.message == "keep me")
-        );
-    }
-
-    #[test]
-    fn csi_observation_removes_stale_claim_conditions_when_stats_disappear() {
-        let stats = NodeVolumeStats {
-            usage: Vec::new(),
-            condition: None,
-        };
-        let mut conditions = vec![
-            PersistentVolumeClaimCondition {
-                status: CSI_VOLUME_STATS_CONDITION.to_string(),
-                message: "old stats".to_string(),
-                timestamp: None,
-            },
-            PersistentVolumeClaimCondition {
-                status: CSI_VOLUME_HEALTH_CONDITION.to_string(),
-                message: "old health".to_string(),
-                timestamp: None,
-            },
-            PersistentVolumeClaimCondition {
-                status: "Keep".to_string(),
-                message: "keep me".to_string(),
-                timestamp: None,
-            },
-        ];
-
-        let changed = apply_persistent_volume_claim_csi_observation(&mut conditions, &stats);
-
-        assert!(changed);
-        assert_eq!(conditions.len(), 1);
-        assert_eq!(conditions[0].status, "Keep");
-        assert_eq!(conditions[0].message, "keep me");
-    }
-
-    #[test]
-    fn csi_observation_does_not_update_condition_when_message_is_unchanged() {
-        let stats = NodeVolumeStats {
-            usage: vec![VolumeUsageStats {
-                available: Some(3072),
-                total: 4096,
-                used: Some(1024),
-                unit: VolumeUsageUnit::Bytes,
-            }],
-            condition: None,
-        };
-        let timestamp = Some(Time::now());
-        let mut conditions = vec![PersistentVolumeCondition {
-            status: CSI_VOLUME_STATS_CONDITION.to_string(),
-            message:
-                "CSI driver reported volume usage: bytes(total=4096, used=1024, available=3072)"
-                    .to_string(),
-            timestamp,
-        }];
-
-        let changed = apply_persistent_volume_csi_observation(&mut conditions, &stats);
-
-        assert!(!changed);
-        assert_eq!(conditions.len(), 1);
-        assert_eq!(
-            conditions[0].message,
-            "CSI driver reported volume usage: bytes(total=4096, used=1024, available=3072)"
-        );
-        assert_eq!(conditions[0].timestamp, timestamp);
-    }
-
-    #[test]
-    fn recovered_volumes_require_persisted_state_when_volumes_exist() {
-        let planned = vec![published_volume(
-            "/var/lib/tugboat-agent/csi/ship-uid/data.fs",
-        )];
-
-        let err = validate_recovered_published_volumes("ship-uid", Vec::new(), &planned)
-            .expect_err("missing persisted state should fail recovery");
-
-        assert!(matches!(
-            err,
-            ReconcileError::MissingRecoveredPublishedVolumeState(ship)
-            if ship == "ship-uid"
-        ));
-    }
-
-    #[test]
-    fn recovered_volumes_reject_state_that_differs_from_plan() {
-        let persisted = vec![published_volume(
-            "/var/lib/tugboat-agent/csi/ship-uid/data.fs",
-        )];
-        let planned = vec![published_volume(
-            "/var/lib/tugboat-agent/csi/ship-uid/other.fs",
-        )];
-
-        let err = validate_recovered_published_volumes("ship-uid", persisted, &planned)
-            .expect_err("mismatched persisted state should fail recovery");
-
-        assert!(matches!(
-            err,
-            ReconcileError::RecoveredPublishedVolumeStateMismatch(ship)
-            if ship == "ship-uid"
-        ));
-    }
-
-    #[test]
-    fn recovered_volumes_accept_matching_persisted_state() {
-        let persisted = vec![published_volume(
-            "/var/lib/tugboat-agent/csi/ship-uid/data.fs",
-        )];
-
-        let recovered =
-            validate_recovered_published_volumes("ship-uid", persisted.clone(), &persisted)
-                .expect("matching persisted state should be accepted");
-
-        assert_eq!(recovered, persisted);
     }
 }

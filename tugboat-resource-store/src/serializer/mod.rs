@@ -18,8 +18,8 @@ use crate::error::Error;
 use crate::serializer::protobuf::ProtobufSerializer;
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
-    ClusterNetworkClass, Namespace, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim,
-    Secret, Ship, ShipClass, StorageClass,
+    ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
+    PersistentVolumeClaim, Secret, Ship, ShipClass, StorageClass,
 };
 use tugboat_resources::manifests::meta::v1::TypeMeta;
 use tugboat_resources::{Resource, StaticResource};
@@ -67,6 +67,7 @@ macro_rules! protobuf_serializable {
 }
 
 protobuf_serializable!(ClusterNetworkClass);
+protobuf_serializable!(ConfigMap);
 protobuf_serializable!(Lease);
 protobuf_serializable!(Namespace);
 protobuf_serializable!(NetworkClass);
@@ -77,3 +78,33 @@ protobuf_serializable!(StorageClass);
 protobuf_serializable!(Secret);
 protobuf_serializable!(PersistentVolume);
 protobuf_serializable!(PersistentVolumeClaim);
+
+#[cfg(test)]
+mod tests {
+    use super::Serializable;
+    use std::collections::HashMap;
+    use tugboat_resources::manifests::core::v1::ConfigMap;
+    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+
+    #[test]
+    fn can_round_trip_configmap() {
+        let config_map = ConfigMap {
+            object_meta: Some(ObjectMeta {
+                name: Some("settings".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            data: HashMap::from([("key".to_string(), "value".to_string())]),
+            ..Default::default()
+        };
+
+        let encoded = config_map.serialize().unwrap();
+        let decoded = ConfigMap::deserialize(&encoded).unwrap();
+
+        assert_eq!(
+            decoded.object_meta.unwrap().name.as_deref(),
+            Some("settings")
+        );
+        assert_eq!(decoded.data.get("key").map(String::as_str), Some("value"));
+    }
+}

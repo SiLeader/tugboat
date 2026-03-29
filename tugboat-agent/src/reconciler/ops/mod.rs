@@ -13,9 +13,12 @@
 // limitations under the License.
 
 pub(crate) mod add;
+pub(crate) mod add_helpers;
 pub(crate) mod delete;
 pub(crate) mod modify;
 
+use crate::reconciler::error::ReconcileError;
+use crate::reconciler::volume::normalized_ship_volumes;
 use serde::Serialize;
 use tugboat_resources::manifests::core::v1::ShipSpec;
 
@@ -47,14 +50,17 @@ pub(super) fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Er
 }
 
 /// Fingerprint covering only the set of volume claim references.
-pub(super) fn volume_claims_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Error> {
-    sha256_fingerprint(&spec.volume_claim_ref)
+pub(super) fn volume_claims_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
+    let normalized = normalized_ship_volumes(spec)?;
+    Ok(sha256_fingerprint(&normalized)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tugboat_resources::manifests::core::v1::{ShipSpec, Toleration};
+    use tugboat_resources::manifests::core::v1::{
+        ConfigMapVolumeSource, ShipSpec, ShipVolume, Toleration,
+    };
 
     fn base_spec() -> ShipSpec {
         ShipSpec {
@@ -66,6 +72,7 @@ mod tests {
             tolerations: vec![],
             scheduler_name: None,
             volume_claim_ref: vec![],
+            volumes: vec![],
         }
     }
 
@@ -121,6 +128,26 @@ mod tests {
             volume_claims_fingerprint(&b).unwrap()
         );
         // spec fingerprint should stay the same
+        assert_eq!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
+    }
+
+    #[test]
+    fn named_volume_change_alters_volume_fingerprint_only() {
+        let a = base_spec();
+        let mut b = base_spec();
+        b.volumes.push(ShipVolume {
+            name: "config".to_string(),
+            config_map: Some(ConfigMapVolumeSource {
+                name: "app-config".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        assert_ne!(
+            volume_claims_fingerprint(&a).unwrap(),
+            volume_claims_fingerprint(&b).unwrap()
+        );
         assert_eq!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
     }
 }
