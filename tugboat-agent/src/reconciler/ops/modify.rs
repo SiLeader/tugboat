@@ -15,10 +15,10 @@
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::reconcile::AppendStatus;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{Ship, ShipCondition};
+use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipSpec};
 use tugboat_resources::manifests::meta::v1::Time;
 
 impl ShipReconciler {
@@ -60,39 +60,129 @@ impl ShipReconciler {
                 "spec".to_string(),
             ));
         };
-        let spec_fingerprint = super::spec_fingerprint(ship_spec)?;
-        if self
+
+        let spec_fp = super::spec_fingerprint(ship_spec)?;
+        let vol_fp = super::volume_claims_fingerprint(ship_spec)?;
+
+        let spec_changed = !self
             .runtime_operator
-            .matches_spec(ship_id, &spec_fingerprint)
-            .await
-        {
-            info!("Ship modified but desired spec is unchanged: {}", ship_id);
+            .matches_spec_fingerprint(ship_id, &spec_fp)
+            .await;
+        let volumes_changed = !self
+            .runtime_operator
+            .matches_volume_fingerprint(ship_id, &vol_fp)
+            .await;
+
+        if !spec_changed && !volumes_changed {
+            debug!("Ship '{}' runtime-significant spec is unchanged", ship_id);
+            // Even though the spec is unchanged, check for pending volume expansions
+            // since PV status updates are external to the Ship resource.
+            self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
+                .await;
             return Ok(());
         }
 
+        // At least one runtime-significant field changed — report conditions.
+        let mut conditions = Vec::new();
+        if spec_changed {
+            conditions.push(ShipCondition {
+                status: "SpecChangeRequiresRecreate".to_string(),
+                message: "Ship spec changed while running; live mutation is not supported — \
+                    recreate the ship to apply the new spec"
+                    .to_string(),
+                timestamp: Some(Time::now()),
+            });
+        }
+        if volumes_changed {
+            conditions.push(ShipCondition {
+                status: "CsiVolumeChangeRequiresRecreate".to_string(),
+                message: "Ship volume claims changed while running; CSI-backed volume attach, \
+                    detach, and resize changes are not reconciled live — recreate the ship \
+                    to apply the new storage plan"
+                    .to_string(),
+                timestamp: Some(Time::now()),
+            });
+        }
+
         warn!(
-            "Ship '{}' spec changed while running; live mutation is not supported, setting condition",
+            "Ship '{}' spec changed while running; live mutation is not supported, \
+             setting condition(s)",
             ship_id
         );
         let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
         let mut status_ship = ship.clone();
-        let (status, message) = if ship_spec.volume_claim_ref.is_empty() {
-            (
-                "SpecChangeRequiresRecreate",
-                "Ship spec changed while running; live mutation is not supported — recreate the ship to apply the new spec".to_string(),
-            )
-        } else {
-            (
-                "CsiVolumeChangeRequiresRecreate",
-                "Ship spec changed while running; CSI-backed volume attach, detach, and resize changes are not reconciled live — recreate the ship to apply the new storage plan".to_string(),
-            )
-        };
-        status_ship.append_status(ShipCondition {
-            status: status.to_string(),
-            message,
-            timestamp: Some(Time::now()),
-        });
+        for condition in conditions {
+            status_ship.append_status(condition);
+        }
         api.replace_status(name, status_ship).await?;
         Ok(())
+    }
+
+    /// Check whether any attached volumes need CSI node-side expansion and, if so,
+    /// perform the expansion and refresh volume stats. This runs even when the Ship
+    /// spec itself has not changed, because PV status updates (e.g.
+    /// `node_expansion_required`) are external to the Ship resource.
+    async fn check_pending_volume_expansions(
+        &self,
+        ship_id: &str,
+        namespace: &str,
+        ship_spec: &ShipSpec,
+    ) {
+        let volumes = match self.get_related_volumes(namespace, ship_spec).await {
+            Ok(v) => v,
+            Err(err) => {
+                warn!(
+                    "Failed to resolve volumes for expansion check on ship '{}': {}",
+                    ship_id, err
+                );
+                return;
+            }
+        };
+        let published_volumes = match self.csi.load_published_volumes(ship_id) {
+            Ok(v) => v,
+            Err(err) => {
+                warn!(
+                    "Failed to load published volume state for expansion check on ship '{}': {}",
+                    ship_id, err
+                );
+                return;
+            }
+        };
+        for volume in &volumes {
+            let Some(published) = published_volumes
+                .iter()
+                .find(|p| p.claim_name == volume.claim_name)
+            else {
+                continue;
+            };
+            let secrets = match self.resolve_csi_secrets(volume).await {
+                Ok(s) => s,
+                Err(err) => {
+                    warn!(
+                        "Failed to resolve CSI secrets for volume '{}' expansion check: {}",
+                        volume.claim_name, err
+                    );
+                    continue;
+                }
+            };
+            if let Err(err) = self
+                .ensure_node_expansion(namespace, volume, published, &secrets)
+                .await
+            {
+                warn!(
+                    "Failed to expand volume '{}' for ship '{}': {}",
+                    volume.claim_name, ship_id, err
+                );
+            }
+            if let Err(err) = self
+                .refresh_volume_stats(namespace, volume, published)
+                .await
+            {
+                warn!(
+                    "Failed to refresh volume stats for '{}' on ship '{}': {}",
+                    volume.claim_name, ship_id, err
+                );
+            }
+        }
     }
 }

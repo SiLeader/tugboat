@@ -55,12 +55,32 @@ impl RuntimeOperator {
         self.children.read().await.contains_key(id)
     }
 
-    pub(crate) async fn matches_spec(&self, id: &str, spec_fingerprint: &str) -> bool {
+    pub(crate) async fn matches_spec_fingerprint(&self, id: &str, fingerprint: &str) -> bool {
         self.children
             .read()
             .await
             .get(id)
-            .is_some_and(|runtime| runtime.matches_spec(spec_fingerprint))
+            .is_some_and(|runtime| runtime.matches_spec_fingerprint(fingerprint))
+    }
+
+    pub(crate) async fn matches_volume_fingerprint(&self, id: &str, fingerprint: &str) -> bool {
+        self.children
+            .read()
+            .await
+            .get(id)
+            .is_some_and(|runtime| runtime.matches_volume_fingerprint(fingerprint))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn update_fingerprints(
+        &self,
+        id: &str,
+        spec_fingerprint: String,
+        volume_fingerprint: String,
+    ) {
+        if let Some(runtime) = self.children.write().await.get_mut(id) {
+            runtime.update_fingerprints(spec_fingerprint, volume_fingerprint);
+        }
     }
 
     pub(crate) async fn register_existing(
@@ -69,6 +89,7 @@ impl RuntimeOperator {
         ship_name: String,
         id: String,
         spec_fingerprint: String,
+        volume_fingerprint: String,
         published_volumes: Vec<crate::csi::PublishedVolume>,
     ) {
         let mut children = self.children.write().await;
@@ -79,6 +100,7 @@ impl RuntimeOperator {
                 ship_name,
                 id,
                 spec_fingerprint,
+                volume_fingerprint,
                 published_volumes,
             ),
         );

@@ -1,7 +1,7 @@
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{info, warn};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Ship;
 
@@ -21,14 +21,39 @@ impl ShipReconciler {
         };
 
         info!("Deleting ship: {}", ship_id);
+
+        // Tear down CNI network interfaces (best-effort).
+        if let Some(spec) = ship.spec.as_ref() {
+            let namespace = meta
+                .namespace
+                .clone()
+                .unwrap_or_else(|| "default".to_string());
+            match self.get_related_network_classes(&namespace, spec).await {
+                Ok(network_classes) => {
+                    let networks = self.cni.create_network_configs(ship_id, network_classes);
+                    if let Err(err) = self.cni.del(ship_id, networks).await {
+                        warn!(
+                            "Failed to tear down CNI networks for ship '{}': {}",
+                            ship_id, err
+                        );
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        "Failed to resolve network classes for deleting ship '{}': {}",
+                        ship_id, err
+                    );
+                }
+            }
+        }
+
         let (volumes, controller_publish_secrets) = self
             .volume_cleanup_context_for_ship(&ship)
             .await
             .unwrap_or_else(|err| {
-                tracing::warn!(
+                warn!(
                     "Failed to resolve controller publish secrets for deleting ship '{}': {}",
-                    ship_id,
-                    err
+                    ship_id, err
                 );
                 (Vec::new(), HashMap::new())
             });
@@ -40,10 +65,9 @@ impl ShipReconciler {
             .await?;
         for volume in volumes {
             if let Err(err) = self.mark_volume_attached(&volume.volume_name, false).await {
-                tracing::warn!(
+                warn!(
                     "Failed to clear attachment status for PersistentVolume '{}': {}",
-                    volume.volume_name,
-                    err
+                    volume.volume_name, err
                 );
             }
         }

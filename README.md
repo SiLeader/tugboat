@@ -140,7 +140,7 @@ Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClai
     - [x] Node auto-registration
     - [x] Reconcile on Ship Added events
     - [x] Networking (CNI, NetworkClass / ClusterNetworkClass)
-    - [ ] Reconcile on Ship Modified events
+    - [x] Reconcile on Ship Modified events
     - [x] Reconcile on Ship Deleted events
     - [ ] Storage (CSI provisioning, publish/stage, controller publish context, and expansion are implemented; topology-aware scheduling and snapshot-style workflows remain)
 - [x] Secret

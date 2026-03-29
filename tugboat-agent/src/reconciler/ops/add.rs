@@ -75,7 +75,8 @@ impl ShipReconciler {
             .namespace
             .clone()
             .unwrap_or("default".to_string());
-        let spec_fingerprint = super::spec_fingerprint(ship_spec)?;
+        let spec_fp = super::spec_fingerprint(ship_spec)?;
+        let volume_fp = super::volume_claims_fingerprint(ship_spec)?;
 
         if self.runtime_operator.is_present(ship_id).await? {
             let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
@@ -92,7 +93,8 @@ impl ShipReconciler {
                     namespace,
                     name.clone(),
                     ship_id.clone(),
-                    spec_fingerprint,
+                    spec_fp,
+                    volume_fp,
                     published_volumes,
                 )
                 .await;
@@ -149,7 +151,8 @@ impl ShipReconciler {
                         ship_class: class,
                         networks: networks.iter().map(|n| n.vm.clone()).collect(),
                         volumes,
-                        spec_fingerprint,
+                        spec_fingerprint: spec_fp,
+                        volume_fingerprint: volume_fp,
                         published_volumes,
                     })
                     .await
@@ -407,7 +410,7 @@ impl ShipReconciler {
         Ok(secrets)
     }
 
-    async fn ensure_node_expansion(
+    pub(super) async fn ensure_node_expansion(
         &self,
         namespace: &str,
         volume: &VolumeInfo,
@@ -459,7 +462,7 @@ impl ShipReconciler {
         Ok(())
     }
 
-    async fn refresh_volume_stats(
+    pub(super) async fn refresh_volume_stats(
         &self,
         namespace: &str,
         volume: &VolumeInfo,

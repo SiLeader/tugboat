@@ -136,7 +136,7 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [x] Nodeリソースの自動登録
     - [x] Ship Addedイベントのreconcile
     - [x] ネットワーク (CNI, NetworkClass / ClusterNetworkClass)
-    - [ ] Ship Modifiedイベントのreconcile
+    - [x] Ship Modifiedイベントのreconcile
     - [x] Ship Deletedイベントのreconcile
     - [ ] ストレージ (CSI の provision / publish / stage / expand までは実装済み。topology-aware scheduling と snapshot 系は今後の課題)
 - [x] Secret
