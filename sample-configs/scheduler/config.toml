@@ -22,5 +22,5 @@ renew_interval_seconds = 10
 scheduling_interval_seconds = 1
 
 [scheduler.plugins]
-filter = ["TaintToleration", "ResourceFit"]
+filter = ["NetworkFit", "TaintToleration", "ResourceFit"]
 score = ["TaintToleration", "LeastAllocated"]

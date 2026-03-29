@@ -7,6 +7,8 @@ pub(crate) struct ControllerManagerConfig {
     pub apiserver: ApiserverConfig,
     #[serde(default)]
     pub csi: CsiConfig,
+    #[serde(default)]
+    pub network: NetworkConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -27,6 +29,12 @@ pub(crate) struct ProvisionerConfig {
     pub socket_path: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub(crate) struct NetworkConfig {
+    #[serde(default = "default_requeue_interval_seconds")]
+    pub requeue_interval_seconds: u64,
+}
+
 fn default_requeue_interval_seconds() -> u64 {
     30
 }
@@ -39,6 +47,12 @@ impl ControllerManagerConfig {
 }
 
 impl CsiConfig {
+    pub(crate) fn requeue_interval(&self) -> Duration {
+        Duration::from_secs(self.requeue_interval_seconds)
+    }
+}
+
+impl NetworkConfig {
     pub(crate) fn requeue_interval(&self) -> Duration {
         Duration::from_secs(self.requeue_interval_seconds)
     }

@@ -13,10 +13,14 @@
 // limitations under the License.
 
 use tugboat_client::{Api, TugboatClient};
-use tugboat_resources::manifests::core::v1::{Node, Ship, ShipClass};
+use tugboat_resources::manifests::core::v1::{
+    ClusterNetworkClass, NetworkClass, Node, Ship, ShipClass,
+};
 
 pub(crate) struct Cache {
     client: TugboatClient,
+    cluster_network_classes: Vec<ClusterNetworkClass>,
+    network_classes: Vec<NetworkClass>,
     nodes: Vec<Node>,
     ships: Vec<Ship>,
     ship_classes: Vec<ShipClass>,
@@ -26,6 +30,8 @@ impl Cache {
     pub fn new(client: TugboatClient) -> Self {
         Self {
             client,
+            cluster_network_classes: Vec::new(),
+            network_classes: Vec::new(),
             nodes: Vec::new(),
             ships: Vec::new(),
             ship_classes: Vec::new(),
@@ -33,16 +39,22 @@ impl Cache {
     }
 
     pub async fn refresh(&mut self) -> Result<(), tugboat_client::Error> {
+        let cluster_network_class_api: Api<ClusterNetworkClass> = Api::all(self.client.clone());
+        let network_class_api: Api<NetworkClass> = Api::all(self.client.clone());
         let node_api: Api<Node> = Api::all(self.client.clone());
         let ship_api: Api<Ship> = Api::all(self.client.clone());
         let ship_class_api: Api<ShipClass> = Api::all(self.client.clone());
 
+        self.cluster_network_classes = cluster_network_class_api.list().await?;
+        self.network_classes = network_class_api.list().await?;
         self.nodes = node_api.list().await?;
         self.ships = ship_api.list().await?;
         self.ship_classes = ship_class_api.list().await?;
 
         tracing::debug!(
-            "Cache refreshed: {} nodes, {} ships, {} ship classes",
+            "Cache refreshed: {} cluster network classes, {} network classes, {} nodes, {} ships, {} ship classes",
+            self.cluster_network_classes.len(),
+            self.network_classes.len(),
             self.nodes.len(),
             self.ships.len(),
             self.ship_classes.len()
@@ -53,6 +65,14 @@ impl Cache {
 
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
+    }
+
+    pub fn cluster_network_classes(&self) -> &[ClusterNetworkClass] {
+        &self.cluster_network_classes
+    }
+
+    pub fn network_classes(&self) -> &[NetworkClass] {
+        &self.network_classes
     }
 
     pub fn ships(&self) -> &[Ship] {

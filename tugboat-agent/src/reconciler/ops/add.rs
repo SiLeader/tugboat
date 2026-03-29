@@ -34,6 +34,31 @@ use tugboat_resources::manifests::core::v1::{
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
+fn best_effort_stale_volume_cleanup<T>(
+    namespace: &str,
+    claim_name: &str,
+    result: Result<T, ReconcileError>,
+) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(err) => {
+            // The PVC or its referenced Secret may have already been deleted.
+            // We deliberately continue with no entry for this claim so that
+            // cleanup_published_volumes falls back to an empty secrets map and
+            // still attempts ControllerUnpublishVolume. This is best-effort:
+            // CSI drivers that require controller-publish secrets for unpublish
+            // may fail, but there is no way to recover the secrets at this point
+            // and blocking cleanup would permanently leak the volume attachment.
+            warn!(
+                "Failed to resolve stale volume '{}' secrets in namespace '{}', \
+                 proceeding with empty secrets for best-effort cleanup: {}",
+                claim_name, namespace, err
+            );
+            None
+        }
+    }
+}
+
 impl ShipReconciler {
     pub(crate) async fn reconcile_added(&self, ship: Ship) -> Result<(), ReconcileError> {
         info!("Starting reconciliation for ship");
@@ -214,6 +239,7 @@ impl ShipReconciler {
                         &self.node_name,
                         ship_id,
                         &volume.name,
+                        &volume.claim_name,
                         &volume.volume,
                         &volume.claim,
                         &volume.source,
@@ -339,6 +365,7 @@ impl ShipReconciler {
             planned.push(self.csi.plan_published_volume(
                 ship_id,
                 &volume.name,
+                &volume.claim_name,
                 &volume.source,
                 access_type,
                 requires_staging,
@@ -463,26 +490,28 @@ impl ShipReconciler {
                 continue;
             }
 
-            let volume_info = match self
-                .load_persistent_volume_claim(
+            let pvc_name = published.effective_pvc_name();
+            let Some(volume_info) = best_effort_stale_volume_cleanup(
+                namespace,
+                &published.claim_name,
+                self.load_persistent_volume_claim(
                     namespace,
                     &Api::namespaced(self.client.clone(), namespace),
                     &Api::all(self.client.clone()),
                     published.claim_name.clone(),
-                    published.claim_name.clone(),
+                    pvc_name.to_string(),
                 )
-                .await
-            {
-                Ok(info) => info,
-                Err(err) => {
-                    warn!(
-                        "Failed to resolve stale volume '{}' secrets in namespace '{}': {}",
-                        published.claim_name, namespace, err
-                    );
-                    continue;
-                }
+                .await,
+            ) else {
+                continue;
             };
-            let resolved = self.resolve_csi_secrets(&volume_info).await?;
+            let Some(resolved) = best_effort_stale_volume_cleanup(
+                namespace,
+                &published.claim_name,
+                self.resolve_csi_secrets(&volume_info).await,
+            ) else {
+                continue;
+            };
             secrets.insert(published.claim_name.clone(), resolved.controller_publish);
         }
 
@@ -661,5 +690,32 @@ impl ShipReconciler {
             api.replace(claim_name, claim).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::best_effort_stale_volume_cleanup;
+    use crate::reconciler::error::ReconcileError;
+
+    #[test]
+    fn best_effort_stale_volume_cleanup_keeps_success_values() {
+        let result = best_effort_stale_volume_cleanup("default", "claim-1", Ok(42_u8));
+
+        assert_eq!(result, Some(42));
+    }
+
+    #[test]
+    fn best_effort_stale_volume_cleanup_drops_errors() {
+        let result: Option<()> = best_effort_stale_volume_cleanup(
+            "default",
+            "claim-1",
+            Err(ReconcileError::FieldMissing(
+                "v1.PersistentVolumeClaim".to_string(),
+                "metadata.name".to_string(),
+            )),
+        );
+
+        assert_eq!(result, None);
     }
 }

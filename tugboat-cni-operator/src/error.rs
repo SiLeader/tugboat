@@ -18,6 +18,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Invalid CNI configuration: {0}")]
+    InvalidConfiguration(String),
     #[error("Command failed: {0}")]
     CommandFailed(std::process::ExitStatus, String, String),
 }

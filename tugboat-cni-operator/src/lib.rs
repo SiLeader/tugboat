@@ -53,13 +53,13 @@ impl TugboatCniOperator {
         &self,
         container_id: &str,
         iface_name: &str,
-        cni_type: &str,
         config: impl CniNetworkConfiguration,
     ) -> Result<(), Error> {
+        let cni_type = config.entry_point()?.to_string();
         let config_file = self.config_dir.join(config.file_name());
         config.serialize_to_file(std::fs::File::create(&config_file)?)?;
         self.caller
-            .add(container_id, iface_name, cni_type, config_file)
+            .add(container_id, iface_name, &cni_type, config_file)
             .await
     }
 
@@ -67,12 +67,12 @@ impl TugboatCniOperator {
         &self,
         container_id: &str,
         iface_name: &str,
-        cni_type: &str,
         config: impl CniNetworkConfiguration,
     ) -> Result<(), Error> {
+        let cni_type = config.entry_point()?.to_string();
         let config_file = self.config_dir.join(config.file_name());
         self.caller
-            .del(container_id, iface_name, cni_type, config_file)
+            .del(container_id, iface_name, &cni_type, config_file)
             .await
     }
 }

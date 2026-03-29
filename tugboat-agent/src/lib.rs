@@ -40,8 +40,11 @@ pub async fn run() {
     let args = Args::parse();
     let config = config::AgentConfig::load_or_panic(args.config);
 
+    let node_name = config.node.name.clone();
+    let network_probe_interval = config.node.network_probe_interval();
+    let cni_config = config.cni.clone();
     let client = TugboatClient::new(config.apiserver.url);
-    node_registration::ensure_node_exists(client.clone(), config.node.name.clone())
+    node_registration::ensure_node_exists(client.clone(), node_name.clone())
         .await
         .unwrap_or_else(|e| panic!("Failed to ensure node resource exists: {e}"));
     let runtime_operator = RuntimeOperator::new(
@@ -57,8 +60,18 @@ pub async fn run() {
         .await
         .unwrap_or_else(|e| panic!("Failed to initialize CNI operator: {e}"));
 
+    node_registration::publish_node_status(client.clone(), &node_name, &cni_config)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to publish node CNI status: {e}"));
+    tokio::spawn(node_registration::refresh_node_status_loop(
+        client.clone(),
+        node_name.clone(),
+        cni_config,
+        network_probe_interval,
+    ));
+
     let reconciler = ShipReconciler::new(
-        config.node.name,
+        node_name,
         client,
         runtime_operator,
         cni_operator,

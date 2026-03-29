@@ -5,9 +5,13 @@ Goal
 Implement real handling for Ship Modified watch events in the agent.
 
 Current evidence
-- README.md still lists "Reconcile on Ship Modified / Deleted events" as unfinished.
+- README.md marks Modified/Delete handling at a high level, but the agent is still overall listed
+  as in progress and Modified reconciliation remains partial in practice.
 - tugboat-agent/src/reconciler/reconcile.rs dispatches WatchEvent::Modified.
 - tugboat-agent/src/reconciler/ops/modify.rs now computes a spec fingerprint and uses runtime_operator.matches_spec to detect no-op updates. If the runtime is missing it delegates to reconcile_added; if the spec changed and live mutation is not supported it sets a ShipStatus condition (SpecChangeRequiresRecreate) and replaces the status.
+- tugboat-agent/src/cni.rs now supports both `bridge` and `flannel` network planning via
+  `NetworkClassSpec.cniPlugin`, but Modified reconciliation still does not hot-apply network
+  attachment or backend changes.
 - Live in-place mutation for image, network, volume, or class changes is still largely unimplemented and requires work.
 
 Why this matters
@@ -16,7 +20,10 @@ Why this matters
 
 What to implement
 - Define which Ship fields are mutable in place, which require restart or recreate, and which must be rejected.
-- Implement targeted in-place updates for supported changes (e.g., certain network or volume hotplug operations) using CNI and CSI integrations when possible.
+- Implement targeted in-place updates for supported changes (e.g., certain network or volume
+  hotplug operations) using CNI and CSI integrations when possible.
+- Decide how `NetworkClass` changes behave when they alter `cniPlugin`, attachment order, or
+  backend-specific settings such as Flannel delegate options.
 - Preserve the current fallback where a modified but missing runtime is treated like Added.
 - Update Ship status with explicit conditions for accepted updates, rejected updates, restart-required updates, and failures.
 - Make the handler idempotent so repeated Modified events with no meaningful delta are true no-ops.

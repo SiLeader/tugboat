@@ -50,6 +50,8 @@ Existing VM orchestration systems come with significant challenges:
     - `Imagefile → build → push to registry → referenced by Ship`
 - CNI support
     - `NetworkClass` / `ClusterNetworkClass` based network configuration
+    - agent publishes plugin readiness to `Node.status.cniPlugins`
+    - scheduler filters nodes with `NetworkFit`
 - Planned CRD support
 - High availability design
     - Apiserver can scale horizontally
@@ -138,6 +140,28 @@ volume name, so both CSI `Filesystem` claims and projected `ConfigMap` / `Secret
 volumes are passed to the guest through the same mechanism.
 
 Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling, live `NodeExpandVolume` (without Ship recreate) when the driver advertises it, and `NodeGetVolumeStats`-backed PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
+
+### CNI status and Flannel validation
+
+Tugboat now exposes observed CNI readiness through `Node.status.cniPlugins` and
+publishes `NetworkClass.status.readyNodes` / `ClusterNetworkClass.status.readyNodes`
+from `tugboat-controller-manager`. The scheduler's `NetworkFit` filter uses that
+status to reject nodes that do not advertise the plugins required by a Ship's
+requested `NetworkClass` / `ClusterNetworkClass`.
+
+The current rollout assumes Flannel itself is installed and managed externally.
+For a manual multi-node validation flow:
+
+1. Install the required CNI binaries (`bridge`, `loopback`, `flannel`, and `portmap`
+   when port mappings are enabled) on each node under the configured CNI bin directory.
+2. Bring up Flannel externally so each node has the expected runtime state
+   (by default `/run/flannel/subnet.env` and `/run/flannel`).
+3. Start `tugboat-agent` on each node and confirm `kubectl get node -o yaml`
+   shows `status.cniPlugins` with the expected readiness.
+4. Apply a `ClusterNetworkClass` or `NetworkClass` using `cniPlugin: flannel`
+   and confirm its `status.readyNodes` contains the nodes that passed the probe.
+5. Create Ships that reference that network class and verify they schedule only to
+   ready nodes before performing cross-node connectivity checks.
 
 ## Roadmap
 

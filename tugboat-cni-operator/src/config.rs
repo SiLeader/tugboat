@@ -34,3 +34,17 @@ impl Default for LocationConfig {
         }
     }
 }
+
+impl CniOperatorConfig {
+    pub fn bin_dir(&self) -> &str {
+        &self.location.bin
+    }
+
+    pub fn config_dir(&self) -> &str {
+        &self.location.config
+    }
+
+    pub fn netns_dir(&self) -> &str {
+        &self.location.netns
+    }
+}

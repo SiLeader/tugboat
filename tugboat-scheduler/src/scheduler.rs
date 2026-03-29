@@ -129,6 +129,8 @@ impl Scheduler {
         let ctx = SchedulingContext {
             ship: ship.clone(),
             ship_class: ship_class.clone(),
+            all_cluster_network_classes: cache.cluster_network_classes().to_vec(),
+            all_network_classes: cache.network_classes().to_vec(),
             all_ships: cache.ships().to_vec(),
             all_ship_classes: cache.ship_classes().to_vec(),
         };

@@ -6,7 +6,8 @@ Treat VMs and containers uniformly by supporting CRI and/or a specialized VMRI (
 
 Current evidence
 - `tugboat-agent` focuses on VMs.
-- CNI and CSI integration is custom-built for the VM runtime.
+- CNI and CSI integration is still custom-built for the VM runtime, but the CNI side now emits
+  standard `bridge` / `flannel` conflists and can execute mainstream CNI binaries directly.
 - CRI is the standard for K8s container runtimes, enabling reuse of many CNI/CSI implementations.
 
 What to implement

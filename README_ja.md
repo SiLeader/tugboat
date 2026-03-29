@@ -46,6 +46,8 @@ Tugboatはこれらの問題を解決するために生まれました。
     - Imagefile → build → registryにpush → Shipから参照
 - CNIに対応
     - `NetworkClass` / `ClusterNetworkClass`によるネットワーク設定
+    - agent が `Node.status.cniPlugins` に plugin readiness を公開
+    - scheduler が `NetworkFit` で node を絞り込み
 - CRDに対応予定
 - HA設計
     - apiserverは水平スケール可能
@@ -133,6 +135,29 @@ Ship volume の名前が使われます。そのため、CSI の `Filesystem` cl
 `ConfigMap` / `Secret` の projected volume も同じ経路で guest へ渡されます。
 
 control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context、稼働中の Ship を停止させない live `NodeExpandVolume`、`NodeGetVolumeStats` による CSI health / usage の PV/PVC condition 反映まで対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone 系ワークフローです。
+
+### CNI status と Flannel 検証
+
+現在の Tugboat は、agent が観測した CNI readiness を `Node.status.cniPlugins`
+に公開し、`tugboat-controller-manager` が
+`NetworkClass.status.readyNodes` /
+`ClusterNetworkClass.status.readyNodes` を更新します。scheduler の
+`NetworkFit` filter は、この status を見て、Ship が要求する
+`NetworkClass` / `ClusterNetworkClass` に必要な plugin を持たない node を除外します。
+
+現状の前提は、Flannel 自体は Tugboat の外でインストール・管理されることです。
+手動で multi-node Flannel を確認する場合は、次の流れを想定しています。
+
+1. 各 node の CNI bin directory に `bridge`、`loopback`、`flannel`、
+   および port mapping を使う場合は `portmap` を配置する。
+2. 外部管理の Flannel を起動し、各 node に既定の runtime state
+   （既定では `/run/flannel/subnet.env` と `/run/flannel`）を用意する。
+3. 各 node で `tugboat-agent` を起動し、`kubectl get node -o yaml` で
+   `status.cniPlugins` に readiness が反映されていることを確認する。
+4. `cniPlugin: flannel` を使う `ClusterNetworkClass` または `NetworkClass`
+   を apply し、`status.readyNodes` に probe を通過した node が現れることを確認する。
+5. その network class を参照する Ship を作成し、準備済み node にだけ
+   schedule されることを確認してから、node 間疎通を検証する。
 
 ## Roadmap
 

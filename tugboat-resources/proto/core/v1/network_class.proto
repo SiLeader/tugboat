@@ -16,6 +16,7 @@ syntax = "proto3";
 
 import "meta/v1/type_meta.proto";
 import "meta/v1/object_meta.proto";
+import "meta/v1/time.proto";
 
 package tugboat.core.v1;
 
@@ -29,12 +30,14 @@ message NetworkClass {
   meta.v1.TypeMeta type_meta = 1;
   meta.v1.ObjectMeta object_meta = 2;
   NetworkClassSpec spec = 3;
+  optional NetworkClassStatus status = 4;
 }
 
 message ClusterNetworkClass {
   meta.v1.TypeMeta type_meta = 1;
   meta.v1.ObjectMeta object_meta = 2;
   NetworkClassSpec spec = 3;
+  optional NetworkClassStatus status = 4;
 }
 
 message NetworkClassSpec {
@@ -42,8 +45,30 @@ message NetworkClassSpec {
   repeated NetworkClassRoute routes = 2;
   optional bool internet_access = 3;
   optional bool cluster_network = 4;
+  string cni_plugin = 5;
+  optional FlannelNetworkClass flannel = 6;
 }
 
 message NetworkClassRoute {
   string destination = 1;
+}
+
+message FlannelNetworkClass {
+  string subnet_file = 1;
+  string data_dir = 2;
+  optional bool hairpin_mode = 3;
+  optional bool default_gateway = 4;
+  optional bool port_mappings = 5;
+}
+
+message NetworkClassStatus {
+  repeated NetworkClassCondition conditions = 1;
+  repeated string ready_nodes = 2;
+}
+
+message NetworkClassCondition {
+  string type = 1;
+  string status = 2;
+  string message = 3;
+  meta.v1.Time timestamp = 4;
 }
