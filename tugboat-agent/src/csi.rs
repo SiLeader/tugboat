@@ -58,7 +58,8 @@ impl CsiWrapper {
     pub(crate) fn plan_published_volume(
         &self,
         ship_id: &str,
-        claim_name: &str,
+        volume_alias: &str,
+        pvc_name: &str,
         source: &CsiPersistentVolumeSource,
         access_type: PublishedAccessType,
         requires_staging: bool,
@@ -67,15 +68,16 @@ impl CsiWrapper {
             return Err(CsiError::MissingVolumeHandle);
         }
         Ok(PublishedVolume {
-            claim_name: claim_name.to_string(),
+            claim_name: volume_alias.to_string(),
             driver: source.driver.clone(),
             volume_id: source.volume_handle.clone(),
-            target_path: self.target_path(ship_id, claim_name, access_type),
+            target_path: self.target_path(ship_id, volume_alias, access_type),
             access_type,
             mount_namespace_path: mountns::path_for_ship(ship_id).display().to_string(),
             staging_target_path: requires_staging
-                .then(|| self.staging_target_path(ship_id, claim_name)),
+                .then(|| self.staging_target_path(ship_id, volume_alias)),
             controller_published: false,
+            pvc_name: Some(pvc_name.to_string()),
         })
     }
 
@@ -118,7 +120,8 @@ impl CsiWrapper {
         &self,
         node_name: &str,
         ship_id: &str,
-        claim_name: &str,
+        volume_alias: &str,
+        pvc_name: &str,
         volume: &PersistentVolumeSpec,
         claim: &PersistentVolumeClaimSpec,
         source: &CsiPersistentVolumeSource,
@@ -146,7 +149,8 @@ impl CsiWrapper {
         self.ensure_mount_namespace(ship_id)?;
         let mut published = self.plan_published_volume(
             ship_id,
-            claim_name,
+            volume_alias,
+            pvc_name,
             source,
             PublishedAccessType::from(access_type),
             requires_staging,

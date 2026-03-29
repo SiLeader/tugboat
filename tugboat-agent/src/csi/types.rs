@@ -87,6 +87,20 @@ pub(crate) struct PublishedVolume {
     pub staging_target_path: Option<String>,
     #[serde(default)]
     pub controller_published: bool,
+    /// Actual PersistentVolumeClaim resource name. `claim_name` stores the
+    /// Ship-spec volume alias used for target paths, which may differ from the
+    /// real PVC name. Old persisted state omits this field; callers should use
+    /// [`Self::effective_pvc_name`] to fall back to `claim_name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pvc_name: Option<String>,
+}
+
+impl PublishedVolume {
+    /// Returns the actual PVC resource name, falling back to `claim_name` for
+    /// volumes persisted before the `pvc_name` field was introduced.
+    pub fn effective_pvc_name(&self) -> &str {
+        self.pvc_name.as_deref().unwrap_or(&self.claim_name)
+    }
 }
 
 #[derive(Debug, Clone, Default)]

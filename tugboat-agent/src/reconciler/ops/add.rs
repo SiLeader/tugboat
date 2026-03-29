@@ -239,6 +239,7 @@ impl ShipReconciler {
                         &self.node_name,
                         ship_id,
                         &volume.name,
+                        &volume.claim_name,
                         &volume.volume,
                         &volume.claim,
                         &volume.source,
@@ -364,6 +365,7 @@ impl ShipReconciler {
             planned.push(self.csi.plan_published_volume(
                 ship_id,
                 &volume.name,
+                &volume.claim_name,
                 &volume.source,
                 access_type,
                 requires_staging,
@@ -488,6 +490,7 @@ impl ShipReconciler {
                 continue;
             }
 
+            let pvc_name = published.effective_pvc_name();
             let Some(volume_info) = best_effort_stale_volume_cleanup(
                 namespace,
                 &published.claim_name,
@@ -496,7 +499,7 @@ impl ShipReconciler {
                     &Api::namespaced(self.client.clone(), namespace),
                     &Api::all(self.client.clone()),
                     published.claim_name.clone(),
-                    published.claim_name.clone(),
+                    pvc_name.to_string(),
                 )
                 .await,
             ) else {

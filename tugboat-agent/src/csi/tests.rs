@@ -48,6 +48,7 @@ fn can_plan_publish_target_path() {
         .plan_published_volume(
             "ship-uid",
             "data-volume",
+            "my-pvc",
             &CsiPersistentVolumeSource {
                 driver: "example.csi".to_string(),
                 volume_handle: "volume-001".to_string(),
@@ -70,6 +71,8 @@ fn can_plan_publish_target_path() {
     );
     assert_eq!(published.access_type, PublishedAccessType::Block);
     assert_eq!(published.staging_target_path, None);
+    assert_eq!(published.pvc_name, Some("my-pvc".to_string()));
+    assert_eq!(published.effective_pvc_name(), "my-pvc");
 }
 
 #[test]
@@ -83,6 +86,7 @@ fn can_plan_filesystem_publish_target_path() {
         .plan_published_volume(
             "ship-uid",
             "data-volume",
+            "my-pvc",
             &CsiPersistentVolumeSource {
                 driver: "example.csi".to_string(),
                 volume_handle: "volume-001".to_string(),
@@ -160,6 +164,7 @@ fn can_persist_and_load_published_volume_state() {
                 .to_string(),
         ),
         controller_published: false,
+        pvc_name: Some("my-pvc".to_string()),
     };
 
     wrapper
@@ -249,6 +254,7 @@ fn integration_happy_path_round_trips_block_volume_state() {
         mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
         staging_target_path: None,
         controller_published: false,
+        pvc_name: Some("my-pvc".to_string()),
     };
 
     prepare_target_path(&volume.target_path, volume.access_type)
@@ -298,6 +304,7 @@ fn integration_cleanup_path_removes_filesystem_state_and_paths() {
         mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
         staging_target_path: Some(staging_target_path.display().to_string()),
         controller_published: false,
+        pvc_name: Some("my-pvc".to_string()),
     };
 
     prepare_directory_path(
@@ -377,4 +384,38 @@ fn mount_flags_are_carried_in_resolved_secrets() {
         .cloned()
         .collect();
     assert_eq!(mount_flags, vec!["noatime", "nodiratime"]);
+}
+
+#[test]
+fn backward_compatible_deserialization_without_pvc_name() {
+    let json = r#"{
+        "claim_name": "data-volume",
+        "driver": "example.csi",
+        "volume_id": "volume-001",
+        "target_path": "/var/lib/csi/ship-uid/data-volume.block",
+        "access_type": "block",
+        "mount_namespace_path": "/var/run/tugboat/mntns/ship-uid",
+        "controller_published": false
+    }"#;
+
+    let volume: PublishedVolume =
+        serde_json::from_str(json).expect("deserialization should succeed");
+    assert_eq!(volume.pvc_name, None);
+    assert_eq!(volume.effective_pvc_name(), "data-volume");
+}
+
+#[test]
+fn effective_pvc_name_returns_pvc_name_when_present() {
+    let volume = PublishedVolume {
+        claim_name: "data-alias".to_string(),
+        driver: "example.csi".to_string(),
+        volume_id: "volume-001".to_string(),
+        target_path: "/var/lib/csi/ship-uid/data-alias.block".to_string(),
+        access_type: PublishedAccessType::Block,
+        mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+        staging_target_path: None,
+        controller_published: false,
+        pvc_name: Some("actual-pvc".to_string()),
+    };
+    assert_eq!(volume.effective_pvc_name(), "actual-pvc");
 }
