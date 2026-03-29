@@ -48,11 +48,11 @@ impl ShipReconciler {
     }
 
     async fn reconcile_active(&self, ship: Ship) -> Result<Action, ReconcileError> {
-        if self.runtime_operator.has_ship(ship_uid(&ship)?).await {
-            self.reconcile_modified(ship).await?;
-        } else {
-            self.reconcile_added(ship).await?;
-        }
+        // Delegate to reconcile_modified which already handles the case where the
+        // ship does not yet exist in the runtime (falling back to reconcile_added).
+        // This avoids a TOCTOU race between a separate has_ship() check and the
+        // subsequent reconcile call.
+        self.reconcile_modified(ship).await?;
         Ok(Action::await_change())
     }
 
@@ -71,16 +71,6 @@ impl ShipReconciler {
     fn ship_api(&self, ship: &Ship) -> Api<Ship> {
         Api::namespaced(self.client.clone(), ship.namespace().unwrap_or("default"))
     }
-}
-
-fn ship_uid(ship: &Ship) -> Result<&str, ReconcileError> {
-    ship.object_meta()
-        .as_ref()
-        .and_then(|meta| meta.uid.as_deref())
-        .ok_or(ReconcileError::FieldMissing(
-            "v1.Ship".to_string(),
-            "metadata.uid".to_string(),
-        ))
 }
 
 pub(super) trait AppendStatus {
