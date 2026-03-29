@@ -946,7 +946,7 @@ mod tests {
             message:
                 "CSI driver reported volume usage: bytes(total=4096, used=1024, available=3072)"
                     .to_string(),
-            timestamp: timestamp.clone(),
+            timestamp,
         }];
 
         let changed = apply_persistent_volume_csi_observation(&mut conditions, &stats);
