@@ -1,9 +1,25 @@
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{info, warn};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Ship;
+
+fn finalize_volume_cleanup(
+    ship_id: &str,
+    cleanup_result: Result<(), ReconcileError>,
+    mount_namespace_result: Result<(), ReconcileError>,
+) -> Result<(), ReconcileError> {
+    if let (Err(_), Err(mount_err)) = (&cleanup_result, &mount_namespace_result) {
+        warn!(
+            "Failed to clean up mount namespace for ship '{}' after volume cleanup error: {}",
+            ship_id, mount_err
+        );
+    }
+    cleanup_result?;
+    mount_namespace_result?;
+    Ok(())
+}
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_deleted(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -21,14 +37,39 @@ impl ShipReconciler {
         };
 
         info!("Deleting ship: {}", ship_id);
+
+        // Tear down CNI network interfaces (best-effort).
+        if let Some(spec) = ship.spec.as_ref() {
+            let namespace = meta
+                .namespace
+                .clone()
+                .unwrap_or_else(|| "default".to_string());
+            match self.get_related_network_classes(&namespace, spec).await {
+                Ok(network_classes) => {
+                    let networks = self.cni.create_network_configs(ship_id, network_classes);
+                    if let Err(err) = self.cni.del(ship_id, networks).await {
+                        warn!(
+                            "Failed to tear down CNI networks for ship '{}': {}",
+                            ship_id, err
+                        );
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        "Failed to resolve network classes for deleting ship '{}': {}",
+                        ship_id, err
+                    );
+                }
+            }
+        }
+
         let (volumes, controller_publish_secrets) = self
             .volume_cleanup_context_for_ship(&ship)
             .await
             .unwrap_or_else(|err| {
-                tracing::warn!(
+                warn!(
                     "Failed to resolve controller publish secrets for deleting ship '{}': {}",
-                    ship_id,
-                    err
+                    ship_id, err
                 );
                 (Vec::new(), HashMap::new())
             });
@@ -36,19 +77,26 @@ impl ShipReconciler {
         if published_volumes.is_empty() {
             published_volumes = self.csi.load_published_volumes(ship_id)?;
         }
-        self.cleanup_published_volumes(&published_volumes, &controller_publish_secrets)
-            .await?;
-        for volume in volumes {
+        let cleanup_result = self
+            .cleanup_published_volumes(&published_volumes, &controller_publish_secrets)
+            .await;
+        // Always attempt to clear the attachment status regardless of whether CSI
+        // unpublish succeeded.  A previous cancelled reconcile may have already
+        // completed the CSI teardown, causing cleanup_published_volumes to fail,
+        // while the PV status still shows an attached node.
+        for volume in &volumes {
             if let Err(err) = self.mark_volume_attached(&volume.volume_name, false).await {
-                tracing::warn!(
+                warn!(
                     "Failed to clear attachment status for PersistentVolume '{}': {}",
-                    volume.volume_name,
-                    err
+                    volume.volume_name, err
                 );
             }
         }
-        self.csi.cleanup_mount_namespace(ship_id)?;
-        Ok(())
+        let mount_namespace_result = self
+            .csi
+            .cleanup_mount_namespace(ship_id)
+            .map_err(ReconcileError::from);
+        finalize_volume_cleanup(ship_id, cleanup_result, mount_namespace_result)
     }
 
     async fn volume_cleanup_context_for_ship(
@@ -72,5 +120,51 @@ impl ShipReconciler {
         let volumes = self.get_related_volumes(&namespace, spec).await?;
         let secrets = self.controller_publish_secret_map(&volumes).await?;
         Ok((volumes, secrets))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finalize_volume_cleanup;
+    use crate::csi::CsiError;
+    use crate::reconciler::error::ReconcileError;
+
+    #[test]
+    fn returns_volume_cleanup_error_after_mount_namespace_attempt() {
+        let err = finalize_volume_cleanup(
+            "ship-1",
+            Err(ReconcileError::PublishedVolumeCleanupFailed(
+                "unpublish failed".to_string(),
+            )),
+            Err(ReconcileError::from(CsiError::MissingVolumeHandle)),
+        )
+        .unwrap_err();
+
+        match err {
+            ReconcileError::PublishedVolumeCleanupFailed(message) => {
+                assert_eq!(message, "unpublish failed");
+            }
+            other => panic!("expected volume cleanup error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn returns_mount_namespace_error_when_volume_cleanup_succeeds() {
+        let err = finalize_volume_cleanup(
+            "ship-1",
+            Ok(()),
+            Err(ReconcileError::from(CsiError::MissingVolumeHandle)),
+        )
+        .unwrap_err();
+
+        match err {
+            ReconcileError::Csi(CsiError::MissingVolumeHandle) => {}
+            other => panic!("expected mount namespace cleanup error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn succeeds_when_both_cleanup_steps_succeed() {
+        assert!(finalize_volume_cleanup("ship-1", Ok(()), Ok(())).is_ok());
     }
 }

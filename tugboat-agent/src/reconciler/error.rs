@@ -135,6 +135,8 @@ pub(crate) enum ReconcileError {
     InvalidCsiSecretData(Box<InvalidCsiSecretDataError>),
     #[error("Failed to clean up one or more published CSI volumes: {0}")]
     PublishedVolumeCleanupFailed(String),
+    #[error("Finalizer error: {0}")]
+    Finalizer(String),
     #[error("CNI error: {0}")]
     Cni(#[from] tugboat_cni_operator::Error),
     #[error("CSI error: {0}")]

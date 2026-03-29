@@ -21,6 +21,7 @@ pub(crate) struct Runtime {
     ship_name: String,
     id: String,
     spec_fingerprint: String,
+    volume_fingerprint: String,
     published_volumes: Vec<PublishedVolume>,
 }
 
@@ -30,6 +31,7 @@ impl Runtime {
         ship_name: String,
         id: String,
         spec_fingerprint: String,
+        volume_fingerprint: String,
         published_volumes: Vec<PublishedVolume>,
     ) -> Self {
         Self {
@@ -37,6 +39,7 @@ impl Runtime {
             ship_name,
             id,
             spec_fingerprint,
+            volume_fingerprint,
             published_volumes,
         }
     }
@@ -45,7 +48,21 @@ impl Runtime {
         self.published_volumes
     }
 
-    pub(super) fn matches_spec(&self, spec_fingerprint: &str) -> bool {
-        self.spec_fingerprint == spec_fingerprint
+    pub(super) fn matches_spec_fingerprint(&self, fingerprint: &str) -> bool {
+        self.spec_fingerprint == fingerprint
+    }
+
+    pub(super) fn matches_volume_fingerprint(&self, fingerprint: &str) -> bool {
+        self.volume_fingerprint == fingerprint
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn update_fingerprints(
+        &mut self,
+        spec_fingerprint: String,
+        volume_fingerprint: String,
+    ) {
+        self.spec_fingerprint = spec_fingerprint;
+        self.volume_fingerprint = volume_fingerprint;
     }
 }

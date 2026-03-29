@@ -1,8 +1,8 @@
-Live Migration
-==============
+Live Migration and Dynamic Resource Adjustment
+============================================
 
 Goal
-Allow a running Ship to move between nodes with minimal downtime.
+Allow a running Ship to move between nodes with minimal downtime and adjust its CPU/Memory resources on the fly.
 
 Current evidence
 - README.md lists live migration as unfinished.
@@ -11,13 +11,14 @@ Current evidence
 - There is no migration orchestration code in tugboat-agent, tugboat-client, or tugboat-scheduler.
 
 What to implement
-- Decide the public API surface: Ship subresource, dedicated Migration resource, or another explicit workflow object.
-- Extend tugboat-runtime and tugboat-vm-runtime-interface with migrate source and target operations.
+- Support migration triggered by changing the `Ship` spec (e.g., changing its target node in `node_name`).
+- Extend `tugboat-runtime` and `tugboat-vm-runtime-interface` with `migrate` source and target operations.
 - Add agent-side coordination between source and target nodes, including preflight checks for CPU compatibility, storage access, and network continuity.
-- Define how the target node is selected and reserved; reuse the scheduler when it makes sense instead of embedding ad hoc placement logic in the agent.
+- Support CPU and Memory hotplug/unplug during execution (if the guest OS and QEMU support it).
 - Track migration progress and errors through Ship status or a dedicated migration status object.
 - Define rollback and cleanup behavior when migration fails mid-flight.
-- Clarify the storage model for migration, especially whether shared volumes are required or whether block-copy migration is expected.
+- Clarify the storage model for migration, especially whether shared volumes are required or whether block-copy migration is supported.
+- Ensure the migration is transparent to the guest as much as possible, aiming for minimal downtime (less than 1s).
 
 Implementation surfaces
 - tugboat-runtime/src/
@@ -31,8 +32,9 @@ Implementation surfaces
 - tugboat-apiserver/src/endpoints/resource_registry.rs
 
 Acceptance criteria
-- A migration request can be created through the public API.
-- The source and target agents coordinate a full handoff instead of leaving two runtimes active.
+- Changing the `node_name` of a running `Ship` triggers a live migration.
+- The `Ship` successfully migrates to the target node without being stopped or recreated.
+- Increasing or decreasing CPU/Memory in the `Ship` spec results in a live update to the VM resources.
 - Success and failure states are visible through status updates.
 - A failed migration leaves the Ship in a recoverable and explicitly reported state.
 - Tests cover at least one successful migration flow and one rollback or failure path.

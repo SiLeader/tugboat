@@ -24,6 +24,15 @@ cargo fmt  # auto-format
 cargo deny check
 ```
 
+### Final checks (pre-merge)
+
+As a final verification before merging or releasing, run the following commands and address any issues they report:
+
+- cargo clippy
+- cargo fmt --check
+- cargo test
+
+
 Packages: `tugboat-resources`, `tugboat-apiserver`, `tugboat-agent`, `tugboat-runtime`,
 `tugboat-resource-store`, `tugboat-client`, `tugboat-cli`, `tugboat-vm-image`,
 `tugboat-vm-runtime-interface`, `tugboat-cni-operator`, `tugboat-csi-operator`, `tugboat-scheduler`

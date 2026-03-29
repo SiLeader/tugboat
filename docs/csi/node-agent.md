@@ -27,7 +27,7 @@ To improve security, Tugboat ensures that CSI mount operations happen within the
 
 ## Expansion and Health Monitoring
 
-- **Node Expansion**: After a volume is resized on the control plane, the agent detects the capacity change and calls `NodeExpandVolume` if the driver supports it (`NodeCapability::ExpandVolume`).
+- **Node Expansion**: After a volume is resized on the control plane, the agent detects the capacity change — either during Ship creation or live while the Ship is running — and calls `NodeExpandVolume` if the driver supports it (`NodeCapability::ExpandVolume`). Live expansion does not require a Ship recreate.
 - **Health Checks**: The agent uses `NodeGetVolumeStats` to monitor the volume's health and usage. This data is surfaced in the `PersistentVolumeStatus` and `PersistentVolumeClaimStatus` resources.
 
 ## Recovery

@@ -1,0 +1,31 @@
+Workload Management: ReplicaSet, Deployment, and Fleet
+======================================================
+
+Goal
+Implement robust workload controllers (ReplicaSet, Deployment, and Fleet) with support for live migration and shared networking.
+
+Current evidence
+- `replicaset-controller.txt` and `fleet-and-deployment-workloads.txt` exist as separate goals.
+- Deployment and Fleet were noted to have naming/responsibility ambiguity.
+- ReplicaSet is needed for higher-level rollouts.
+
+What to implement
+- Define `ReplicaSet` and `Deployment` resources. Use `shipTemplate` for the workload specification, and leave room for a future `podTemplate`.
+- Implement `Deployment` as the standard rollout manager, controlling `ReplicaSets`.
+- Implement `Fleet` as a resource that groups multiple different VM types (different `ShipClasses`) but ensures they all belong to the same network.
+- Controllers must support live migration: when a workload determines a Ship needs to move (e.g., due to a change in scheduling or replica distribution), it should trigger a live migration instead of a recreate where possible.
+- Ensure `shipTemplate` is well-defined and includes all necessary VM-specific fields (CPU, memory, storage, network).
+- Rollouts should support standard K8s-like strategies: RollingUpdate, Recreate.
+
+Implementation surfaces
+- `tugboat-resources/proto/`
+- `tugboat-controller-manager/src/`
+- `tugboat-apiserver/src/endpoints/`
+- `tugboat-resources/src/manifests/`
+
+Acceptance criteria
+- Creating a `Deployment` manages `ReplicaSets` and eventually `Ships`.
+- A `Fleet` successfully launches multiple types of VMs sharing the same `NetworkClass`.
+- When a `Deployment` or `ReplicaSet` requires a `Ship` to move to another node (and the target node is known), it uses live migration.
+- `shipTemplate` correctly encapsulates `ShipSpec`.
+- Rolling updates proceed with minimal downtime by coordinating with the migration logic.

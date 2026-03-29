@@ -98,6 +98,18 @@ impl CniWrapper {
         Ok(applied)
     }
 
+    pub(crate) async fn del(
+        &self,
+        ship_id: &str,
+        config: Vec<PlannedNetworkConfig>,
+    ) -> Result<(), tugboat_cni_operator::Error> {
+        for c in config.into_iter().rev() {
+            self.del_single(ship_id, c).await?;
+        }
+        self.del_loopback(ship_id).await?;
+        Ok(())
+    }
+
     async fn add_loopback(&self, ship_id: &str) -> Result<(), tugboat_cni_operator::Error> {
         let conf = CniNetConfList {
             header: CniConfHeader {
@@ -110,39 +122,67 @@ impl CniWrapper {
         Ok(())
     }
 
+    async fn del_loopback(&self, ship_id: &str) -> Result<(), tugboat_cni_operator::Error> {
+        let conf = CniNetConfList {
+            header: CniConfHeader {
+                cni_version: "1.0.0".to_string(),
+                name: "loopback".to_string(),
+            },
+            plugins: vec![CniConfContent::Loopback],
+        };
+        self.operator.del(ship_id, "lo", "loopback", conf).await?;
+        Ok(())
+    }
+
     async fn add_single(
         &self,
         ship_id: &str,
         config: PlannedNetworkConfig,
     ) -> Result<VmNetworkConfig, tugboat_cni_operator::Error> {
-        let conf = CniNetConfList {
-            header: CniConfHeader {
-                cni_version: "1.0.0".to_string(),
-                name: config.info.name,
-            },
-            plugins: vec![CniConfContent::Bridge {
-                bridge: config.bridge,
-                is_gateway: config.info.spec.cluster_network.unwrap_or(true),
-                ip_masquerade: config.info.spec.internet_access.unwrap_or(false),
-                ipam: CniIpam {
-                    cni_type: "host-local".to_string(),
-                    subnet: config.info.spec.subnet,
-                    routes: config
-                        .info
-                        .spec
-                        .routes
-                        .into_iter()
-                        .map(|route| CniIpamRoute {
-                            destination: route.destination,
-                        })
-                        .collect(),
-                },
-            }],
-        };
+        let conf = Self::bridge_conf(&config);
         self.operator
             .add(ship_id, &config.vm.iface_name, "bridge", conf)
             .await?;
         Ok(config.vm)
+    }
+
+    async fn del_single(
+        &self,
+        ship_id: &str,
+        config: PlannedNetworkConfig,
+    ) -> Result<(), tugboat_cni_operator::Error> {
+        let conf = Self::bridge_conf(&config);
+        self.operator
+            .del(ship_id, &config.vm.iface_name, "bridge", conf)
+            .await?;
+        Ok(())
+    }
+
+    fn bridge_conf(config: &PlannedNetworkConfig) -> CniNetConfList {
+        CniNetConfList {
+            header: CniConfHeader {
+                cni_version: "1.0.0".to_string(),
+                name: config.info.name.clone(),
+            },
+            plugins: vec![CniConfContent::Bridge {
+                bridge: config.bridge.clone(),
+                is_gateway: config.info.spec.cluster_network.unwrap_or(true),
+                ip_masquerade: config.info.spec.internet_access.unwrap_or(false),
+                ipam: CniIpam {
+                    cni_type: "host-local".to_string(),
+                    subnet: config.info.spec.subnet.clone(),
+                    routes: config
+                        .info
+                        .spec
+                        .routes
+                        .iter()
+                        .map(|route| CniIpamRoute {
+                            destination: route.destination.clone(),
+                        })
+                        .collect(),
+                },
+            }],
+        }
     }
 }
 

@@ -39,13 +39,9 @@ Current evidence
   sent to the driver.
 
 What is still missing
-- `reconciler/ops/modify.rs` treats all volume-spec changes identically as recreate-required. A
-  capacity-only increase that the driver supports in place could instead trigger the existing
-  node-expansion path rather than forcing a full Ship recreate.
-- Recovery relies on the persisted JSON state under the publish directory. If those files are
-  lost or corrupted, the agent has no fallback to re-derive published state from the live driver.
-  Stronger self-healing (e.g. re-query driver state via `NodeGetVolumeStats` or replay publish
-  on startup) is not implemented.
+- ✓ `reconciler/ops/modify.rs` supports live node-side expansion for existing volumes. Capacity-only increases in the PV/PVC are detected during Ship reconciliation (even when the Ship spec is unchanged) and route to the existing node-expansion path rather than forcing a full Ship recreate.
+- Recovery relies on the persisted JSON state under the publish directory. If those files are lost or corrupted, the agent has no fallback to re-derive published state from the live driver. Stronger self-healing (e.g. re-query driver state via `NodeGetVolumeStats` or replay publish on startup) is not implemented.
+
 - Whether live CSI attach/detach (beyond resize) should ever become an in-place operation instead
   of the current recreate-required path is not decided; the architecture currently treats it as
   out of scope.

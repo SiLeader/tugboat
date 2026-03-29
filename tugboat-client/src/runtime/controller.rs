@@ -148,6 +148,7 @@ where
         let api = self.api.clone();
         let parent_token = self.cancellation_token.clone();
         let in_flight = self.in_flight.clone();
+        let this_backoff = self.backoff.clone();
         // Capture counter for the branch that uses it
         let counter = self.counter.clone();
 
@@ -163,14 +164,16 @@ where
                     };
 
                     if let Some(res) = result {
-                        match res {
-                            Ok(action) => {
-                                process_action(api, child_token, reconciler, &event, action).await;
-                            }
-                            Err(err) => {
-                                error!("failed to reconcile {}: {err}", T::kind());
-                            }
-                        }
+                        process_reconcile_result(
+                            api,
+                            child_token,
+                            reconciler,
+                            &event,
+                            res,
+                            &this_backoff,
+                            0,
+                        )
+                        .await;
                     }
                 });
                 return;
@@ -200,14 +203,16 @@ where
             };
 
             if let Some(res) = result {
-                match res {
-                    Ok(action) => {
-                        process_action(api, child_token, reconciler, &event, action).await;
-                    }
-                    Err(err) => {
-                        error!("failed to reconcile {}: {err}", T::kind());
-                    }
-                }
+                process_reconcile_result(
+                    api,
+                    child_token,
+                    reconciler,
+                    &event,
+                    res,
+                    &this_backoff,
+                    0,
+                )
+                .await;
             }
 
             // Clean up only if our token is still the active one (not superseded).
@@ -221,12 +226,14 @@ where
     }
 }
 
-async fn process_action<T, R>(
+async fn process_reconcile_result<T, R>(
     api: Api<T>,
     cancellation_token: CancellationToken,
     reconciler: R,
     event: &ReconcileEvent<T>,
-    action: Action,
+    result: Result<Action, R::Error>,
+    backoff: &BackoffConfig,
+    attempt: u32,
 ) where
     T: StaticResource
         + ObjectMetaResource
@@ -238,9 +245,81 @@ async fn process_action<T, R>(
         + 'static,
     R: Reconciler<T>,
 {
-    let Some(mut delay) = action.requeue_after() else {
+    match result {
+        Ok(action) => {
+            process_action(api, cancellation_token, reconciler, event, action, backoff).await;
+        }
+        Err(err) => {
+            let name = event.resource_name().unwrap_or("unknown");
+            error!("failed to reconcile {} {name}: {err}", T::kind());
+
+            let delay = backoff.delay_for(attempt);
+            process_requeue(
+                api,
+                cancellation_token,
+                reconciler,
+                event,
+                delay,
+                backoff,
+                attempt.saturating_add(1),
+            )
+            .await;
+        }
+    }
+}
+
+async fn process_action<T, R>(
+    api: Api<T>,
+    cancellation_token: CancellationToken,
+    reconciler: R,
+    event: &ReconcileEvent<T>,
+    action: Action,
+    backoff: &BackoffConfig,
+) where
+    T: StaticResource
+        + ObjectMetaResource
+        + Serialize
+        + DeserializeOwned
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    R: Reconciler<T>,
+{
+    let Some(delay) = action.requeue_after() else {
         return;
     };
+    process_requeue(
+        api,
+        cancellation_token,
+        reconciler,
+        event,
+        delay,
+        backoff,
+        0,
+    )
+    .await;
+}
+
+async fn process_requeue<T, R>(
+    api: Api<T>,
+    cancellation_token: CancellationToken,
+    reconciler: R,
+    event: &ReconcileEvent<T>,
+    mut delay: Duration,
+    backoff: &BackoffConfig,
+    mut attempt: u32,
+) where
+    T: StaticResource
+        + ObjectMetaResource
+        + Serialize
+        + DeserializeOwned
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    R: Reconciler<T>,
+{
     let Some(name) = event.resource_name().map(ToOwned::to_owned) else {
         return;
     };
@@ -256,7 +335,10 @@ async fn process_action<T, R>(
             Ok(None) => return,
             Err(err) => {
                 error!("failed to requeue {} {name}: {err}", T::kind());
-                return;
+                // On API error, retry with backoff
+                delay = backoff.delay_for(attempt);
+                attempt = attempt.saturating_add(1);
+                continue;
             }
         };
 
@@ -266,10 +348,12 @@ async fn process_action<T, R>(
                     return;
                 };
                 delay = next_delay;
+                attempt = 0;
             }
             Err(err) => {
                 error!("failed to reconcile requeued {} {name}: {err}", T::kind());
-                return;
+                delay = backoff.delay_for(attempt);
+                attempt = attempt.saturating_add(1);
             }
         }
     }
