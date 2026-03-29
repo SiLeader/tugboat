@@ -22,6 +22,15 @@ cargo fmt
 cargo deny check
 ```
 
+### Final checks (pre-merge)
+
+As a final verification before merging or releasing, run the following commands and address any issues they report:
+
+- cargo clippy
+- cargo fmt --check
+- cargo test
+
+
 ## High-level architecture
 
 - Tugboat is a Rust workspace for Kubernetes-style VM orchestration with etcd as the source of truth.
