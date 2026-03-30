@@ -243,7 +243,7 @@ impl ResourceStore {
         namespace: Option<String>,
         limit: Option<usize>,
     ) -> Result<Vec<ContentData<T>>, Error> {
-        let key = Self::create_key::<T>(namespace, "");
+        let key = Self::create_watch_key::<T>(namespace);
         info!("List resources: key = {key}");
         let mut client = self.etcd.clone();
         let mut options = GetOptions::default().with_prefix();
