@@ -3,3 +3,4 @@
 /docs
 /manifests
 /test
+!/dockerfiles/agent/entrypoint.sh

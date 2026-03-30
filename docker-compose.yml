@@ -1,0 +1,116 @@
+# Copyright 2025- SiLeader (Cerussite).
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+services:
+  # database
+  etcd:
+    image: 'gcr.io/etcd-development/etcd:v3.6.7'
+    environment:
+      ETCD_LISTEN_CLIENT_URLS: 'http://0.0.0.0:2379'
+      ETCD_ADVERTISE_CLIENT_URLS: 'http://0.0.0.0:2379'
+      DATA_DIR: '/var/lib/etcd'
+    ports:
+      - '2379:2379'
+    expose:
+      - '2379'
+    tmpfs:
+      - '/var/lib/etcd'
+    healthcheck:
+      test: [ "CMD", "etcdctl", "endpoint", "status" ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 2s
+
+  # control-plane
+  apiserver:
+    build:
+      context: .
+      dockerfile: dockerfiles/apiserver/Dockerfile
+    environment:
+      RUST_LOG: warn
+    ports:
+      - '8080:8080'
+    expose:
+      - '8080'
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://127.0.0.1:8080/healthz" ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 2s
+    volumes:
+      - ./sample-configs/apiserver:/etc/tugboat/apiserver
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: dockerfiles/scheduler/Dockerfile
+    environment:
+      RUST_LOG: info
+    volumes:
+      - ./sample-configs/scheduler:/etc/tugboat/scheduler
+    depends_on:
+      apiserver:
+        condition: service_healthy
+
+  controller-manager:
+    build:
+      context: .
+      dockerfile: dockerfiles/controller-manager/Dockerfile
+    environment:
+      RUST_LOG: info
+    volumes:
+      - ./sample-configs/controller-manager:/etc/tugboat/controller-manager
+      - csi-socket-dir:/var/run/csi
+    depends_on:
+      apiserver:
+        condition: service_healthy
+
+  # agent and runtime
+  agent:
+    build:
+      context: .
+      dockerfile: dockerfiles/agent/Dockerfile
+    privileged: true
+    environment:
+      RUST_LOG: debug
+    volumes:
+      - ./sample-configs/agent:/etc/tugboat/agent
+      - ./sample-configs/runtime:/etc/tugboat/runtime
+      - csi-socket-dir:/var/run/csi
+    tmpfs:
+      - '/data'
+      - '/var/run/netns'
+      - '/var/lib/tugboat-agent/csi'
+    depends_on:
+      apiserver:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # plugins
+  hostpath-provisioner:
+    image: 'registry.k8s.io/sig-storage/hostpathplugin:v1.17.0'
+    command:
+      - "--endpoint=unix:///var/run/csi/csi.sock"
+      - "--nodeid=node1"
+    volumes:
+      - csi-socket-dir:/var/run/csi
+
+volumes:
+  csi-socket-dir:

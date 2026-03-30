@@ -38,6 +38,11 @@ RUN wget https://github.com/containernetworking/plugins/releases/download/v1.9.0
     mkdir /plugins && \
     tar xzvf cni-plugins-linux-amd64-v1.9.0.tgz -C /plugins
 
+RUN wget https://github.com/flannel-io/flannel/releases/download/v0.28.2/flannel-v0.28.2-linux-amd64.tar.gz && \
+    echo 'dda1d5120ae6678666eef492531a7ad04492f80bd7740e5f9739908ef12f1bee  flannel-v0.28.2-linux-amd64.tar.gz' > flannel.sum && \
+    sha256sum --check flannel.sum && \
+    tar xzvf flannel-v0.28.2-linux-amd64.tar.gz -C /plugins
+
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y qemu-system qemu-utils && \
@@ -47,5 +52,7 @@ RUN apt-get update && apt-get install -y qemu-system qemu-utils && \
 COPY --from=builder /tugboat-agent /usr/bin/tugboat-agent
 COPY --from=builder /tugboat-runtime /usr/bin/tugboat-runtime
 COPY --from=cni-download /plugins/ /opt/cni/bin/
+COPY ./dockerfiles/agent/entrypoint.sh /
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/tugboat-agent"]

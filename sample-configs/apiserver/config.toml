@@ -13,8 +13,7 @@
 # limitations under the License.
 
 [http]
-listen = "127.0.0.1:8080"
-mount = "/api"
+listen = "0.0.0.0:8080"
 
 [etcd]
-endpoints = ["localhost:2379"]
+endpoints = ["etcd:2379"]
