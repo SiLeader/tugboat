@@ -32,4 +32,4 @@ cache_dir = "/tmp"
 publish_dir = "/var/lib/tugboat-agent/csi"
 
 [csi.drivers]
-# "example.csi.driver" = "/var/run/example-csi.sock"
+"hostpath.csi.k8s.io" = "/var/run/csi/csi.sock"
