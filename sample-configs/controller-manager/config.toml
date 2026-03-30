@@ -22,4 +22,4 @@ requeue_interval_seconds = 30
 requeue_interval_seconds = 30
 
 [csi.provisioners."hostpath.csi.k8s.io"]
-socket_path = "/var/run/csi.sock"
+socket_path = "/var/run/csi/csi.sock"
