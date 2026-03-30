@@ -185,6 +185,7 @@ main() {
     "$SCRIPT_DIR/05_configmap.yaml" \
     "$SCRIPT_DIR/06_secret.yaml" \
     "$SCRIPT_DIR/07_pvc.yaml" \
+    "$SCRIPT_DIR/07_pvc_fs.yaml" \
     "$SCRIPT_DIR/08_ship.yaml"
   do
     apply_manifest "$manifest"

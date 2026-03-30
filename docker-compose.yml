@@ -106,11 +106,13 @@ services:
   # plugins
   hostpath-provisioner:
     image: 'registry.k8s.io/sig-storage/hostpathplugin:v1.17.0'
+    #privileged: true
     command:
       - "--endpoint=unix:///var/run/csi/csi.sock"
       - "--nodeid=node1"
     volumes:
       - csi-socket-dir:/var/run/csi
+      #- /dev:/dev
 
 volumes:
   csi-socket-dir:

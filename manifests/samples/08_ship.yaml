@@ -31,10 +31,14 @@ spec:
       apiGroup: core
   volumeClaimRef:
     - name: data-disk
+    - name: data-disk-fs
   volumes:
     - name: data-disk
       persistentVolumeClaim:
         claimName: data-disk
+    - name: data-disk-fs
+      persistentVolumeClaim:
+        claimName: data-disk-fs
     - name: app-config
       configMap:
         name: app-config

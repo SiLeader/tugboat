@@ -14,15 +14,15 @@ storage provisioning, and VM scheduling. It is written for engineers who are new
 4. [Starting the Environment](#4-starting-the-environment)
 5. [Applying the Sample Manifests](#5-applying-the-sample-manifests)
 6. [Verifying Each Resource](#6-verifying-each-resource)
-   - [6.1 Node — Agent Registration](#61-node--agent-registration)
-   - [6.2 Namespace](#62-namespace)
-   - [6.3 ShipClass](#63-shipclass)
-   - [6.4 StorageClass](#64-storageclass)
-   - [6.5 ClusterNetworkClass and NetworkClass](#65-clusternetworkclass-and-networkclass)
-   - [6.6 ConfigMap](#66-configmap)
-   - [6.7 Secret](#67-secret)
-   - [6.8 PersistentVolumeClaim — Storage Provisioning](#68-persistentvolumeclaim--storage-provisioning)
-   - [6.9 Ship — Scheduling and Runtime](#69-ship--scheduling-and-runtime)
+    - [6.1 Node — Agent Registration](#61-node--agent-registration)
+    - [6.2 Namespace](#62-namespace)
+    - [6.3 ShipClass](#63-shipclass)
+    - [6.4 StorageClass](#64-storageclass)
+    - [6.5 ClusterNetworkClass and NetworkClass](#65-clusternetworkclass-and-networkclass)
+    - [6.6 ConfigMap](#66-configmap)
+    - [6.7 Secret](#67-secret)
+    - [6.8 PersistentVolumeClaim — Storage Provisioning](#68-persistentvolumeclaim--storage-provisioning)
+    - [6.9 Ship — Scheduling and Runtime](#69-ship--scheduling-and-runtime)
 7. [Known Limitations of the Docker Compose Environment](#7-known-limitations-of-the-docker-compose-environment)
 8. [Quick Reference: All Verification Commands](#8-quick-reference-all-verification-commands)
 9. [Troubleshooting](#9-troubleshooting)
@@ -37,22 +37,22 @@ Kubernetes so that existing knowledge transfers easily.
 
 Key concept mapping:
 
-| Kubernetes | Tugboat | Description |
-|---|---|---|
-| Pod | **Ship** | The workload unit (a running VM) |
-| Node | **Node** | A physical/virtual host that runs Ships |
-| Deployment | **Fleet** *(planned)* | A set of replicated Ships |
-| Container image | **VM image** (OCI) | An OCI artifact containing a disk image |
-| Namespace | **Namespace** | Scope for namespaced resources |
+| Kubernetes      | Tugboat               | Description                             |
+|-----------------|-----------------------|-----------------------------------------|
+| Pod             | **Ship**              | The workload unit (a running VM)        |
+| Node            | **Node**              | A physical/virtual host that runs Ships |
+| Deployment      | **Fleet** *(planned)* | A set of replicated Ships               |
+| Container image | **VM image** (OCI)    | An OCI artifact containing a disk image |
+| Namespace       | **Namespace**         | Scope for namespaced resources          |
 
 The system has four main components running in Docker Compose:
 
-| Service | Role |
-|---|---|
-| `apiserver` | REST API — stores and retrieves resources via etcd |
-| `scheduler` | Watches for unscheduled Ships and assigns them to Nodes |
-| `controller-manager` | Provisions PersistentVolumes and manages NetworkClass status |
-| `agent` | Runs on each Node; reconciles Ships (pulls images, starts/stops VMs) |
+| Service              | Role                                                                 |
+|----------------------|----------------------------------------------------------------------|
+| `apiserver`          | REST API — stores and retrieves resources via etcd                   |
+| `scheduler`          | Watches for unscheduled Ships and assigns them to Nodes              |
+| `controller-manager` | Provisions PersistentVolumes and manages NetworkClass status         |
+| `agent`              | Runs on each Node; reconciles Ships (pulls images, starts/stops VMs) |
 
 ---
 
@@ -60,12 +60,12 @@ The system has four main components running in Docker Compose:
 
 Make sure the following tools are installed on your machine before you begin:
 
-| Tool | Minimum version | Check with |
-|---|---|---|
-| Docker | 24+ | `docker --version` |
-| Docker Compose | v2 (plugin) | `docker compose version` |
-| curl | any | `curl --version` |
-| python3 + PyYAML | 3.8+ | `python3 -c "import yaml; print('ok')"` |
+| Tool             | Minimum version | Check with                              |
+|------------------|-----------------|-----------------------------------------|
+| Docker           | 24+             | `docker --version`                      |
+| Docker Compose   | v2 (plugin)     | `docker compose version`                |
+| curl             | any             | `curl --version`                        |
+| python3 + PyYAML | 3.8+            | `python3 -c "import yaml; print('ok')"` |
 
 If PyYAML is not installed, run:
 
@@ -152,6 +152,7 @@ cd manifests/samples
 ```
 
 The script:
+
 1. Waits for the API server to be ready
 2. Converts each YAML manifest to JSON
 3. `POST`s it to the correct API endpoint
@@ -199,10 +200,18 @@ curl -s http://localhost:8080/api/v1/nodes | python3 -m json.tool
 {
   "items": [
     {
-      "metadata": { "name": "node1" },
+      "metadata": {
+        "name": "node1"
+      },
       "spec": {
-        "resource": { "cpu": 24, "memory": 29012533248 },
-        "overcommit": { "cpuRatio": "1", "memoryRatio": "1" }
+        "resource": {
+          "cpu": 24,
+          "memory": 29012533248
+        },
+        "overcommit": {
+          "cpuRatio": "1",
+          "memoryRatio": "1"
+        }
       },
       "status": {
         "conditions": [
@@ -213,10 +222,26 @@ curl -s http://localhost:8080/api/v1/nodes | python3 -m json.tool
           }
         ],
         "cniPlugins": [
-          { "name": "bridge",   "ready": true,  "message": "Found plugin binary at '/opt/cni/bin/bridge'." },
-          { "name": "loopback", "ready": true,  "message": "Found plugin binary at '/opt/cni/bin/loopback'." },
-          { "name": "flannel",  "ready": false, "message": "Missing flannel prerequisites: ..." },
-          { "name": "portmap",  "ready": true,  "message": "Found plugin binary at '/opt/cni/bin/portmap'." }
+          {
+            "name": "bridge",
+            "ready": true,
+            "message": "Found plugin binary at '/opt/cni/bin/bridge'."
+          },
+          {
+            "name": "loopback",
+            "ready": true,
+            "message": "Found plugin binary at '/opt/cni/bin/loopback'."
+          },
+          {
+            "name": "flannel",
+            "ready": false,
+            "message": "Missing flannel prerequisites: ..."
+          },
+          {
+            "name": "portmap",
+            "ready": true,
+            "message": "Found plugin binary at '/opt/cni/bin/portmap'."
+          }
         ]
       }
     }
@@ -225,6 +250,7 @@ curl -s http://localhost:8080/api/v1/nodes | python3 -m json.tool
 ```
 
 **✅ Healthy signs:**
+
 - `items` contains at least one entry (agent registered successfully)
 - `status.conditions[0].type` is `"CniReady"` with `"status": "True"`
 - `bridge` and `loopback` plugins show `"ready": true`
@@ -259,10 +285,17 @@ curl -s http://localhost:8080/api/v1/shipclasses/small | python3 -m json.tool
 ```json
 {
   "kind": "ShipClass",
-  "metadata": { "name": "small" },
+  "metadata": {
+    "name": "small"
+  },
   "spec": {
-    "cpu": { "architecture": "x86_64", "cores": 2 },
-    "memory": { "size": "4Gi" }
+    "cpu": {
+      "architecture": "x86_64",
+      "cores": 2
+    },
+    "memory": {
+      "size": "4Gi"
+    }
   }
 }
 ```
@@ -287,7 +320,9 @@ curl -s http://localhost:8080/api/v1/storageclasses/hostpath | python3 -m json.t
 ```json
 {
   "kind": "StorageClass",
-  "metadata": { "name": "hostpath" },
+  "metadata": {
+    "name": "hostpath"
+  },
   "spec": {
     "provisioner": "hostpath.csi.k8s.io",
     "reclaimPolicy": "Delete",
@@ -296,7 +331,8 @@ curl -s http://localhost:8080/api/v1/storageclasses/hostpath | python3 -m json.t
 }
 ```
 
-**✅ Healthy:** `spec.provisioner` matches the CSI driver socket configured in `sample-configs/controller-manager/config.toml`.
+**✅ Healthy:** `spec.provisioner` matches the CSI driver socket configured in
+`sample-configs/controller-manager/config.toml`.
 
 ---
 
@@ -319,7 +355,9 @@ curl -s http://localhost:8080/api/v1/namespaces/demo/networkclasses/internal-net
 ```json
 {
   "kind": "ClusterNetworkClass",
-  "metadata": { "name": "demo-network" },
+  "metadata": {
+    "name": "demo-network"
+  },
   "spec": {
     "subnet": "10.100.0.0/24",
     "cniPlugin": "bridge",
@@ -334,7 +372,10 @@ curl -s http://localhost:8080/api/v1/namespaces/demo/networkclasses/internal-net
 ```json
 {
   "kind": "NetworkClass",
-  "metadata": { "namespace": "demo", "name": "internal-network" },
+  "metadata": {
+    "namespace": "demo",
+    "name": "internal-network"
+  },
   "spec": {
     "subnet": "10.200.0.0/24",
     "cniPlugin": "bridge",
@@ -363,7 +404,10 @@ curl -s http://localhost:8080/api/v1/namespaces/demo/configmaps/app-config | pyt
 ```json
 {
   "kind": "ConfigMap",
-  "metadata": { "namespace": "demo", "name": "app-config" },
+  "metadata": {
+    "namespace": "demo",
+    "name": "app-config"
+  },
   "data": {
     "app.conf": "[app]\nport = 8080\ndebug = false\n",
     "log.level": "info",
@@ -390,7 +434,10 @@ curl -s http://localhost:8080/api/v1/namespaces/demo/secrets/app-secret | python
 ```json
 {
   "kind": "Secret",
-  "metadata": { "namespace": "demo", "name": "app-secret" },
+  "metadata": {
+    "namespace": "demo",
+    "name": "app-secret"
+  },
   "stringData": {
     "username": "admin",
     "password": "s3cr3tP@ssw0rd"
@@ -420,9 +467,14 @@ curl -s http://localhost:8080/api/v1/namespaces/demo/persistentvolumeclaims/data
 ```json
 {
   "kind": "PersistentVolumeClaim",
-  "metadata": { "namespace": "demo", "name": "data-disk" },
+  "metadata": {
+    "namespace": "demo",
+    "name": "data-disk"
+  },
   "spec": {
-    "accessModes": ["ReadWriteOnce"],
+    "accessModes": [
+      "ReadWriteOnce"
+    ],
     "storageClassName": "hostpath",
     "volumeMode": "Block",
     "requestedCapacityBytes": 1073741824
@@ -442,6 +494,7 @@ curl -s http://localhost:8080/api/v1/persistentvolumes | python3 -m json.tool
 ```
 
 **✅ Healthy (on a full host environment):**
+
 - PVC `status.phase` is `"Bound"`
 - `status.volumeName` contains the auto-generated PV name
 - A matching PV appears in the PV list with `spec.claimRef.name = "data-disk"` and
@@ -549,12 +602,12 @@ The Docker Compose setup is designed to verify the **control plane flow** end-to
 low-level operations require kernel features that are not available inside standard Docker
 containers.
 
-| Feature | Limitation | Workaround |
-|---|---|---|
-| **Block volume provisioning** | `losetup` (loop device) fails inside the `controller-manager` container | Use `volumeMode: Filesystem` in the PVC, or run on a real Linux host with loop device support |
-| **VM execution (QEMU)** | The `agent` container does not include QEMU binaries | Ships will be scheduled correctly but the VM will not start; verify scheduling with `nodeName` |
-| **Flannel CNI** | The Flannel binary is not present in the agent image | Use `cniPlugin: bridge` in NetworkClass manifests (already the default in the samples) |
-| **Real VM images** | The image `ghcr.io/cerussite/tugboat/ubuntu:24.04` used in `08_ship.yaml` may not exist | Replace with a real OCI VM image for full end-to-end testing |
+| Feature                       | Limitation                                                                              | Workaround                                                                                     |
+|-------------------------------|-----------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| **Block volume provisioning** | `losetup` (loop device) fails inside the `controller-manager` container                 | Use `volumeMode: Filesystem` in the PVC, or run on a real Linux host with loop device support  |
+| **VM execution (QEMU)**       | The `agent` container requires priviledged                                              | Ships will be scheduled correctly but the VM will not start; verify scheduling with `nodeName` |
+| **Flannel CNI**               | The Flannel binary is not present in the agent image                                    | Use `cniPlugin: bridge` in NetworkClass manifests (already the default in the samples)         |
+| **Real VM images**            | The image `ghcr.io/cerussite/tugboat/ubuntu:24.04` used in `08_ship.yaml` may not exist | Replace with a real OCI VM image for full end-to-end testing                                   |
 
 Despite these limitations, the following flows are fully verifiable in Docker Compose:
 
@@ -699,6 +752,7 @@ docker compose logs scheduler | grep -E 'ERROR|WARN|filter|Reject'
 ```
 
 Common reasons:
+
 - **NetworkFit rejection**: the `cniPlugin` in your NetworkClass is not available on the node.
   Check that `cniPlugin: bridge` (not `flannel`) is used and that node1 shows `bridge: ready=true`.
 - **ResourceFit rejection**: the ShipClass requests more CPU/memory than the node has free.
