@@ -22,33 +22,95 @@ use std::fs::File;
 use std::sync::LazyLock;
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DockerConfigJson {
+    #[serde(default)]
     auths: HashMap<String, AuthContent>,
+    creds_store: Option<String>,
+    #[serde(default)]
+    cred_helpers: HashMap<String, String>,
 }
 
 #[derive(serde::Deserialize)]
 struct AuthContent {
-    auth: String,
+    auth: Option<String>,
 }
 
-pub(crate) fn load_auth_or_anonymous(host: &str) -> RegistryAuth {
-    load_auth(host).unwrap_or(RegistryAuth::Anonymous)
+pub(crate) async fn load_auth_or_anonymous(host: &str) -> RegistryAuth {
+    load_auth(host).await.unwrap_or(RegistryAuth::Anonymous)
 }
 
-static HTTP_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^https?//([\w.]+)"#).unwrap());
+static HTTP_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"^https?://([^/]+).*$"#).unwrap());
 
-fn load_auth(host: &str) -> Option<RegistryAuth> {
+async fn load_auth(host: &str) -> Option<RegistryAuth> {
     let home = home_dir()?;
     let config = home.join(".docker/config.json");
     let file = File::open(config).ok()?;
     let config: DockerConfigJson = serde_json::from_reader(file).ok()?;
+
+    // 1. Check credHelpers
+    let cred_helpers: HashMap<_, _> = config
+        .cred_helpers
+        .into_iter()
+        .map(|(k, v)| (HTTP_REGEX.replace(&k, "$1").to_string(), v))
+        .collect();
+    if let Some(helper) = cred_helpers.get(host)
+        && let Some(auth) = call_helper(helper, host).await
+    {
+        return Some(auth);
+    }
+
+    // 2. Check credsStore
+    if let Some(helper) = &config.creds_store
+        && let Some(auth) = call_helper(helper, host).await
+    {
+        return Some(auth);
+    }
+
+    // 3. Check auths
     let auths: HashMap<_, _> = config
         .auths
         .into_iter()
         .map(|(k, v)| (HTTP_REGEX.replace(&k, "$1").to_string(), v.auth))
         .collect();
-    let auth = auths.get(host)?.as_str();
-    let auth = String::from_utf8(BASE64_STANDARD.decode(auth).ok()?).ok()?;
-    let (user, pw) = auth.split_once(":")?;
-    Some(RegistryAuth::Basic(user.to_string(), pw.to_string()))
+    if let Some(Some(auth)) = auths.get(host) {
+        let auth = String::from_utf8(BASE64_STANDARD.decode(auth).ok()?).ok()?;
+        let (user, pw) = auth.split_once(":")?;
+        return Some(RegistryAuth::Basic(user.to_string(), pw.to_string()));
+    }
+
+    None
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct HelperOutput {
+    username: String,
+    secret: String,
+}
+
+async fn call_helper(helper: &str, host: &str) -> Option<RegistryAuth> {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    let mut child = Command::new(format!("docker-credential-{}", helper))
+        .arg("get")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let mut stdin = child.stdin.take()?;
+    stdin.write_all(host.as_bytes()).await.ok()?;
+    drop(stdin);
+
+    let output = child.wait_with_output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let res: HelperOutput = serde_json::from_slice(&output.stdout).ok()?;
+    Some(RegistryAuth::Basic(res.username, res.secret))
 }
