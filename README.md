@@ -104,7 +104,7 @@ metadata:
   namespace: default
   name: ship
 spec:
-  image: example.com/vm-images/ubuntu:24.04
+  image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
   shipClass: lightweight
   volumes:
     - name: data-disk
@@ -139,7 +139,12 @@ Current node-side support matrix:
 volume name, so both CSI `Filesystem` claims and projected `ConfigMap` / `Secret`
 volumes are passed to the guest through the same mechanism.
 
-Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret / `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context handling, live `NodeExpandVolume` (without Ship recreate) when the driver advertises it, and `NodeGetVolumeStats`-backed PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
+Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClaim`, and `StorageClass` APIs plus dynamic
+CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret /
+`fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context
+handling, live `NodeExpandVolume` (without Ship recreate) when the driver advertises it, and `NodeGetVolumeStats`-backed
+PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage
+constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
 
 ### CNI status and Flannel validation
 

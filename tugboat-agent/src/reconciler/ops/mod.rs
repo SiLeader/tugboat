@@ -49,9 +49,35 @@ pub(super) fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Er
     })
 }
 
-/// Fingerprint covering only the set of volume claim references.
-pub(super) fn volume_claims_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
-    let normalized = normalized_ship_volumes(spec)?;
+/// Fingerprint covering only the PersistentVolumeClaim volume references.
+/// Changes to PVC bindings require a full VM recreate.
+pub(super) fn pvc_volume_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
+    use crate::reconciler::volume::NormalizedVolumeSource;
+    let normalized: Vec<_> = normalized_ship_volumes(spec)?
+        .into_iter()
+        .filter(|v| {
+            matches!(
+                v.source,
+                NormalizedVolumeSource::PersistentVolumeClaim { .. }
+            )
+        })
+        .collect();
+    Ok(sha256_fingerprint(&normalized)?)
+}
+
+/// Fingerprint covering only the materialized (ConfigMap / Secret) volume references.
+/// Changes to these can be applied in-place by re-materializing files on the host.
+pub(super) fn materialized_volume_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
+    use crate::reconciler::volume::NormalizedVolumeSource;
+    let normalized: Vec<_> = normalized_ship_volumes(spec)?
+        .into_iter()
+        .filter(|v| {
+            matches!(
+                v.source,
+                NormalizedVolumeSource::ConfigMap { .. } | NormalizedVolumeSource::Secret { .. }
+            )
+        })
+        .collect();
     Ok(sha256_fingerprint(&normalized)?)
 }
 
@@ -95,9 +121,14 @@ mod tests {
             "scheduling-only field changes must not alter the spec fingerprint"
         );
         assert_eq!(
-            volume_claims_fingerprint(&a).unwrap(),
-            volume_claims_fingerprint(&b).unwrap(),
-            "scheduling-only field changes must not alter the volume fingerprint"
+            pvc_volume_fingerprint(&a).unwrap(),
+            pvc_volume_fingerprint(&b).unwrap(),
+            "scheduling-only field changes must not alter the pvc volume fingerprint"
+        );
+        assert_eq!(
+            materialized_volume_fingerprint(&a).unwrap(),
+            materialized_volume_fingerprint(&b).unwrap(),
+            "scheduling-only field changes must not alter the materialized volume fingerprint"
         );
     }
 
@@ -107,15 +138,19 @@ mod tests {
         let mut b = base_spec();
         b.image = "registry.example.com/vm:v2".to_string();
         assert_ne!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
-        // volume fingerprint should stay the same
+        // volume fingerprints should stay the same
         assert_eq!(
-            volume_claims_fingerprint(&a).unwrap(),
-            volume_claims_fingerprint(&b).unwrap()
+            pvc_volume_fingerprint(&a).unwrap(),
+            pvc_volume_fingerprint(&b).unwrap()
+        );
+        assert_eq!(
+            materialized_volume_fingerprint(&a).unwrap(),
+            materialized_volume_fingerprint(&b).unwrap()
         );
     }
 
     #[test]
-    fn volume_claim_change_alters_volume_fingerprint_only() {
+    fn pvc_change_alters_pvc_fingerprint_not_materialized() {
         let a = base_spec();
         let mut b = base_spec();
         b.volume_claim_ref.push(
@@ -124,15 +159,21 @@ mod tests {
             },
         );
         assert_ne!(
-            volume_claims_fingerprint(&a).unwrap(),
-            volume_claims_fingerprint(&b).unwrap()
+            pvc_volume_fingerprint(&a).unwrap(),
+            pvc_volume_fingerprint(&b).unwrap(),
+            "pvc_volume_fingerprint must change when PVC refs change"
+        );
+        assert_eq!(
+            materialized_volume_fingerprint(&a).unwrap(),
+            materialized_volume_fingerprint(&b).unwrap(),
+            "materialized_volume_fingerprint must not change when only PVC refs change"
         );
         // spec fingerprint should stay the same
         assert_eq!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
     }
 
     #[test]
-    fn named_volume_change_alters_volume_fingerprint_only() {
+    fn configmap_change_alters_materialized_fingerprint_not_pvc() {
         let a = base_spec();
         let mut b = base_spec();
         b.volumes.push(ShipVolume {
@@ -143,11 +184,70 @@ mod tests {
             }),
             ..Default::default()
         });
-
         assert_ne!(
-            volume_claims_fingerprint(&a).unwrap(),
-            volume_claims_fingerprint(&b).unwrap()
+            materialized_volume_fingerprint(&a).unwrap(),
+            materialized_volume_fingerprint(&b).unwrap(),
+            "materialized_volume_fingerprint must change when ConfigMap volumes change"
+        );
+        assert_eq!(
+            pvc_volume_fingerprint(&a).unwrap(),
+            pvc_volume_fingerprint(&b).unwrap(),
+            "pvc_volume_fingerprint must not change when only ConfigMap volumes change"
         );
         assert_eq!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
+    }
+
+    #[test]
+    fn secret_change_alters_materialized_fingerprint_not_pvc() {
+        let a = base_spec();
+        let mut b = base_spec();
+        b.volumes.push(ShipVolume {
+            name: "secrets".to_string(),
+            secret: Some(tugboat_resources::manifests::core::v1::SecretVolumeSource {
+                secret_name: "app-secret".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert_ne!(
+            materialized_volume_fingerprint(&a).unwrap(),
+            materialized_volume_fingerprint(&b).unwrap(),
+            "materialized_volume_fingerprint must change when Secret volumes change"
+        );
+        assert_eq!(
+            pvc_volume_fingerprint(&a).unwrap(),
+            pvc_volume_fingerprint(&b).unwrap(),
+            "pvc_volume_fingerprint must not change when only Secret volumes change"
+        );
+        assert_eq!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
+    }
+
+    #[test]
+    fn mixed_change_alters_both_volume_fingerprints() {
+        let a = base_spec();
+        let mut b = base_spec();
+        b.volume_claim_ref.push(
+            tugboat_resources::manifests::core::v1::ShipVolumeClaimReference {
+                name: "pvc-1".to_string(),
+            },
+        );
+        b.volumes.push(ShipVolume {
+            name: "config".to_string(),
+            config_map: Some(ConfigMapVolumeSource {
+                name: "app-config".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert_ne!(
+            pvc_volume_fingerprint(&a).unwrap(),
+            pvc_volume_fingerprint(&b).unwrap(),
+            "pvc_volume_fingerprint must change when PVC refs change"
+        );
+        assert_ne!(
+            materialized_volume_fingerprint(&a).unwrap(),
+            materialized_volume_fingerprint(&b).unwrap(),
+            "materialized_volume_fingerprint must change when ConfigMap volumes change"
+        );
     }
 }

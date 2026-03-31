@@ -21,7 +21,8 @@ pub(crate) struct Runtime {
     ship_name: String,
     id: String,
     spec_fingerprint: String,
-    volume_fingerprint: String,
+    pvc_volume_fingerprint: String,
+    materialized_volume_fingerprint: String,
     published_volumes: Vec<PublishedVolume>,
 }
 
@@ -31,7 +32,8 @@ impl Runtime {
         ship_name: String,
         id: String,
         spec_fingerprint: String,
-        volume_fingerprint: String,
+        pvc_volume_fingerprint: String,
+        materialized_volume_fingerprint: String,
         published_volumes: Vec<PublishedVolume>,
     ) -> Self {
         Self {
@@ -39,7 +41,8 @@ impl Runtime {
             ship_name,
             id,
             spec_fingerprint,
-            volume_fingerprint,
+            pvc_volume_fingerprint,
+            materialized_volume_fingerprint,
             published_volumes,
         }
     }
@@ -52,17 +55,15 @@ impl Runtime {
         self.spec_fingerprint == fingerprint
     }
 
-    pub(super) fn matches_volume_fingerprint(&self, fingerprint: &str) -> bool {
-        self.volume_fingerprint == fingerprint
+    pub(super) fn matches_pvc_volume_fingerprint(&self, fingerprint: &str) -> bool {
+        self.pvc_volume_fingerprint == fingerprint
     }
 
-    #[allow(dead_code)]
-    pub(super) fn update_fingerprints(
-        &mut self,
-        spec_fingerprint: String,
-        volume_fingerprint: String,
-    ) {
-        self.spec_fingerprint = spec_fingerprint;
-        self.volume_fingerprint = volume_fingerprint;
+    pub(super) fn matches_materialized_volume_fingerprint(&self, fingerprint: &str) -> bool {
+        self.materialized_volume_fingerprint == fingerprint
+    }
+
+    pub(super) fn update_materialized_volume_fingerprint(&mut self, fingerprint: String) {
+        self.materialized_volume_fingerprint = fingerprint;
     }
 }

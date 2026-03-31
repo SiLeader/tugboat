@@ -32,7 +32,8 @@ pub(crate) struct RuntimeCreateRequest<'a> {
     pub networks: Vec<VmNetworkConfig>,
     pub volumes: Vec<VmVolumeConfig>,
     pub spec_fingerprint: String,
-    pub volume_fingerprint: String,
+    pub pvc_volume_fingerprint: String,
+    pub materialized_volume_fingerprint: String,
     pub published_volumes: Vec<PublishedVolume>,
 }
 
@@ -55,7 +56,8 @@ impl RuntimeOperator {
             networks,
             volumes,
             spec_fingerprint,
-            volume_fingerprint,
+            pvc_volume_fingerprint,
+            materialized_volume_fingerprint,
             published_volumes,
         } = request;
         let Some(ship_class_spec) = ship_class.spec else {
@@ -107,7 +109,8 @@ impl RuntimeOperator {
                 ship_name,
                 ship_id,
                 spec_fingerprint,
-                volume_fingerprint,
+                pvc_volume_fingerprint,
+                materialized_volume_fingerprint,
                 published_volumes,
             ),
         );

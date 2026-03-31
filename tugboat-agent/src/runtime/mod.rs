@@ -63,33 +63,45 @@ impl RuntimeOperator {
             .is_some_and(|runtime| runtime.matches_spec_fingerprint(fingerprint))
     }
 
-    pub(crate) async fn matches_volume_fingerprint(&self, id: &str, fingerprint: &str) -> bool {
+    pub(crate) async fn matches_pvc_volume_fingerprint(&self, id: &str, fingerprint: &str) -> bool {
         self.children
             .read()
             .await
             .get(id)
-            .is_some_and(|runtime| runtime.matches_volume_fingerprint(fingerprint))
+            .is_some_and(|runtime| runtime.matches_pvc_volume_fingerprint(fingerprint))
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn update_fingerprints(
+    pub(crate) async fn matches_materialized_volume_fingerprint(
         &self,
         id: &str,
-        spec_fingerprint: String,
-        volume_fingerprint: String,
+        fingerprint: &str,
+    ) -> bool {
+        self.children
+            .read()
+            .await
+            .get(id)
+            .is_some_and(|runtime| runtime.matches_materialized_volume_fingerprint(fingerprint))
+    }
+
+    pub(crate) async fn update_materialized_volume_fingerprint(
+        &self,
+        id: &str,
+        fingerprint: String,
     ) {
         if let Some(runtime) = self.children.write().await.get_mut(id) {
-            runtime.update_fingerprints(spec_fingerprint, volume_fingerprint);
+            runtime.update_materialized_volume_fingerprint(fingerprint);
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn register_existing(
         &self,
         namespace: String,
         ship_name: String,
         id: String,
         spec_fingerprint: String,
-        volume_fingerprint: String,
+        pvc_volume_fingerprint: String,
+        materialized_volume_fingerprint: String,
         published_volumes: Vec<crate::csi::PublishedVolume>,
     ) {
         let mut children = self.children.write().await;
@@ -100,7 +112,8 @@ impl RuntimeOperator {
                 ship_name,
                 id,
                 spec_fingerprint,
-                volume_fingerprint,
+                pvc_volume_fingerprint,
+                materialized_volume_fingerprint,
                 published_volumes,
             ),
         );

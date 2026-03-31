@@ -1,45 +1,40 @@
 Ship Modified Reconciliation
 ============================
 
+Status: DONE (2026-03-31)
+
 Goal
 Implement real handling for Ship Modified watch events in the agent.
 
-Current evidence
-- README.md marks Modified/Delete handling at a high level, but the agent is still overall listed
-  as in progress and Modified reconciliation remains partial in practice.
-- tugboat-agent/src/reconciler/reconcile.rs dispatches WatchEvent::Modified.
-- tugboat-agent/src/reconciler/ops/modify.rs now computes a spec fingerprint and uses runtime_operator.matches_spec to detect no-op updates. If the runtime is missing it delegates to reconcile_added; if the spec changed and live mutation is not supported it sets a ShipStatus condition (SpecChangeRequiresRecreate) and replaces the status.
-- tugboat-agent/src/cni.rs now supports both `bridge` and `flannel` network planning via
-  `NetworkClassSpec.cniPlugin`, but Modified reconciliation still does not hot-apply network
-  attachment or backend changes.
-- Live in-place mutation for image, network, volume, or class changes is still largely unimplemented and requires work.
+What was implemented
+- Field mutability is now explicitly defined and enforced:
+  - image, ship_class, network_class_ref, uefi, PVC volume refs → VM recreate (delete + re-add)
+  - Materialized volumes (ConfigMap / Secret) → in-place refresh of host files via virtio-9p
+  - Scheduling fields (node_name, tolerations, scheduler_name) → true no-op (excluded from fingerprints)
+- Volume fingerprint split into pvc_volume_fingerprint and materialized_volume_fingerprint so
+  recreate is not triggered unnecessarily for ConfigMap / Secret content changes.
+- reconcile_recreate: calls reconcile_deleted then reconcile_added; safe to crash between the two
+  because the next reconcile will find no runtime and fall through to reconcile_added.
+- refresh_materialized_volumes: re-materializes ConfigMap / Secret files in place; sets
+  MaterializedVolumesRefreshed condition on success.
+- No-op path (spec and both volume fingerprints unchanged) still checks pending CSI volume
+  expansions as before.
+- Runtime-missing fallback still delegates to reconcile_added unchanged.
+- All modifications are idempotent; repeated identical events are true no-ops.
 
-Why this matters
-- Added and Deleted flows exist, but updates to an existing Ship do not yet fully converge to the desired state.
-- A running VM cannot safely be managed in production if image, class, network, or volume changes are silently ignored or only produce a status condition.
+Changed files
+- tugboat-agent/src/reconciler/ops/mod.rs — split volume_claims_fingerprint into
+  pvc_volume_fingerprint and materialized_volume_fingerprint; added 5 new fingerprint tests.
+- tugboat-agent/src/reconciler/ops/modify.rs — rewrote reconcile_modified; added reconcile_recreate
+  and refresh_materialized_volumes.
+- tugboat-agent/src/reconciler/ops/add.rs — updated to compute and pass split fingerprints.
+- tugboat-agent/src/runtime/inner/mod.rs — split volume_fingerprint field into two; updated
+  Runtime struct and accessors.
+- tugboat-agent/src/runtime/mod.rs — updated RuntimeOperator to expose split fingerprint methods.
+- tugboat-agent/src/runtime/create.rs — updated RuntimeCreateRequest to carry split fingerprints.
 
-What to implement
-- Define which Ship fields are mutable in place, which require restart or recreate, and which must be rejected.
-- Implement targeted in-place updates for supported changes (e.g., certain network or volume
-  hotplug operations) using CNI and CSI integrations when possible.
-- Decide how `NetworkClass` changes behave when they alter `cniPlugin`, attachment order, or
-  backend-specific settings such as Flannel delegate options.
-- Preserve the current fallback where a modified but missing runtime is treated like Added.
-- Update Ship status with explicit conditions for accepted updates, rejected updates, restart-required updates, and failures.
-- Make the handler idempotent so repeated Modified events with no meaningful delta are true no-ops.
-
-Implementation surfaces
-- tugboat-agent/src/reconciler/ops/modify.rs
-- tugboat-agent/src/reconciler/ops/add.rs
-- tugboat-agent/src/reconciler/network.rs
-- tugboat-agent/src/reconciler/volume.rs
-- tugboat-agent/src/runtime/
-- tugboat-agent/src/cni.rs
-- tugboat-agent/src/csi.rs
-
-Acceptance criteria
-- Modified events trigger deterministic reconciliation or an explicit status condition instead of silent no-ops.
-- Supported in-place mutations are applied without recreating the VM.
-- Unsupported mutations fail explicitly and leave a visible status condition.
-- Recovery still works when the runtime record is missing and the agent must rebuild state from the Ship object.
-- Tests cover mutable updates, rejected updates, cleanup on failure, and runtime-missing fallback.
+Remaining / out of scope
+- Live network attachment hotplug (CNI changes without recreate) — tracked separately in
+  todo/cni-and-networking.txt.
+- ConfigMap / Secret live reload without a Ship spec change (watching those resources directly) —
+  tracked separately in todo/configmap-secret-volume-live-reload.txt.

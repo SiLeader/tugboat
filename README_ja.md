@@ -100,7 +100,7 @@ metadata:
   namespace: default
   name: ship
 spec:
-  image: example.com/vm-images/ubuntu:24.04
+  image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
   shipClass: lightweight
   volumes:
     - name: data-disk
@@ -134,7 +134,12 @@ CSI volume は `spec.volumes[].persistentVolumeClaim` で同一 namespace の
 Ship volume の名前が使われます。そのため、CSI の `Filesystem` claim だけでなく
 `ConfigMap` / `Secret` の projected volume も同じ経路で guest へ渡されます。
 
-control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context、稼働中の Ship を停止させない live `NodeExpandVolume`、`NodeGetVolumeStats` による CSI health / usage の PV/PVC condition 反映まで対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone 系ワークフローです。
+control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、
+`tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、
+`Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context、稼働中の Ship
+を停止させない live `NodeExpandVolume`、`NodeGetVolumeStats` による CSI health / usage の PV/PVC condition
+反映まで対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone
+系ワークフローです。
 
 ### CNI status と Flannel 検証
 
@@ -197,4 +202,4 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
 
 Apache License 2.0
 
-[LICENSE](../LICENSE)を参照してください。
+[LICENSE](./LICENSE)を参照してください。
