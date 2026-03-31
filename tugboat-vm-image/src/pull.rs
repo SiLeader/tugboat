@@ -26,7 +26,7 @@ impl VmImageRegistry {
     pub async fn pull(&self, image: &str, insecure: Option<bool>) -> Result<Image, Error> {
         let reference: Reference = image.parse()?;
 
-        let auth = load_auth_or_anonymous(reference.registry());
+        let auth = load_auth_or_anonymous(reference.registry()).await;
 
         let client = self.get_client(reference.registry(), insecure);
         let data = client

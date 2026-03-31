@@ -67,7 +67,7 @@ impl VmImageRegistry {
         ];
 
         let reference: Reference = tag.parse()?;
-        let auth = load_auth_or_anonymous(reference.registry());
+        let auth = load_auth_or_anonymous(reference.registry()).await;
 
         let client = self.get_client(reference.registry(), insecure);
         debug!("Pushing image to {}", reference);
