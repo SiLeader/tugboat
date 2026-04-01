@@ -174,7 +174,7 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
 - [x] tugboat-cli build (ImagefileからVMイメージのビルド)
 - [x] fieldSelectorとlabelSelector
 - [x] tugboat-scheduler
-- [ ] tugboat-agent (← イマココ)
+- [x] tugboat-agent
     - [x] Nodeリソースの自動登録
     - [x] Ship Addedイベントのreconcile
     - [x] ネットワーク (CNI, NetworkClass / ClusterNetworkClass)
@@ -183,7 +183,7 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [x] ストレージ (CSI publish/stage, controller publish context, および live expansion)
     - [ ] Topology-aware scheduling と snapshot 系ワークフロー
 - [x] Secret
-- [ ] tugboat-controller-manager
+- [x] tugboat-controller-manager
     - [x] CSIの動的プロビジョニング
     - [x] CSI管理下PVのcleanup
     - [ ] ReplicaSet (Shipの規定数維持)

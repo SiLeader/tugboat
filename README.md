@@ -178,7 +178,7 @@ For a manual multi-node validation flow:
 - [x] tugboat-cli build (Build a VM Image from a Imagefile)
 - [x] fieldSelector and labelSelector
 - [x] tugboat‑scheduler
-- [ ] tugboat‑agent (In progress)
+- [x] tugboat‑agent
     - [x] Node auto-registration
     - [x] Reconcile on Ship Added events
     - [x] Networking (CNI, NetworkClass / ClusterNetworkClass)
@@ -187,7 +187,7 @@ For a manual multi-node validation flow:
     - [x] Storage (CSI publish/stage, controller publish context, and live expansion)
     - [ ] Topology-aware scheduling and snapshot-style workflows
 - [x] Secret
-- [ ] tugboat-controller-manager
+- [x] tugboat-controller-manager
     - [x] Dynamic CSI volume provisioning
     - [x] CSI-backed managed PV cleanup
     - [ ] ReplicaSet (Maintaining the prescribed number of ships)
