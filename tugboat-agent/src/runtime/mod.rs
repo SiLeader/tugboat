@@ -105,16 +105,9 @@ impl RuntimeOperator {
         let mut children = self.children.write().await;
         children.insert(
             id.clone(),
-            inner::Runtime::new(
-                namespace,
-                ship_name,
-                id,
-                fingerprints,
-                published_volumes,
-            ),
+            inner::Runtime::new(namespace, ship_name, id, fingerprints, published_volumes),
         );
     }
-
 }
 
 #[derive(Debug, Clone, Deserialize)]
