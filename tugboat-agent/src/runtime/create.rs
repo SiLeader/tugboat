@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::csi::PublishedVolume;
+use crate::reconciler::ShipFingerprints;
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::inner::Runtime;
@@ -31,9 +32,7 @@ pub(crate) struct RuntimeCreateRequest<'a> {
     pub ship_class: ShipClass,
     pub networks: Vec<VmNetworkConfig>,
     pub volumes: Vec<VmVolumeConfig>,
-    pub spec_fingerprint: String,
-    pub pvc_volume_fingerprint: String,
-    pub materialized_volume_fingerprint: String,
+    pub fingerprints: ShipFingerprints,
     pub published_volumes: Vec<PublishedVolume>,
 }
 
@@ -55,9 +54,7 @@ impl RuntimeOperator {
             ship_class,
             networks,
             volumes,
-            spec_fingerprint,
-            pvc_volume_fingerprint,
-            materialized_volume_fingerprint,
+            fingerprints,
             published_volumes,
         } = request;
         let Some(ship_class_spec) = ship_class.spec else {
@@ -108,9 +105,7 @@ impl RuntimeOperator {
                 namespace,
                 ship_name,
                 ship_id,
-                spec_fingerprint,
-                pvc_volume_fingerprint,
-                materialized_volume_fingerprint,
+                fingerprints,
                 published_volumes,
             ),
         );

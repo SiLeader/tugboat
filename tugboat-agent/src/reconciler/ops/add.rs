@@ -97,9 +97,7 @@ impl ShipReconciler {
             .namespace
             .clone()
             .unwrap_or("default".to_string());
-        let spec_fp = super::spec_fingerprint(ship_spec)?;
-        let pvc_vol_fp = super::pvc_volume_fingerprint(ship_spec)?;
-        let mat_vol_fp = super::materialized_volume_fingerprint(ship_spec)?;
+        let fingerprints = super::ShipFingerprints::new(ship_spec)?;
 
         if self.runtime_operator.is_present(ship_id).await? {
             let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
@@ -116,9 +114,7 @@ impl ShipReconciler {
                     namespace,
                     name.clone(),
                     ship_id.clone(),
-                    spec_fp,
-                    pvc_vol_fp,
-                    mat_vol_fp,
+                    fingerprints,
                     published_volumes,
                 )
                 .await;
@@ -178,9 +174,7 @@ impl ShipReconciler {
                         ship_class: class,
                         networks: networks.iter().map(|n| n.vm.clone()).collect(),
                         volumes,
-                        spec_fingerprint: spec_fp,
-                        pvc_volume_fingerprint: pvc_vol_fp,
-                        materialized_volume_fingerprint: mat_vol_fp,
+                        fingerprints: fingerprints.clone(),
                         published_volumes,
                     })
                     .await

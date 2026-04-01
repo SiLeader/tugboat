@@ -15,14 +15,13 @@
 mod status;
 
 use crate::csi::PublishedVolume;
+use crate::reconciler::ShipFingerprints;
 
 pub(crate) struct Runtime {
     namespace: String,
     ship_name: String,
     id: String,
-    spec_fingerprint: String,
-    pvc_volume_fingerprint: String,
-    materialized_volume_fingerprint: String,
+    fingerprints: ShipFingerprints,
     published_volumes: Vec<PublishedVolume>,
 }
 
@@ -31,18 +30,14 @@ impl Runtime {
         namespace: String,
         ship_name: String,
         id: String,
-        spec_fingerprint: String,
-        pvc_volume_fingerprint: String,
-        materialized_volume_fingerprint: String,
+        fingerprints: ShipFingerprints,
         published_volumes: Vec<PublishedVolume>,
     ) -> Self {
         Self {
             namespace,
             ship_name,
             id,
-            spec_fingerprint,
-            pvc_volume_fingerprint,
-            materialized_volume_fingerprint,
+            fingerprints,
             published_volumes,
         }
     }
@@ -52,18 +47,18 @@ impl Runtime {
     }
 
     pub(super) fn matches_spec_fingerprint(&self, fingerprint: &str) -> bool {
-        self.spec_fingerprint == fingerprint
+        self.fingerprints.spec == fingerprint
     }
 
     pub(super) fn matches_pvc_volume_fingerprint(&self, fingerprint: &str) -> bool {
-        self.pvc_volume_fingerprint == fingerprint
+        self.fingerprints.pvc_volume == fingerprint
     }
 
     pub(super) fn matches_materialized_volume_fingerprint(&self, fingerprint: &str) -> bool {
-        self.materialized_volume_fingerprint == fingerprint
+        self.fingerprints.materialized_volume == fingerprint
     }
 
     pub(super) fn update_materialized_volume_fingerprint(&mut self, fingerprint: String) {
-        self.materialized_volume_fingerprint = fingerprint;
+        self.fingerprints.materialized_volume = fingerprint;
     }
 }

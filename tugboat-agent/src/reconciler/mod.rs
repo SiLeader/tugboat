@@ -15,9 +15,11 @@
 mod error;
 mod materialized_volume;
 mod network;
-mod ops;
+pub(crate) mod ops;
 mod reconcile;
 mod volume;
+
+pub(crate) use ops::ShipFingerprints;
 
 use crate::cni::CniWrapper;
 use crate::csi::{CsiDrivers, CsiWrapper};

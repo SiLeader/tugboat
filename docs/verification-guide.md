@@ -607,7 +607,7 @@ containers.
 | **Block volume provisioning** | `losetup` (loop device) fails inside the `controller-manager` container                 | Use `volumeMode: Filesystem` in the PVC, or run on a real Linux host with loop device support  |
 | **VM execution (QEMU)**       | The `agent` container requires priviledged                                              | Ships will be scheduled correctly but the VM will not start; verify scheduling with `nodeName` |
 | **Flannel CNI**               | The Flannel binary is not present in the agent image                                    | Use `cniPlugin: bridge` in NetworkClass manifests (already the default in the samples)         |
-| **Real VM images**            | The image `ghcr.io/cerussite/tugboat/ubuntu:24.04` used in `08_ship.yaml` may not exist | Replace with a real OCI VM image for full end-to-end testing                                   |
+| **Real VM images**            | The image `ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04` used in `08_ship.yaml` may not exist | Replace with a real OCI VM image for full end-to-end testing                                   |
 
 Despite these limitations, the following flows are fully verifiable in Docker Compose:
 

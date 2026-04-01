@@ -99,25 +99,22 @@ impl RuntimeOperator {
         namespace: String,
         ship_name: String,
         id: String,
-        spec_fingerprint: String,
-        pvc_volume_fingerprint: String,
-        materialized_volume_fingerprint: String,
+        fingerprints: crate::reconciler::ShipFingerprints,
         published_volumes: Vec<crate::csi::PublishedVolume>,
     ) {
         let mut children = self.children.write().await;
         children.insert(
             id.clone(),
-            Runtime::new(
+            inner::Runtime::new(
                 namespace,
                 ship_name,
                 id,
-                spec_fingerprint,
-                pvc_volume_fingerprint,
-                materialized_volume_fingerprint,
+                fingerprints,
                 published_volumes,
             ),
         );
     }
+
 }
 
 #[derive(Debug, Clone, Deserialize)]

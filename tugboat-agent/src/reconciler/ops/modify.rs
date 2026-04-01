@@ -61,21 +61,19 @@ impl ShipReconciler {
             ));
         };
 
-        let spec_fp = super::spec_fingerprint(ship_spec)?;
-        let pvc_vol_fp = super::pvc_volume_fingerprint(ship_spec)?;
-        let mat_vol_fp = super::materialized_volume_fingerprint(ship_spec)?;
+        let fingerprints = super::ShipFingerprints::new(ship_spec)?;
 
         let spec_changed = !self
             .runtime_operator
-            .matches_spec_fingerprint(ship_id, &spec_fp)
+            .matches_spec_fingerprint(ship_id, &fingerprints.spec)
             .await;
         let pvc_changed = !self
             .runtime_operator
-            .matches_pvc_volume_fingerprint(ship_id, &pvc_vol_fp)
+            .matches_pvc_volume_fingerprint(ship_id, &fingerprints.pvc_volume)
             .await;
         let mat_changed = !self
             .runtime_operator
-            .matches_materialized_volume_fingerprint(ship_id, &mat_vol_fp)
+            .matches_materialized_volume_fingerprint(ship_id, &fingerprints.materialized_volume)
             .await;
 
         if !spec_changed && !pvc_changed && !mat_changed {
@@ -108,10 +106,23 @@ impl ShipReconciler {
             "Ship '{}' materialized volumes changed; refreshing in-place",
             ship_id
         );
-        self.refresh_materialized_volumes(ship_id, &namespace, ship_spec)
-            .await?;
+        if let Err(err) = self
+            .refresh_materialized_volumes(ship_id, &namespace, ship_spec)
+            .await
+        {
+            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+            let mut status_ship = ship.clone();
+            status_ship.append_status(ShipCondition {
+                status: "MaterializedVolumesRefreshFailed".to_string(),
+                message: format!("Failed to refresh materialized volumes: {}", err),
+                timestamp: Some(Time::now()),
+            });
+            let _ = api.replace_status(name, status_ship).await;
+            return Err(err);
+        }
+
         self.runtime_operator
-            .update_materialized_volume_fingerprint(ship_id, mat_vol_fp)
+            .update_materialized_volume_fingerprint(ship_id, fingerprints.materialized_volume)
             .await;
         {
             let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
