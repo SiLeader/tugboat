@@ -19,7 +19,7 @@ pub(crate) mod modify;
 
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::volume::normalized_ship_volumes;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tugboat_resources::manifests::core::v1::ShipSpec;
 
 fn sha256_fingerprint<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
@@ -29,9 +29,26 @@ fn sha256_fingerprint<T: Serialize>(value: &T) -> Result<String, serde_json::Err
     Ok(format!("{hash:x}"))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ShipFingerprints {
+    pub spec: String,
+    pub pvc_volume: String,
+    pub materialized_volume: String,
+}
+
+impl ShipFingerprints {
+    pub fn new(spec: &ShipSpec) -> Result<Self, ReconcileError> {
+        Ok(Self {
+            spec: spec_fingerprint(spec)?,
+            pvc_volume: pvc_volume_fingerprint(spec)?,
+            materialized_volume: materialized_volume_fingerprint(spec)?,
+        })
+    }
+}
+
 /// Fingerprint covering non-volume runtime fields: image, ship_class, uefi,
 /// network_class_ref. Changes to any of these require a VM recreate.
-pub(super) fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Error> {
+fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Error> {
     #[derive(Serialize)]
     struct SpecFields<'a> {
         image: &'a str,
@@ -49,9 +66,35 @@ pub(super) fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Er
     })
 }
 
-/// Fingerprint covering only the set of volume claim references.
-pub(super) fn volume_claims_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
-    let normalized = normalized_ship_volumes(spec)?;
+/// Fingerprint covering only the PersistentVolumeClaim volume references.
+/// Changes to PVC bindings require a full VM recreate.
+fn pvc_volume_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
+    use crate::reconciler::volume::NormalizedVolumeSource;
+    let normalized: Vec<_> = normalized_ship_volumes(spec)?
+        .into_iter()
+        .filter(|v| {
+            matches!(
+                v.source,
+                NormalizedVolumeSource::PersistentVolumeClaim { .. }
+            )
+        })
+        .collect();
+    Ok(sha256_fingerprint(&normalized)?)
+}
+
+/// Fingerprint covering only the materialized (ConfigMap / Secret) volume references.
+/// Changes to these can be applied in-place by re-materializing files on the host.
+fn materialized_volume_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
+    use crate::reconciler::volume::NormalizedVolumeSource;
+    let normalized: Vec<_> = normalized_ship_volumes(spec)?
+        .into_iter()
+        .filter(|v| {
+            matches!(
+                v.source,
+                NormalizedVolumeSource::ConfigMap { .. } | NormalizedVolumeSource::Secret { .. }
+            )
+        })
+        .collect();
     Ok(sha256_fingerprint(&normalized)?)
 }
 
@@ -90,14 +133,9 @@ mod tests {
         b.scheduler_name = Some("custom-scheduler".to_string());
         b.node_name = Some("node-1".to_string());
         assert_eq!(
-            spec_fingerprint(&a).unwrap(),
-            spec_fingerprint(&b).unwrap(),
-            "scheduling-only field changes must not alter the spec fingerprint"
-        );
-        assert_eq!(
-            volume_claims_fingerprint(&a).unwrap(),
-            volume_claims_fingerprint(&b).unwrap(),
-            "scheduling-only field changes must not alter the volume fingerprint"
+            ShipFingerprints::new(&a).unwrap(),
+            ShipFingerprints::new(&b).unwrap(),
+            "scheduling-only field changes must not alter fingerprints"
         );
     }
 
@@ -106,16 +144,16 @@ mod tests {
         let a = base_spec();
         let mut b = base_spec();
         b.image = "registry.example.com/vm:v2".to_string();
-        assert_ne!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
-        // volume fingerprint should stay the same
-        assert_eq!(
-            volume_claims_fingerprint(&a).unwrap(),
-            volume_claims_fingerprint(&b).unwrap()
-        );
+        let fp_a = ShipFingerprints::new(&a).unwrap();
+        let fp_b = ShipFingerprints::new(&b).unwrap();
+        assert_ne!(fp_a.spec, fp_b.spec);
+        // volume fingerprints should stay the same
+        assert_eq!(fp_a.pvc_volume, fp_b.pvc_volume);
+        assert_eq!(fp_a.materialized_volume, fp_b.materialized_volume);
     }
 
     #[test]
-    fn volume_claim_change_alters_volume_fingerprint_only() {
+    fn pvc_change_alters_pvc_fingerprint_not_materialized() {
         let a = base_spec();
         let mut b = base_spec();
         b.volume_claim_ref.push(
@@ -123,16 +161,15 @@ mod tests {
                 name: "pvc-1".to_string(),
             },
         );
-        assert_ne!(
-            volume_claims_fingerprint(&a).unwrap(),
-            volume_claims_fingerprint(&b).unwrap()
-        );
-        // spec fingerprint should stay the same
-        assert_eq!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
+        let fp_a = ShipFingerprints::new(&a).unwrap();
+        let fp_b = ShipFingerprints::new(&b).unwrap();
+        assert_ne!(fp_a.pvc_volume, fp_b.pvc_volume);
+        assert_eq!(fp_a.materialized_volume, fp_b.materialized_volume);
+        assert_eq!(fp_a.spec, fp_b.spec);
     }
 
     #[test]
-    fn named_volume_change_alters_volume_fingerprint_only() {
+    fn configmap_change_alters_materialized_fingerprint_not_pvc() {
         let a = base_spec();
         let mut b = base_spec();
         b.volumes.push(ShipVolume {
@@ -143,11 +180,52 @@ mod tests {
             }),
             ..Default::default()
         });
+        let fp_a = ShipFingerprints::new(&a).unwrap();
+        let fp_b = ShipFingerprints::new(&b).unwrap();
+        assert_ne!(fp_a.materialized_volume, fp_b.materialized_volume);
+        assert_eq!(fp_a.pvc_volume, fp_b.pvc_volume);
+        assert_eq!(fp_a.spec, fp_b.spec);
+    }
 
-        assert_ne!(
-            volume_claims_fingerprint(&a).unwrap(),
-            volume_claims_fingerprint(&b).unwrap()
+    #[test]
+    fn secret_change_alters_materialized_fingerprint_not_pvc() {
+        let a = base_spec();
+        let mut b = base_spec();
+        b.volumes.push(ShipVolume {
+            name: "secrets".to_string(),
+            secret: Some(tugboat_resources::manifests::core::v1::SecretVolumeSource {
+                secret_name: "app-secret".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let fp_a = ShipFingerprints::new(&a).unwrap();
+        let fp_b = ShipFingerprints::new(&b).unwrap();
+        assert_ne!(fp_a.materialized_volume, fp_b.materialized_volume);
+        assert_eq!(fp_a.pvc_volume, fp_b.pvc_volume);
+        assert_eq!(fp_a.spec, fp_b.spec);
+    }
+
+    #[test]
+    fn mixed_change_alters_both_volume_fingerprints() {
+        let a = base_spec();
+        let mut b = base_spec();
+        b.volume_claim_ref.push(
+            tugboat_resources::manifests::core::v1::ShipVolumeClaimReference {
+                name: "pvc-1".to_string(),
+            },
         );
-        assert_eq!(spec_fingerprint(&a).unwrap(), spec_fingerprint(&b).unwrap());
+        b.volumes.push(ShipVolume {
+            name: "config".to_string(),
+            config_map: Some(ConfigMapVolumeSource {
+                name: "app-config".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let fp_a = ShipFingerprints::new(&a).unwrap();
+        let fp_b = ShipFingerprints::new(&b).unwrap();
+        assert_ne!(fp_a.pvc_volume, fp_b.pvc_volume);
+        assert_ne!(fp_a.materialized_volume, fp_b.materialized_volume);
     }
 }

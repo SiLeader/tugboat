@@ -35,7 +35,10 @@ impl TugboatControllerManager {
             handle.push(tokio::spawn(async move { controller.run().await }));
         }
         for handle in handle {
-            handle.await.unwrap();
+            match handle.await {
+                Ok(_) => {}
+                Err(e) => tracing::error!("Controller task join error: {:?}", e),
+            }
         }
     }
 }

@@ -61,19 +61,22 @@ impl ShipReconciler {
             ));
         };
 
-        let spec_fp = super::spec_fingerprint(ship_spec)?;
-        let vol_fp = super::volume_claims_fingerprint(ship_spec)?;
+        let fingerprints = super::ShipFingerprints::new(ship_spec)?;
 
         let spec_changed = !self
             .runtime_operator
-            .matches_spec_fingerprint(ship_id, &spec_fp)
+            .matches_spec_fingerprint(ship_id, &fingerprints.spec)
             .await;
-        let volumes_changed = !self
+        let pvc_changed = !self
             .runtime_operator
-            .matches_volume_fingerprint(ship_id, &vol_fp)
+            .matches_pvc_volume_fingerprint(ship_id, &fingerprints.pvc_volume)
+            .await;
+        let mat_changed = !self
+            .runtime_operator
+            .matches_materialized_volume_fingerprint(ship_id, &fingerprints.materialized_volume)
             .await;
 
-        if !spec_changed && !volumes_changed {
+        if !spec_changed && !pvc_changed && !mat_changed {
             debug!("Ship '{}' runtime-significant spec is unchanged", ship_id);
             // Even though the spec is unchanged, check for pending volume expansions
             // since PV status updates are external to the Ship resource.
@@ -82,39 +85,97 @@ impl ShipReconciler {
             return Ok(());
         }
 
-        // At least one runtime-significant field changed — report conditions.
-        let mut conditions = Vec::new();
-        if spec_changed {
-            conditions.push(ShipCondition {
-                status: "SpecChangeRequiresRecreate".to_string(),
-                message: "Ship spec changed while running; live mutation is not supported — \
-                    recreate the ship to apply the new spec"
-                    .to_string(),
-                timestamp: Some(Time::now()),
-            });
-        }
-        if volumes_changed {
-            conditions.push(ShipCondition {
-                status: "CsiVolumeChangeRequiresRecreate".to_string(),
-                message: "Ship volume claims changed while running; CSI-backed volume attach, \
-                    detach, and resize changes are not reconciled live — recreate the ship \
-                    to apply the new storage plan"
-                    .to_string(),
-                timestamp: Some(Time::now()),
-            });
+        if spec_changed || pvc_changed {
+            if spec_changed {
+                info!(
+                    "Ship '{}' VM spec changed (image/class/network/uefi); recreating",
+                    ship_id
+                );
+            }
+            if pvc_changed {
+                info!(
+                    "Ship '{}' PVC volume references changed; recreating",
+                    ship_id
+                );
+            }
+            return self.reconcile_recreate(ship).await;
         }
 
-        warn!(
-            "Ship '{}' spec changed while running; live mutation is not supported, \
-             setting condition(s)",
+        // Only materialized volumes (ConfigMap / Secret) changed — refresh in-place.
+        debug!(
+            "Ship '{}' materialized volumes changed; refreshing in-place",
             ship_id
         );
-        let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
-        let mut status_ship = ship.clone();
-        for condition in conditions {
-            status_ship.append_status(condition);
+        if let Err(err) = self
+            .refresh_materialized_volumes(ship_id, &namespace, ship_spec)
+            .await
+        {
+            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+            let mut status_ship = ship.clone();
+            status_ship.append_status(ShipCondition {
+                status: "MaterializedVolumesRefreshFailed".to_string(),
+                message: format!("Failed to refresh materialized volumes: {}", err),
+                timestamp: Some(Time::now()),
+            });
+            let _ = api.replace_status(name, status_ship).await;
+            return Err(err);
         }
-        api.replace_status(name, status_ship).await?;
+
+        self.runtime_operator
+            .update_materialized_volume_fingerprint(ship_id, fingerprints.materialized_volume)
+            .await;
+        {
+            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+            let mut status_ship = ship.clone();
+            status_ship.append_status(ShipCondition {
+                status: "MaterializedVolumesRefreshed".to_string(),
+                message: "Materialized volumes (ConfigMap/Secret) refreshed in-place".to_string(),
+                timestamp: Some(Time::now()),
+            });
+            api.replace_status(name, status_ship).await?;
+        }
+        // Check volume expansions even when only materialized volumes changed.
+        self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
+            .await;
+        Ok(())
+    }
+
+    /// Recreate the VM by deleting it and then adding it again.
+    ///
+    /// Used when fields that cannot be mutated in-place (image, ship_class,
+    /// network_class_ref, uefi, or PVC volume references) have changed.
+    ///
+    /// If the agent crashes between the delete and add, the next reconcile event
+    /// will find no runtime record for this ship and fall back to `reconcile_added`,
+    /// so the operation is safe and recoverable.
+    async fn reconcile_recreate(&self, ship: Ship) -> Result<(), ReconcileError> {
+        self.reconcile_deleted(ship.clone()).await?;
+        self.reconcile_added(ship).await
+    }
+
+    /// Re-materialize all ConfigMap / Secret volumes for a running ship without
+    /// stopping the VM.  The files are written to the host directory that is
+    /// already shared into the guest via virtio-9p, so the guest sees the
+    /// updated content through the existing mount.
+    async fn refresh_materialized_volumes(
+        &self,
+        ship_id: &str,
+        namespace: &str,
+        ship_spec: &ShipSpec,
+    ) -> Result<(), ReconcileError> {
+        let volumes = self.get_related_volumes(namespace, ship_spec).await?;
+        for volume in &volumes {
+            let Some(volume) = volume.materialized() else {
+                continue;
+            };
+            if let Err(err) = self.materialize_volume(ship_id, volume) {
+                warn!(
+                    "Failed to refresh materialized volume '{}' for ship '{}': {}",
+                    volume.name, ship_id, err
+                );
+                return Err(err);
+            }
+        }
         Ok(())
     }
 

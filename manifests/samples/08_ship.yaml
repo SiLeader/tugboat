@@ -20,7 +20,7 @@ metadata:
   namespace: demo
   name: demo-ship
 spec:
-  image: ghcr.io/cerussite/tugboat/ubuntu:24.04
+  image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
   shipClass: small
   networkClassRef:
     - kind: ClusterNetworkClass

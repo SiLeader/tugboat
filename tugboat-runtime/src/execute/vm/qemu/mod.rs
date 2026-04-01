@@ -20,7 +20,6 @@ use crate::execute::vm::qemu::spawner::QemuVmConfigUefi;
 use crate::execute::vm::qemu::volume_copy::BootDisk;
 use async_trait::async_trait;
 pub use spawner::{QemuVmBuilder, QemuVmConfig};
-use std::fs::copy;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, info};
@@ -41,6 +40,23 @@ impl<'a> QemuVm<'a> {
     fn new(config: &'a QemuVmConfig, args: VmRunRequest) -> Self {
         Self { config, args }
     }
+
+    async fn prepare_uefi(&self) -> crate::Result<()> {
+        if let Some(uefi_config) = &self.config.uefi
+            && self.args.uefi.enabled
+        {
+            let vars_location = format!(
+                "{}/{}.uefi.vars",
+                self.config.disk_image_location, self.args.id
+            );
+            debug!(
+                "Copying UEFI vars from '{}' to '{}'",
+                uefi_config.vars_file, vars_location
+            );
+            tokio::fs::copy(&uefi_config.vars_file, &vars_location).await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -49,6 +65,8 @@ impl RunVm for QemuVm<'_> {
         info!("Starting QEMU VM");
         debug!("QemuVm = {self:?}");
         let img = self.create_boot_disk().await?;
+        self.prepare_uefi().await?;
+
         let qmp_uds = self.config.get_uds_url(&self.args.id);
         let qmp_opt = format!("{qmp_uds},server=on,wait=off");
         debug!("QEMU UDS = {qmp_uds}");
@@ -176,7 +194,7 @@ impl QemuArgsWithArgIf<Option<QemuVmConfigUefi>, QemuVm<'_>> for Command {
                 "{}/{}.uefi.vars",
                 this.config.disk_image_location, this.args.id
             );
-            copy(&uefi.vars_file, &vars_location).expect("Cannot copy vars file"); // TODO
+            // vars_location should have been prepared by prepare_uefi
             let vars_opts = format!("if=pflash,format=raw,file={}", vars_location);
             self.args(["-drive", &code_opts, "-drive", &vars_opts])
         } else {
