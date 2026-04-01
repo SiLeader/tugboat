@@ -34,5 +34,8 @@ async fn main() {
     info!("Starting Tugboat API server");
 
     let config = ApiServerConfig::load_from_file_or_panic(args.config);
-    ApiServer::from_config(config).await.run().await;
+    let server = ApiServer::from_config(config)
+        .await
+        .expect("Failed to initialize ApiServer");
+    server.run().await;
 }

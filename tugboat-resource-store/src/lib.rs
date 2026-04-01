@@ -59,15 +59,13 @@ impl<T: ObjectMetaResource> ContentData<T> {
 }
 
 impl ResourceStore {
-    pub async fn new(endpoints: &[String]) -> Self {
+    pub async fn new(endpoints: &[String]) -> Result<Self, Error> {
         info!("Creating etcd client: endpoints: {endpoints:?}");
-        let client = Client::connect(endpoints, None)
-            .await
-            .expect("Connect to etcd failed");
-        Self {
+        let client = Client::connect(endpoints, None).await?;
+        Ok(Self {
             etcd: client.clone(),
             watch_mux: watch::WatchMuxAggregator::new(client),
-        }
+        })
     }
 
     fn create_key<T: StaticResource>(namespace: Option<String>, name: &str) -> String {

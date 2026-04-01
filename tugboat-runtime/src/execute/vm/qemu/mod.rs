@@ -176,9 +176,22 @@ impl QemuArgsWithArgIf<Option<QemuVmConfigUefi>, QemuVm<'_>> for Command {
                 "{}/{}.uefi.vars",
                 this.config.disk_image_location, this.args.id
             );
-            copy(&uefi.vars_file, &vars_location).expect("Cannot copy vars file"); // TODO
-            let vars_opts = format!("if=pflash,format=raw,file={}", vars_location);
-            self.args(["-drive", &code_opts, "-drive", &vars_opts])
+            match copy(&uefi.vars_file, &vars_location) {
+                Ok(_) => {
+                    let vars_opts = format!("if=pflash,format=raw,file={}", vars_location);
+                    self.args(["-drive", &code_opts, "-drive", &vars_opts])
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to copy UEFI vars file from '{}' to '{}': {}",
+                        uefi.vars_file,
+                        vars_location,
+                        e
+                    );
+                    // Fallback: add only code image without vars
+                    self.args(["-drive", &code_opts])
+                }
+            }
         } else {
             self
         }

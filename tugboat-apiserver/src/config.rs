@@ -40,9 +40,12 @@ pub struct TlsConfig {
 }
 
 impl crate::ApiServer {
-    pub async fn from_config(value: ApiServerConfig) -> Self {
-        let operator = ApiOperator::new(ResourceStore::new(value.etcd.endpoints.as_slice()).await);
-        Self::new(value.http.listen, operator, value.http.tls)
+    pub async fn from_config(
+        value: ApiServerConfig,
+    ) -> Result<Self, tugboat_resource_store::error::Error> {
+        let store = ResourceStore::new(value.etcd.endpoints.as_slice()).await?;
+        let operator = ApiOperator::new(store);
+        Ok(Self::new(value.http.listen, operator, value.http.tls))
     }
 }
 
