@@ -91,7 +91,7 @@ fn create_dir_with_mode(path: &Path, mode: u32) -> io::Result<()> {
 fn write_file_atomically(path: &Path, contents: &[u8], mode: u32) -> io::Result<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "file has no parent directory"))?;
+        .ok_or_else(|| io::Error::other("file has no parent directory"))?;
     let tmp_path = parent.join(format!(
         ".{}.tugboat-tmp",
         path.file_name().unwrap_or_default().to_string_lossy()
