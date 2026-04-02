@@ -51,8 +51,12 @@ impl RuntimeOperator {
             self.operator
                 .hotplug(VmHotplugRequest {
                     id: id.to_string(),
-                    vcpus_to_add: (cpu_to_add > 0).then_some(cpu_to_add),
-                    size_bytes_to_add: (memory_to_add > 0).then_some(memory_to_add),
+                    // send absolute desired totals (breaking change of semantics)
+                    vcpus_to_add: (cpu_cores > 0).then_some(cpu_cores),
+                    size_bytes_to_add: (memory_size > 0).then_some(memory_size),
+                    // include current observed values so runtime can compute the delta safely
+                    current_vcpus: Some(current.cpu_cores),
+                    current_size_bytes: Some(current.memory_size),
                 })
                 .await?;
         }

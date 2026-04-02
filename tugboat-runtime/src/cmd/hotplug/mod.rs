@@ -38,85 +38,112 @@ pub async fn hotplug(config: QemuVmConfig, args: HotplugArgs) -> crate::Result<(
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
-    if let Some(vcpus_to_add) = req.vcpus_to_add
-        && vcpus_to_add > 0
-    {
-        let hotpluggable = qmp
-            .execute(qapi::qmp::query_hotpluggable_cpus {})
-            .await
-            .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    if let Some(vcpus_total) = req.vcpus_to_add && vcpus_total > 0 {
+        // determine current vcpu count: prefer agent-supplied value if present
+        let current_vcpus = if let Some(cur) = req.current_vcpus {
+            cur
+        } else {
+            let hotpluggable = qmp
+                .execute(qapi::qmp::query_hotpluggable_cpus {})
+                .await
+                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+            hotpluggable.iter().filter(|cpu| cpu.qom_path.is_some()).count() as u64
+        };
 
-        let slots = hotpluggable
-            .into_iter()
-            .filter(|cpu| cpu.qom_path.is_none())
-            .take(vcpus_to_add as usize)
-            .collect::<Vec<_>>();
-
-        if slots.len() != vcpus_to_add as usize {
+        if vcpus_total < current_vcpus {
             return Err(crate::Error::ActionFailed(
-                "Not enough hotpluggable CPU slots available".to_string(),
+                format!("CPU decrease from {} to {} is not supported", current_vcpus, vcpus_total),
             ));
         }
 
-        for slot in slots {
-            let arguments = build_cpu_arguments(&slot.props);
-            let device_id = format!(
-                "cpu-{}-{}",
-                slot.props.socket_id.unwrap_or(0),
-                slot.props.core_id.unwrap_or(0)
-            );
+        let to_add = (vcpus_total - current_vcpus) as usize;
+        if to_add > 0 {
+            let hotpluggable = qmp
+                .execute(qapi::qmp::query_hotpluggable_cpus {})
+                .await
+                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+
+            let slots = hotpluggable
+                .into_iter()
+                .filter(|cpu| cpu.qom_path.is_none())
+                .take(to_add)
+                .collect::<Vec<_>>();
+
+            if slots.len() != to_add {
+                return Err(crate::Error::ActionFailed(
+                    "Not enough hotpluggable CPU slots available".to_string(),
+                ));
+            }
+
+            for slot in slots {
+                let arguments = build_cpu_arguments(&slot.props);
+                let device_id = format!(
+                    "cpu-{}-{}",
+                    slot.props.socket_id.unwrap_or(0),
+                    slot.props.core_id.unwrap_or(0)
+                );
+                qmp.execute(qapi::qmp::device_add {
+                    bus: None,
+                    id: Some(device_id),
+                    driver: slot.type_,
+                    arguments,
+                })
+                .await
+                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+            }
+        }
+    }
+
+    if let Some(size_bytes_total) = req.size_bytes_to_add && size_bytes_total > 0 {
+        let current_size = req.current_size_bytes.unwrap_or(0u64);
+        if size_bytes_total < current_size {
+            return Err(crate::Error::ActionFailed(format!(
+                "memory decrease from {} to {} is not supported",
+                current_size, size_bytes_total
+            )));
+        }
+
+        let to_add = size_bytes_total - current_size;
+        if to_add > 0 {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            let memdev_id = format!("mem-hotplug-{ts}");
+            let dimm_id = format!("dimm-hotplug-{ts}");
+
+            qmp.execute(qapi::qmp::object_add::from(
+                ObjectOptions::memory_backend_ram {
+                    id: memdev_id.clone(),
+                    memory_backend_ram: MemoryBackendProperties {
+                        dump: None,
+                        host_nodes: None,
+                        merge: None,
+                        policy: None,
+                        prealloc: None,
+                        prealloc_context: None,
+                        prealloc_threads: None,
+                        reserve: None,
+                        share: None,
+                        x_use_canonical_path_for_ramblock_id: None,
+                        size: to_add,
+                    },
+                },
+            ))
+            .await
+            .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+
+            let mut arguments = Dictionary::new();
+            arguments.insert("memdev".to_string(), json!(memdev_id));
             qmp.execute(qapi::qmp::device_add {
                 bus: None,
-                id: Some(device_id),
-                driver: slot.type_,
+                id: Some(dimm_id),
+                driver: "pc-dimm".to_string(),
                 arguments,
             })
             .await
             .map_err(|e| crate::Error::Qmp(e.to_string()))?;
         }
-    }
-
-    if let Some(size_bytes_to_add) = req.size_bytes_to_add
-        && size_bytes_to_add > 0
-    {
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        let memdev_id = format!("mem-hotplug-{ts}");
-        let dimm_id = format!("dimm-hotplug-{ts}");
-
-        qmp.execute(qapi::qmp::object_add::from(
-            ObjectOptions::memory_backend_ram {
-                id: memdev_id.clone(),
-                memory_backend_ram: MemoryBackendProperties {
-                    dump: None,
-                    host_nodes: None,
-                    merge: None,
-                    policy: None,
-                    prealloc: None,
-                    prealloc_context: None,
-                    prealloc_threads: None,
-                    reserve: None,
-                    share: None,
-                    x_use_canonical_path_for_ramblock_id: None,
-                    size: size_bytes_to_add,
-                },
-            },
-        ))
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-
-        let mut arguments = Dictionary::new();
-        arguments.insert("memdev".to_string(), json!(memdev_id));
-        qmp.execute(qapi::qmp::device_add {
-            bus: None,
-            id: Some(dimm_id),
-            driver: "pc-dimm".to_string(),
-            arguments,
-        })
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     }
 
     Ok(())

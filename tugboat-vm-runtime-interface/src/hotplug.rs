@@ -18,6 +18,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct VmHotplugRequest {
     pub id: String,
+    /// Desired total vCPUs (absolute). This field previously meant a delta.
     pub vcpus_to_add: Option<u64>,
+    /// Desired total memory in bytes (absolute). This field previously meant a delta.
     pub size_bytes_to_add: Option<u64>,
+    /// Current vCPUs observed by the agent (optional). Runtime will use it to compute the delta.
+    pub current_vcpus: Option<u64>,
+    /// Current memory in bytes observed by the agent (optional). Runtime will use it to compute the delta.
+    pub current_size_bytes: Option<u64>,
 }
