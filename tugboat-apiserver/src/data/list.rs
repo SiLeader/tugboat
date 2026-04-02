@@ -254,7 +254,7 @@ fn table_cells(
                     .unwrap_or_else(|| serde_json::json!(1)),
             );
             cells.push(
-                item.pointer("/status/availableReplicas")
+                item.pointer("/status/readyReplicas")
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!(0)),
             );

@@ -116,7 +116,7 @@ impl QemuArgs<VmCpuConfig> for Command {
 
 impl QemuArgs<VmMemoryConfig> for Command {
     fn qemu_args(&mut self, value: &VmMemoryConfig) -> &mut Self {
-        let megs = value.size / 1024 / 1024;
+        let megs = (value.size / 1024 / 1024).max(1);
         let memory_arg = format!("{megs}M");
         self.args(["-m", memory_arg.as_str()])
     }

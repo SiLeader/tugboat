@@ -323,11 +323,15 @@ impl ShipReconciler {
 
                 match phase {
                     VmMigrationPhase::Completed => {
-                        let patch = serde_json::json!({
+                        let spec_patch = serde_json::json!({
                             "spec": {
                                 "nodeName": target_node_name,
                                 "targetNodeName": null,
-                            },
+                            }
+                        });
+                        api.patch(name, spec_patch).await?;
+
+                        let status_patch = serde_json::json!({
                             "status": {
                                 "migration": {
                                     "phase": PHASE_COMPLETED,
@@ -347,7 +351,7 @@ impl ShipReconciler {
                                 ]
                             }
                         });
-                        api.patch(name, patch).await?;
+                        api.patch_status(name, status_patch).await?;
 
                         if let Err(err) =
                             self.runtime_operator.finish_source_migration(ship_id).await

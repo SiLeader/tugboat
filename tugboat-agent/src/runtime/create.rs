@@ -38,9 +38,12 @@ pub(crate) struct RuntimeCreateRequest<'a> {
 }
 
 impl RuntimeOperator {
-    fn is_http_host(&self, image: &str) -> Option<bool> {
-        let (host, _) = image.split_once('/')?;
-        Some(self.http_hosts.contains(host))
+    fn is_http_host(&self, image: &str) -> bool {
+        if let Some((host, _)) = image.split_once('/') {
+            self.http_hosts.contains(host)
+        } else {
+            false
+        }
     }
 
     pub(crate) async fn create(
@@ -75,7 +78,7 @@ impl RuntimeOperator {
         debug!("Pulling image '{}'", ship_spec.image);
         let image = self
             .registry
-            .pull(&ship_spec.image, self.is_http_host(&ship_spec.image))
+            .pull(&ship_spec.image, Some(self.is_http_host(&ship_spec.image)))
             .await?;
 
         let memory_size = SizedString(memory.size.clone());
