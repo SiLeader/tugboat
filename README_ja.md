@@ -7,7 +7,7 @@ Tugboatは、KubernetesのようにVMのオーケストレーションを行う�
 Tugboatは、Kubernetesのような機能を提供するVMのオーケストレーションツールです。
 KubeVirtのような重量感を軽減し、OpenStackのような複雑さを排除します。
 
-Tugboatはetcdとtugboat-apiserver、tugboat-agent、tugboat-runtime、tugboat-schedulerという最小構成でVMをKubernetesのように管理することを目指しています。
+Tugboatはetcdとtugboat-apiserver、tugboat-agent、tugboat-runtime、tugboat-scheduler、tugboat-controller-managerという最小構成でVMをKubernetesのように管理することを目指しています。
 
 ## Why Tugboat?
 
@@ -62,11 +62,14 @@ Tugboatはこれらの問題を解決するために生まれました。
 |   Kubernetes    |    Tugboat     |
 |:---------------:|:--------------:|
 |       Pod       |      Ship      |
-|   Deployment    |   Fleet (予定)   |
+|   ReplicaSet    |   ReplicaSet   |
+|   Deployment    |   Deployment   |
 |      Node       |      Node      |
 | Container image | VM image (OCI) |
 |   Dockerfile    |   Imagefile    |
 |     kubelet     |     agent      |
+
+> **補足:** `Fleet` は複数の Ship タイプがプライベートネットワークを共有するグループを表す Tugboat 独自のリソースで、Kubernetes に直接対応するものはありません。
 
 ## Manifest examples
 
@@ -112,6 +115,58 @@ spec:
     - name: app-secret
       secret:
         secretName: app-secret
+```
+
+### Deployment
+
+同一構成の Ship の集合をローリングアップデート付きで管理します。
+Namespaced リソースです（`apps/v1`）。
+
+> **補足:** Deployment コントローラはまだ実装されていません。API でリソースの保存・取得は可能ですが、Ship の自動 reconcile はまだ行われません。
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: default
+  name: my-deployment
+spec:
+  replicas: 3
+  selector:
+    app: my-app
+  shipTemplate:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+      shipClass: lightweight
+```
+
+### ReplicaSet
+
+レプリカ Ship の安定したセットを維持します。
+Namespaced リソースです（`apps/v1`）。
+
+> **補足:** ReplicaSet コントローラはまだ実装されていません。API でリソースの保存・取得は可能ですが、Ship の自動 reconcile はまだ行われません。
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  namespace: default
+  name: my-replicaset
+spec:
+  replicas: 2
+  selector:
+    app: my-app
+  shipTemplate:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+      shipClass: lightweight
 ```
 
 CSI volume は `spec.volumes[].persistentVolumeClaim` で同一 namespace の
@@ -186,11 +241,18 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
 - [x] tugboat-controller-manager
     - [x] CSIの動的プロビジョニング
     - [x] CSI管理下PVのcleanup
-    - [ ] ReplicaSet (Shipの規定数維持)
-    - [ ] Deployment (同形式のShipのデプロイ)
-    - [ ] Fleet
+    - [ ] ReplicaSet コントローラ (Shipの規定数維持)
+    - [ ] Deployment コントローラ (ReplicaSetのローリングアップデート管理)
+    - [ ] Fleet コントローラ
+- [x] ReplicaSet リソース定義とAPI (`apps/v1`)
+- [x] Deployment リソース定義とAPI (`apps/v1`)
 - [x] ConfigMap
 - [ ] Live migration
+    - [x] `target_node_name` によるマイグレーションのトリガー
+    - [x] マイグレーションのステートマシン (Pending, Ready, Migrating, Completed, Failed)
+    - [x] Ship のステータス・条件へのマイグレーション状態の反映
+    - [ ] 事前互換性チェック (CPU、ストレージアクセス、ネットワーク継続性)
+    - [ ] マイグレーション失敗時の確実な復旧と明示的なエラー報告
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
 
