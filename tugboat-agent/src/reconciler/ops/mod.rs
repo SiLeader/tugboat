@@ -22,6 +22,8 @@ use crate::reconciler::volume::normalized_ship_volumes;
 use serde::{Deserialize, Serialize};
 use tugboat_resources::manifests::core::v1::ShipSpec;
 
+pub(crate) const MIGRATION_PORT: u16 = 4444;
+
 fn sha256_fingerprint<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
     use sha2::Digest;
     let json = serde_json::to_string(value)?;
@@ -47,7 +49,8 @@ impl ShipFingerprints {
 }
 
 /// Fingerprint covering non-volume runtime fields: image, ship_class, uefi,
-/// network_class_ref. Changes to any of these require a VM recreate.
+/// network_class_ref, and target_node_name. Changes to any of these require
+/// a VM recreate or a specialized migration/hotplug path.
 fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Error> {
     #[derive(Serialize)]
     struct SpecFields<'a> {
@@ -56,6 +59,7 @@ fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Error> {
         network_class_ref:
             &'a [tugboat_resources::manifests::core::v1::ShipNetworkClassReference],
         uefi: &'a Option<tugboat_resources::manifests::core::v1::ShipUefi>,
+        target_node_name: &'a Option<String>,
     }
 
     sha256_fingerprint(&SpecFields {
@@ -63,6 +67,7 @@ fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Error> {
         ship_class: &spec.ship_class,
         network_class_ref: &spec.network_class_ref,
         uefi: &spec.uefi,
+        target_node_name: &spec.target_node_name,
     })
 }
 
@@ -116,6 +121,7 @@ mod tests {
             scheduler_name: None,
             volume_claim_ref: vec![],
             volumes: vec![],
+            target_node_name: None,
         }
     }
 
@@ -148,6 +154,18 @@ mod tests {
         let fp_b = ShipFingerprints::new(&b).unwrap();
         assert_ne!(fp_a.spec, fp_b.spec);
         // volume fingerprints should stay the same
+        assert_eq!(fp_a.pvc_volume, fp_b.pvc_volume);
+        assert_eq!(fp_a.materialized_volume, fp_b.materialized_volume);
+    }
+
+    #[test]
+    fn target_node_change_alters_spec_fingerprint() {
+        let a = base_spec();
+        let mut b = base_spec();
+        b.target_node_name = Some("node-2".to_string());
+        let fp_a = ShipFingerprints::new(&a).unwrap();
+        let fp_b = ShipFingerprints::new(&b).unwrap();
+        assert_ne!(fp_a.spec, fp_b.spec);
         assert_eq!(fp_a.pvc_volume, fp_b.pvc_volume);
         assert_eq!(fp_a.materialized_volume, fp_b.materialized_volume);
     }

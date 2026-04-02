@@ -39,6 +39,7 @@ message ShipSpec {
   optional string scheduler_name = 7;
   repeated ShipVolumeClaimReference volume_claim_ref = 8;
   repeated ShipVolume volumes = 9;
+  optional string target_node_name = 10;
 }
 
 message ShipVolumeClaimReference {
@@ -86,6 +87,17 @@ message Toleration {
 message ShipStatus {
   repeated ShipCondition conditions = 1;
   repeated ShipIp ips = 2;
+  optional ShipMigrationStatus migration = 3;
+}
+
+message ShipMigrationStatus {
+  string phase = 1;
+  optional string source_node_name = 2;
+  optional string target_node_name = 3;
+  optional string target_address = 4;
+  optional uint32 target_port = 5;
+  string message = 6;
+  optional meta.v1.Time timestamp = 7;
 }
 
 message ShipCondition {

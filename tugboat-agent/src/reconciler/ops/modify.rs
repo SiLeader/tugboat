@@ -14,12 +14,20 @@
 
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
+use crate::reconciler::ops::add::build_runtime_spec_state;
 use crate::reconciler::reconcile::AppendStatus;
+use crate::runtime::RuntimeSpecState;
 use tracing::{debug, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipSpec};
+use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipMigrationStatus, ShipSpec};
 use tugboat_resources::manifests::meta::v1::Time;
+
+#[derive(Debug, PartialEq, Eq)]
+struct HotplugPlan {
+    cpu_cores: u64,
+    memory_size: u64,
+}
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_modified(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -76,6 +84,19 @@ impl ShipReconciler {
             // since PV status updates are external to the Ship resource.
             self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
                 .await;
+            return Ok(());
+        }
+
+        if spec_changed && self.try_reconcile_migration(&ship, ship_id).await? {
+            return Ok(());
+        }
+
+        if spec_changed
+            && !pvc_changed
+            && self
+                .try_reconcile_hotplug(&ship, ship_id, &fingerprints)
+                .await?
+        {
             return Ok(());
         }
 
@@ -144,6 +165,236 @@ impl ShipReconciler {
             }
         }
         Ok(())
+    }
+
+    async fn try_reconcile_hotplug(
+        &self,
+        ship: &Ship,
+        ship_id: &str,
+        fingerprints: &super::ShipFingerprints,
+    ) -> Result<bool, ReconcileError> {
+        let Some(ship_spec) = &ship.spec else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+        if ship_spec.target_node_name.is_some() {
+            return Ok(false);
+        }
+        let Some(current_state) = self.runtime_operator.spec_state(ship_id).await else {
+            return Ok(false);
+        };
+        let Some(class) = self.ship_class_api.get(&ship_spec.ship_class).await? else {
+            return Err(ReconcileError::ShipClassNotFound(
+                ship_spec.ship_class.clone(),
+            ));
+        };
+        let desired_state = build_runtime_spec_state(ship_spec, &class)?;
+        let Some(plan) = plan_hotplug(&current_state, &desired_state) else {
+            return Ok(false);
+        };
+        let Some(name) = ship.name() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let namespace = ship.namespace().unwrap_or("default");
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
+
+        if let Err(err) = self
+            .runtime_operator
+            .hotplug_resources(
+                ship_id,
+                fingerprints.spec.clone(),
+                plan.cpu_cores,
+                plan.memory_size,
+            )
+            .await
+        {
+            let mut status_ship = ship.clone();
+            status_ship.append_status(ShipCondition {
+                status: "VmHotplugFailed".to_string(),
+                message: format!("Failed to update VM resources in place: {err}"),
+                timestamp: Some(Time::now()),
+            });
+            let _ = api.replace_status(name, status_ship).await;
+            return Err(err.into());
+        }
+
+        let mut status_ship = ship.clone();
+        status_ship.append_status(ShipCondition {
+            status: "VmHotplugged".to_string(),
+            message: format!(
+                "Updated VM resources in place to {} vCPU(s) and {} bytes memory",
+                plan.cpu_cores, plan.memory_size
+            ),
+            timestamp: Some(Time::now()),
+        });
+        api.replace_status(name, status_ship).await?;
+        Ok(true)
+    }
+
+    async fn try_reconcile_migration(
+        &self,
+        ship: &Ship,
+        ship_id: &str,
+    ) -> Result<bool, ReconcileError> {
+        let Some(ship_spec) = &ship.spec else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+        let Some(target_node_name) = ship_spec.target_node_name.clone() else {
+            return Ok(false);
+        };
+
+        if target_node_name == self.node_name {
+            return Ok(self.runtime_operator.has_ship(ship_id).await);
+        }
+
+        if ship_spec.node_name.as_deref() != Some(self.node_name.as_str()) {
+            return Ok(false);
+        }
+
+        let Some(name) = ship.name() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let namespace = ship.namespace().unwrap_or("default");
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
+        let migration_status = ship
+            .status
+            .as_ref()
+            .and_then(|status| status.migration.clone());
+
+        let Some(migration_status) = migration_status else {
+            self.update_migration_status(
+                &api,
+                name,
+                ship.clone(),
+                ShipMigrationStatus {
+                    phase: "Pending".to_string(),
+                    source_node_name: ship_spec.node_name.clone(),
+                    target_node_name: Some(target_node_name),
+                    target_address: None,
+                    target_port: None,
+                    message: "Waiting for target node to prepare migration receiver".to_string(),
+                    timestamp: Some(Time::now()),
+                },
+                "VmMigrationPending",
+                "Waiting for target node to prepare migration receiver".to_string(),
+            )
+            .await?;
+            return Ok(true);
+        };
+
+        if migration_status.phase != "Ready" {
+            return Ok(true);
+        }
+
+        let Some(target_address) = migration_status.target_address.clone() else {
+            return Ok(true);
+        };
+        let Some(target_port) = migration_status.target_port else {
+            return Ok(true);
+        };
+
+        if let Err(err) = self
+            .runtime_operator
+            .migrate(ship_id, target_address.clone(), target_port as u16)
+            .await
+        {
+            self.update_migration_status(
+                &api,
+                name,
+                ship.clone(),
+                ShipMigrationStatus {
+                    phase: "Failed".to_string(),
+                    source_node_name: Some(self.node_name.clone()),
+                    target_node_name: Some(target_node_name.clone()),
+                    target_address: Some(target_address.clone()),
+                    target_port: Some(target_port),
+                    message: format!("Failed to start live migration: {err}"),
+                    timestamp: Some(Time::now()),
+                },
+                "VmMigrationFailed",
+                format!("Failed to start live migration: {err}"),
+            )
+            .await?;
+            return Err(err.into());
+        }
+        if let Err(err) = self
+            .runtime_operator
+            .wait_for_migration_completion(ship_id)
+            .await
+        {
+            self.update_migration_status(
+                &api,
+                name,
+                ship.clone(),
+                ShipMigrationStatus {
+                    phase: "Failed".to_string(),
+                    source_node_name: Some(self.node_name.clone()),
+                    target_node_name: Some(target_node_name.clone()),
+                    target_address: Some(target_address.clone()),
+                    target_port: Some(target_port),
+                    message: format!("Live migration did not complete: {err}"),
+                    timestamp: Some(Time::now()),
+                },
+                "VmMigrationFailed",
+                format!("Live migration did not complete: {err}"),
+            )
+            .await?;
+            return Err(err.into());
+        }
+        if let Err(err) = self.runtime_operator.finish_source_migration(ship_id).await {
+            self.update_migration_status(
+                &api,
+                name,
+                ship.clone(),
+                ShipMigrationStatus {
+                    phase: "Failed".to_string(),
+                    source_node_name: Some(self.node_name.clone()),
+                    target_node_name: Some(target_node_name.clone()),
+                    target_address: Some(target_address.clone()),
+                    target_port: Some(target_port),
+                    message: format!("Failed to clean up migrated source VM: {err}"),
+                    timestamp: Some(Time::now()),
+                },
+                "VmMigrationFailed",
+                format!("Failed to clean up migrated source VM: {err}"),
+            )
+            .await?;
+            return Err(err.into());
+        }
+
+        let mut migrated_ship = ship.clone();
+        if let Some(spec) = &mut migrated_ship.spec {
+            spec.node_name = Some(target_node_name.clone());
+            spec.target_node_name = None;
+        }
+        let status = migrated_ship.status.get_or_insert_default();
+        status.migration = Some(ShipMigrationStatus {
+            phase: "Completed".to_string(),
+            source_node_name: Some(self.node_name.clone()),
+            target_node_name: Some(target_node_name.clone()),
+            target_address: Some(target_address),
+            target_port: Some(target_port),
+            message: "Live migration completed successfully".to_string(),
+            timestamp: Some(Time::now()),
+        });
+        migrated_ship.append_status(ShipCondition {
+            status: "VmMigrated".to_string(),
+            message: format!("VM migrated successfully to node '{target_node_name}'"),
+            timestamp: Some(Time::now()),
+        });
+        api.replace(name, migrated_ship).await?;
+        Ok(true)
     }
 
     pub(crate) async fn refresh_materialized_volumes_for_ship(
@@ -300,5 +551,86 @@ impl ShipReconciler {
                 );
             }
         }
+    }
+}
+
+impl ShipReconciler {
+    async fn update_migration_status(
+        &self,
+        api: &Api<Ship>,
+        name: &str,
+        mut ship: Ship,
+        migration: ShipMigrationStatus,
+        condition_status: &str,
+        condition_message: String,
+    ) -> Result<(), ReconcileError> {
+        let status = ship.status.get_or_insert_default();
+        status.migration = Some(migration);
+        ship.append_status(ShipCondition {
+            status: condition_status.to_string(),
+            message: condition_message,
+            timestamp: Some(Time::now()),
+        });
+        api.replace_status(name, ship).await?;
+        Ok(())
+    }
+}
+
+fn plan_hotplug(current: &RuntimeSpecState, desired: &RuntimeSpecState) -> Option<HotplugPlan> {
+    if current.image != desired.image
+        || current.network_class_ref != desired.network_class_ref
+        || current.uefi != desired.uefi
+        || desired.cpu_cores < current.cpu_cores
+        || desired.memory_size < current.memory_size
+    {
+        return None;
+    }
+
+    Some(HotplugPlan {
+        cpu_cores: desired.cpu_cores,
+        memory_size: desired.memory_size,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plan_hotplug;
+    use crate::runtime::RuntimeSpecState;
+
+    fn runtime_spec_state(cpu_cores: u64, memory_size: u64) -> RuntimeSpecState {
+        RuntimeSpecState {
+            image: "registry.example.com/vm:v1".to_string(),
+            network_class_ref: Vec::new(),
+            uefi: None,
+            cpu_cores,
+            memory_size,
+        }
+    }
+
+    #[test]
+    fn plans_hotplug_when_only_resources_increase() {
+        let current = runtime_spec_state(2, 2 * 1024 * 1024 * 1024);
+        let desired = runtime_spec_state(4, 4 * 1024 * 1024 * 1024);
+
+        let plan = plan_hotplug(&current, &desired).expect("hotplug should be allowed");
+        assert_eq!(plan.cpu_cores, 4);
+        assert_eq!(plan.memory_size, 4 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn rejects_hotplug_when_resources_decrease() {
+        let current = runtime_spec_state(4, 4 * 1024 * 1024 * 1024);
+        let desired = runtime_spec_state(2, 2 * 1024 * 1024 * 1024);
+
+        assert!(plan_hotplug(&current, &desired).is_none());
+    }
+
+    #[test]
+    fn rejects_hotplug_when_non_resource_fields_change() {
+        let current = runtime_spec_state(2, 2 * 1024 * 1024 * 1024);
+        let mut desired = runtime_spec_state(4, 4 * 1024 * 1024 * 1024);
+        desired.image = "registry.example.com/vm:v2".to_string();
+
+        assert!(plan_hotplug(&current, &desired).is_none());
     }
 }

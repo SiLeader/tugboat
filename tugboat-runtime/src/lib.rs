@@ -15,7 +15,7 @@
 use crate::cmd::start;
 use crate::execute::vm::QemuVmConfig;
 use clap::{Parser, Subcommand};
-use cmd::{create, run, status, stop};
+use cmd::{create, hotplug_cpu, hotplug_memory, migrate, migration_status, run, status, stop};
 use nix::errno::Errno;
 use serde::Deserialize;
 use thiserror::Error;
@@ -56,7 +56,11 @@ pub struct Args {
 enum SubCommand {
     Run(run::StartArgs),
     Status(status::StatusArgs),
+    MigrationStatus(migration_status::MigrationStatusArgs),
     Create(create::CreateArgs),
+    Migrate(migrate::MigrateArgs),
+    HotplugCpu(hotplug_cpu::HotplugCpuArgs),
+    HotplugMemory(hotplug_memory::HotplugMemoryArgs),
     Start(start::StartArgs),
     Stop(stop::StopArgs),
 }
@@ -77,7 +81,17 @@ pub async fn run() {
     if let Err(e) = match args.subcommand {
         SubCommand::Run(run_args) => run::run(config.qemu, run_args).await,
         SubCommand::Status(status_args) => status::status(config.qemu, status_args).await,
+        SubCommand::MigrationStatus(status_args) => {
+            migration_status::status(config.qemu, status_args).await
+        }
         SubCommand::Create(create_args) => create::create(config.qemu, create_args).await,
+        SubCommand::Migrate(migrate_args) => migrate::migrate(config.qemu, migrate_args).await,
+        SubCommand::HotplugCpu(hotplug_args) => {
+            hotplug_cpu::hotplug_cpu(config.qemu, hotplug_args).await
+        }
+        SubCommand::HotplugMemory(hotplug_args) => {
+            hotplug_memory::hotplug_memory(config.qemu, hotplug_args).await
+        }
         SubCommand::Start(start_args) => start::start(start_args).await,
         SubCommand::Stop(stop_args) => stop::stop(config.qemu, stop_args).await,
     } {

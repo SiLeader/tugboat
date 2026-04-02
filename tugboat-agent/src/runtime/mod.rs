@@ -15,12 +15,15 @@
 mod create;
 mod delete;
 pub(crate) mod error;
+mod hotplug;
 mod inner;
+mod migration;
 mod start;
 mod status;
 
 use crate::runtime::inner::Runtime;
 pub(crate) use create::RuntimeCreateRequest;
+pub(crate) use inner::RuntimeSpecState;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -93,6 +96,14 @@ impl RuntimeOperator {
         }
     }
 
+    pub(crate) async fn spec_state(&self, id: &str) -> Option<RuntimeSpecState> {
+        self.children
+            .read()
+            .await
+            .get(id)
+            .map(|runtime| runtime.spec_state().clone())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn register_existing(
         &self,
@@ -101,11 +112,19 @@ impl RuntimeOperator {
         id: String,
         fingerprints: crate::reconciler::ShipFingerprints,
         published_volumes: Vec<crate::csi::PublishedVolume>,
+        spec_state: RuntimeSpecState,
     ) {
         let mut children = self.children.write().await;
         children.insert(
             id.clone(),
-            inner::Runtime::new(namespace, ship_name, id, fingerprints, published_volumes),
+            inner::Runtime::new(
+                namespace,
+                ship_name,
+                id,
+                fingerprints,
+                published_volumes,
+                spec_state,
+            ),
         );
     }
 }

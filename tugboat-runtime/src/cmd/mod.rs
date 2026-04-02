@@ -13,6 +13,10 @@
 // limitations under the License.
 
 pub mod create;
+pub mod hotplug_cpu;
+pub mod hotplug_memory;
+pub mod migrate;
+pub mod migration_status;
 pub mod run;
 pub mod start;
 pub mod status;

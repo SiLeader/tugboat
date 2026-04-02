@@ -16,6 +16,7 @@ mod status;
 
 use crate::csi::PublishedVolume;
 use crate::reconciler::ShipFingerprints;
+use tugboat_resources::manifests::core::v1::{ShipNetworkClassReference, ShipUefi};
 
 pub(crate) struct Runtime {
     namespace: String,
@@ -23,6 +24,16 @@ pub(crate) struct Runtime {
     id: String,
     fingerprints: ShipFingerprints,
     published_volumes: Vec<PublishedVolume>,
+    spec_state: RuntimeSpecState,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeSpecState {
+    pub image: String,
+    pub network_class_ref: Vec<ShipNetworkClassReference>,
+    pub uefi: Option<ShipUefi>,
+    pub cpu_cores: u64,
+    pub memory_size: u64,
 }
 
 impl Runtime {
@@ -32,6 +43,7 @@ impl Runtime {
         id: String,
         fingerprints: ShipFingerprints,
         published_volumes: Vec<PublishedVolume>,
+        spec_state: RuntimeSpecState,
     ) -> Self {
         Self {
             namespace,
@@ -39,6 +51,7 @@ impl Runtime {
             id,
             fingerprints,
             published_volumes,
+            spec_state,
         }
     }
 
@@ -60,5 +73,17 @@ impl Runtime {
 
     pub(super) fn update_materialized_volume_fingerprint(&mut self, fingerprint: String) {
         self.fingerprints.materialized_volume = fingerprint;
+    }
+
+    pub(super) fn update_spec_fingerprint(&mut self, fingerprint: String) {
+        self.fingerprints.spec = fingerprint;
+    }
+
+    pub(super) fn spec_state(&self) -> &RuntimeSpecState {
+        &self.spec_state
+    }
+
+    pub(super) fn spec_state_mut(&mut self) -> &mut RuntimeSpecState {
+        &mut self.spec_state
     }
 }

@@ -92,12 +92,24 @@ impl ShipReconciler {
                 WatchParams::default().fields(format!("spec.nodeName={}", self.node_name)),
             )
             .with_cancellation_token(self.cancellation_token.clone());
+        let ship_target_controller = Controller::new(self.ship_all_api.clone())
+            .with_watch_params(
+                WatchParams::default().fields(format!("spec.targetNodeName={}", self.node_name)),
+            )
+            .with_cancellation_token(self.cancellation_token.clone());
         let config_map_controller = Controller::new(Api::<ConfigMap>::all(self.client.clone()))
             .with_cancellation_token(self.cancellation_token.clone());
         let secret_controller = Controller::new(Api::<Secret>::all(self.client.clone()))
             .with_cancellation_token(self.cancellation_token.clone());
 
         let ship_reconciler = {
+            let this = self.clone();
+            move |event| {
+                let this = this.clone();
+                async move { this.reconcile(event).await }
+            }
+        };
+        let ship_target_reconciler = {
             let this = self.clone();
             move |event| {
                 let this = this.clone();
@@ -121,6 +133,7 @@ impl ShipReconciler {
 
         tokio::join!(
             ship_controller.run(ship_reconciler),
+            ship_target_controller.run(ship_target_reconciler),
             config_map_controller.run(config_map_reconciler),
             secret_controller.run(secret_reconciler)
         );

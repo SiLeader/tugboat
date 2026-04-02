@@ -12,10 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod hotplug;
-pub mod migrate;
-#[cfg(feature = "operator")]
-pub mod operator;
-pub mod run;
-pub mod status;
-pub mod stop;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmCpuHotplugRequest {
+    pub id: String,
+    pub vcpus_to_add: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmMemoryHotplugRequest {
+    pub id: String,
+    pub size_bytes_to_add: u64,
+}

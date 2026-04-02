@@ -25,11 +25,13 @@ pub fn mount_namespace_path(id: &str) -> String {
 pub struct VmRunRequest {
     pub image: String,
     pub cpu: VmCpuConfig,
-    pub memory: u64,
+    pub memory: VmMemoryConfig,
     pub id: String,
     pub networks: Vec<VmNetworkConfig>,
     pub volumes: Vec<VmVolumeConfig>,
     pub uefi: VmUefiConfig,
+    #[serde(default)]
+    pub incoming: Option<VmIncomingMigrationConfig>,
     #[serde(default)]
     pub user: VmExecUser,
 }
@@ -46,6 +48,24 @@ pub struct VmExecUser {
 pub struct VmCpuConfig {
     pub architecture: String,
     pub cores: u64,
+    #[serde(default)]
+    pub max_cores: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmMemoryConfig {
+    pub size: u64,
+    #[serde(default)]
+    pub max_size: Option<u64>,
+    #[serde(default)]
+    pub slots: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmIncomingMigrationConfig {
+    pub port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
