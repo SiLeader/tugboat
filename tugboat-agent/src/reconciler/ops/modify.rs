@@ -35,12 +35,6 @@ impl ShipReconciler {
                 "metadata.uid".to_string(),
             ));
         };
-        let Some(name) = &ship_metadata.name else {
-            return Err(ReconcileError::FieldMissing(
-                "v1.Ship".to_string(),
-                "metadata.name".to_string(),
-            ));
-        };
         let namespace = ship_metadata
             .namespace
             .clone()
@@ -106,38 +100,11 @@ impl ShipReconciler {
             "Ship '{}' materialized volumes changed; refreshing in-place",
             ship_id
         );
-        if let Err(err) = self
-            .refresh_materialized_volumes(ship_id, &namespace, ship_spec)
-            .await
-        {
-            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
-            let mut status_ship = ship.clone();
-            status_ship.append_status(ShipCondition {
-                status: "MaterializedVolumesRefreshFailed".to_string(),
-                message: format!("Failed to refresh materialized volumes: {}", err),
-                timestamp: Some(Time::now()),
-            });
-            let _ = api.replace_status(name, status_ship).await;
-            return Err(err);
-        }
-
-        self.runtime_operator
-            .update_materialized_volume_fingerprint(ship_id, fingerprints.materialized_volume)
-            .await;
-        {
-            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
-            let mut status_ship = ship.clone();
-            status_ship.append_status(ShipCondition {
-                status: "MaterializedVolumesRefreshed".to_string(),
-                message: "Materialized volumes (ConfigMap/Secret) refreshed in-place".to_string(),
-                timestamp: Some(Time::now()),
-            });
-            api.replace_status(name, status_ship).await?;
-        }
-        // Check volume expansions even when only materialized volumes changed.
-        self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
-            .await;
-        Ok(())
+        self.refresh_materialized_volumes_for_ship_with_fingerprint(
+            ship,
+            Some(fingerprints.materialized_volume),
+        )
+        .await
     }
 
     /// Recreate the VM by deleting it and then adding it again.
@@ -176,6 +143,91 @@ impl ShipReconciler {
                 return Err(err);
             }
         }
+        Ok(())
+    }
+
+    pub(crate) async fn refresh_materialized_volumes_for_ship(
+        &self,
+        ship: Ship,
+    ) -> Result<(), ReconcileError> {
+        self.refresh_materialized_volumes_for_ship_with_fingerprint(ship, None)
+            .await
+    }
+
+    async fn refresh_materialized_volumes_for_ship_with_fingerprint(
+        &self,
+        ship: Ship,
+        materialized_volume_fingerprint: Option<String>,
+    ) -> Result<(), ReconcileError> {
+        let Some(ship_metadata) = ship.object_meta() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata".to_string(),
+            ));
+        };
+        let Some(ship_id) = &ship_metadata.uid else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.uid".to_string(),
+            ));
+        };
+        let Some(name) = &ship_metadata.name else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let namespace = ship_metadata
+            .namespace
+            .clone()
+            .unwrap_or("default".to_string());
+        let Some(ship_spec) = &ship.spec else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+
+        if !self.runtime_operator.has_ship(ship_id).await {
+            debug!(
+                "Skipping materialized volume refresh for Ship '{}' because it is not running",
+                ship_id
+            );
+            return Ok(());
+        }
+
+        if let Err(err) = self
+            .refresh_materialized_volumes(ship_id, &namespace, ship_spec)
+            .await
+        {
+            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+            let mut status_ship = ship.clone();
+            status_ship.append_status(ShipCondition {
+                status: "MaterializedVolumesRefreshFailed".to_string(),
+                message: format!("Failed to refresh materialized volumes: {}", err),
+                timestamp: Some(Time::now()),
+            });
+            let _ = api.replace_status(name, status_ship).await;
+            return Err(err);
+        }
+
+        if let Some(fingerprint) = materialized_volume_fingerprint {
+            self.runtime_operator
+                .update_materialized_volume_fingerprint(ship_id, fingerprint)
+                .await;
+        }
+
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+        let mut status_ship = ship.clone();
+        status_ship.append_status(ShipCondition {
+            status: "MaterializedVolumesRefreshed".to_string(),
+            message: "Materialized volumes (ConfigMap/Secret) refreshed in-place".to_string(),
+            timestamp: Some(Time::now()),
+        });
+        api.replace_status(name, status_ship).await?;
+
+        self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
+            .await;
         Ok(())
     }
 

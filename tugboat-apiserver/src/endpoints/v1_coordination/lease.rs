@@ -18,7 +18,7 @@ use crate::endpoints::resource_handlers::ReplaceOptions;
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, get, post, put};
+use actix_web::{HttpResponse, get, patch, post, put};
 use serde::Deserialize;
 use tugboat_resources::manifests::coordination::v1::Lease;
 use utoipa::ToSchema;
@@ -147,6 +147,38 @@ pub(super) async fn handle_lease_replace(
         Some(path.namespace),
         path.name,
         replacement.into_inner(),
+        ReplaceOptions {
+            preserve_status: false,
+            use_client_resource_version: true,
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = Lease),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
+pub(super) async fn handle_lease_patch(
+    path: Path<LeaseReplacePathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Lease>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::patch_resource::<Lease>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        patch.into_inner(),
         ReplaceOptions {
             preserve_status: false,
             use_client_resource_version: true,

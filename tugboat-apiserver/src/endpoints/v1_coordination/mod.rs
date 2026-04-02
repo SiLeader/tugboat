@@ -24,6 +24,7 @@ mod lease;
         lease::handle_lease_create,
         lease::handle_lease_list,
         lease::handle_lease_list_all,
+        lease::handle_lease_patch,
         lease::handle_lease_read,
         lease::handle_lease_replace,
     ),
@@ -46,6 +47,7 @@ pub(super) fn register_lease(service: &mut ServiceConfig) {
         .service(lease::handle_lease_create)
         .service(lease::handle_lease_list)
         .service(lease::handle_lease_list_all)
+        .service(lease::handle_lease_patch)
         .service(lease::handle_lease_read)
         .service(lease::handle_lease_replace);
 }

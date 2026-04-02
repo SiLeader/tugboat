@@ -159,6 +159,124 @@ fn normalizes_legacy_and_named_volumes() {
 }
 
 #[test]
+fn detects_config_map_materialized_volume_references() {
+    let spec = ShipSpec {
+        volumes: vec![
+            ShipVolume {
+                name: "cfg".to_string(),
+                config_map: Some(ConfigMapVolumeSource {
+                    name: "app-config".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ShipVolume {
+                name: "secret".to_string(),
+                secret: Some(SecretVolumeSource {
+                    secret_name: "app-secret".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    assert!(
+        super::ship_references_materialized_resource(
+            &spec,
+            MaterializedVolumeSourceKind::ConfigMap,
+            "app-config",
+        )
+        .expect("config map lookup should succeed")
+    );
+    assert!(
+        !super::ship_references_materialized_resource(
+            &spec,
+            MaterializedVolumeSourceKind::ConfigMap,
+            "other-config",
+        )
+        .expect("config map lookup should succeed")
+    );
+}
+
+#[test]
+fn detects_secret_materialized_volume_references() {
+    let spec = ShipSpec {
+        volumes: vec![
+            ShipVolume {
+                name: "cfg".to_string(),
+                config_map: Some(ConfigMapVolumeSource {
+                    name: "app-config".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ShipVolume {
+                name: "secret".to_string(),
+                secret: Some(SecretVolumeSource {
+                    secret_name: "app-secret".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    assert!(
+        super::ship_references_materialized_resource(
+            &spec,
+            MaterializedVolumeSourceKind::Secret,
+            "app-secret",
+        )
+        .expect("secret lookup should succeed")
+    );
+    assert!(
+        !super::ship_references_materialized_resource(
+            &spec,
+            MaterializedVolumeSourceKind::Secret,
+            "other-secret",
+        )
+        .expect("secret lookup should succeed")
+    );
+}
+
+#[test]
+fn ignores_persistent_volume_claims_when_matching_materialized_references() {
+    let spec = ShipSpec {
+        volume_claim_ref: vec![ShipVolumeClaimReference {
+            name: "data".to_string(),
+        }],
+        volumes: vec![ShipVolume {
+            name: "pvc".to_string(),
+            persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                claim_name: "data".to_string(),
+            }),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    assert!(
+        !super::ship_references_materialized_resource(
+            &spec,
+            MaterializedVolumeSourceKind::ConfigMap,
+            "data",
+        )
+        .expect("config map lookup should succeed")
+    );
+    assert!(
+        !super::ship_references_materialized_resource(
+            &spec,
+            MaterializedVolumeSourceKind::Secret,
+            "data",
+        )
+        .expect("secret lookup should succeed")
+    );
+}
+
+#[test]
 fn rejects_multiple_named_volume_sources() {
     let spec = ShipSpec {
         volumes: vec![ShipVolume {

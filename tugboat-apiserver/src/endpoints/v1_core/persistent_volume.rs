@@ -141,6 +141,36 @@ pub(super) async fn handle_persistent_volume_replace(
     .await
 }
 
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = PersistentVolume),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/api/v1/persistentvolumes/{name}")]
+pub(super) async fn handle_persistent_volume_patch(
+    path: Path<PersistentVolumePatchPathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {
+    resource_handlers::patch_resource::<PersistentVolume>(
+        &operator,
+        None,
+        path.into_inner().name,
+        patch.into_inner(),
+        ReplaceOptions {
+            preserve_status: true,
+            use_client_resource_version: false,
+        },
+    )
+    .await
+}
+
 #[derive(Deserialize, ToSchema)]
 pub(super) struct PersistentVolumePatchPathParams {
     name: String,

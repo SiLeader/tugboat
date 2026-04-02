@@ -16,6 +16,7 @@ mod protobuf;
 
 use crate::error::Error;
 use crate::serializer::protobuf::ProtobufSerializer;
+use tugboat_resources::manifests::apps::v1::{Deployment, ReplicaSet};
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
@@ -68,6 +69,7 @@ macro_rules! protobuf_serializable {
 
 protobuf_serializable!(ClusterNetworkClass);
 protobuf_serializable!(ConfigMap);
+protobuf_serializable!(Deployment);
 protobuf_serializable!(Lease);
 protobuf_serializable!(Namespace);
 protobuf_serializable!(NetworkClass);
@@ -78,6 +80,7 @@ protobuf_serializable!(StorageClass);
 protobuf_serializable!(Secret);
 protobuf_serializable!(PersistentVolume);
 protobuf_serializable!(PersistentVolumeClaim);
+protobuf_serializable!(ReplicaSet);
 
 #[cfg(test)]
 mod tests {
