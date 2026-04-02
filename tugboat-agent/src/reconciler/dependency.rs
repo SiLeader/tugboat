@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use crate::reconciler::error::ReconcileError;
-use crate::reconciler::volume::{MaterializedVolumeSourceKind, ship_references_materialized_resource};
+use crate::reconciler::volume::{
+    MaterializedVolumeSourceKind, ship_references_materialized_resource,
+};
 use tokio::sync::mpsc;
 use tracing::warn;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent};
@@ -74,11 +76,14 @@ impl DependencyTracker {
         })?;
         let namespace = config_map.namespace().unwrap_or("default").to_string();
 
-        let _ = self.event_tx.send(DependencyEvent::ResourceChanged {
-            kind: MaterializedVolumeSourceKind::ConfigMap,
-            namespace,
-            name: name.to_string(),
-        }).await;
+        let _ = self
+            .event_tx
+            .send(DependencyEvent::ResourceChanged {
+                kind: MaterializedVolumeSourceKind::ConfigMap,
+                namespace,
+                name: name.to_string(),
+            })
+            .await;
 
         Ok(Action::await_change())
     }
@@ -97,11 +102,14 @@ impl DependencyTracker {
         })?;
         let namespace = secret.namespace().unwrap_or("default").to_string();
 
-        let _ = self.event_tx.send(DependencyEvent::ResourceChanged {
-            kind: MaterializedVolumeSourceKind::Secret,
-            namespace,
-            name: name.to_string(),
-        }).await;
+        let _ = self
+            .event_tx
+            .send(DependencyEvent::ResourceChanged {
+                kind: MaterializedVolumeSourceKind::Secret,
+                namespace,
+                name: name.to_string(),
+            })
+            .await;
 
         Ok(Action::await_change())
     }

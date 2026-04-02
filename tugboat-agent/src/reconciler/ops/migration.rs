@@ -36,7 +36,8 @@ pub trait MigrationContext: Send + Sync {
         target_address: String,
         target_port: u16,
     ) -> Result<(), RuntimeError>;
-    async fn check_migration_status(&self, ship_id: &str) -> Result<VmMigrationPhase, RuntimeError>;
+    async fn check_migration_status(&self, ship_id: &str)
+    -> Result<VmMigrationPhase, RuntimeError>;
     async fn finish_source_migration(&self, ship_id: &str) -> Result<(), RuntimeError>;
 
     async fn update_migration_status(
@@ -84,7 +85,10 @@ impl MigrationContext for ShipReconciler {
             .migrate(ship_id, target_address, target_port)
             .await
     }
-    async fn check_migration_status(&self, ship_id: &str) -> Result<VmMigrationPhase, RuntimeError> {
+    async fn check_migration_status(
+        &self,
+        ship_id: &str,
+    ) -> Result<VmMigrationPhase, RuntimeError> {
         self.runtime_operator.check_migration_status(ship_id).await
     }
     async fn finish_source_migration(&self, ship_id: &str) -> Result<(), RuntimeError> {
@@ -208,7 +212,8 @@ impl<'a> MigrationStateMachine<'a> {
                         target_node_name: Some(target_node_name),
                         target_address: None,
                         target_port: None,
-                        message: "Waiting for target node to prepare migration receiver".to_string(),
+                        message: "Waiting for target node to prepare migration receiver"
+                            .to_string(),
                         timestamp: Some(Time::now()),
                     },
                     "VmMigrationPending",

@@ -229,7 +229,8 @@ where
         let current_value = serde_json::to_value(self.current).map_err(|e| Box::new(e.into()))?;
         let mut current_obj = to_object(current_value, "current resource")?;
 
-        let replacement_value = serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
+        let replacement_value =
+            serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
         let replacement_obj = to_object(replacement_value, "replacement resource")?;
 
         let patch_metadata = replacement_obj.get("metadata").cloned();
@@ -278,8 +279,8 @@ where
             updated_meta.namespace = current_meta.namespace.clone();
             updated_meta.uid = current_meta.uid.clone();
             updated_meta.generation = current_meta.generation;
-            updated_meta.creation_timestamp = current_meta.creation_timestamp.clone();
-            updated_meta.deletion_timestamp = current_meta.deletion_timestamp.clone();
+            updated_meta.creation_timestamp = current_meta.creation_timestamp;
+            updated_meta.deletion_timestamp = current_meta.deletion_timestamp;
 
             if self.options.use_client_resource_version {
                 let client_rv = patch_metadata
@@ -464,8 +465,8 @@ where
         .and_then(|obj| obj.get("status").cloned())
         .unwrap_or(serde_json::Value::Null);
 
-    let replaced = ResourceUpdater::new(&current, ReplaceOptions::default())
-        .apply_status_update(status)?;
+    let replaced =
+        ResourceUpdater::new(&current, ReplaceOptions::default()).apply_status_update(status)?;
 
     let replaced = if current != replaced {
         operator

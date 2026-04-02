@@ -16,7 +16,7 @@ use crate::reconciler::ShipReconciler;
 use crate::reconciler::dependency::{DependencyEvent, DependencyTracker};
 use tokio::select;
 use tokio::sync::mpsc;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 use tugboat_client::WatchParams;
 use tugboat_client::runtime::Controller;
 use tugboat_resources::ObjectMetaResource;
@@ -30,11 +30,8 @@ pub(crate) struct ReconcilerRunner {
 impl ReconcilerRunner {
     pub(crate) fn new(reconciler: ShipReconciler) -> Self {
         let (tx, rx) = mpsc::channel(100);
-        let dependency_tracker = DependencyTracker::new(
-            reconciler.node_name.clone(),
-            reconciler.client.clone(),
-            tx,
-        );
+        let dependency_tracker =
+            DependencyTracker::new(reconciler.node_name.clone(), reconciler.client.clone(), tx);
         Self {
             reconciler,
             dependency_tracker,
@@ -52,18 +49,24 @@ impl ReconcilerRunner {
 
         let ship_controller = Controller::new(self.reconciler.ship_all_api.clone())
             .with_watch_params(
-                WatchParams::default().fields(format!("spec.nodeName={}", self.reconciler.node_name)),
+                WatchParams::default()
+                    .fields(format!("spec.nodeName={}", self.reconciler.node_name)),
             )
             .with_cancellation_token(self.reconciler.cancellation_token.clone());
         let ship_target_controller = Controller::new(self.reconciler.ship_all_api.clone())
             .with_watch_params(
-                WatchParams::default().fields(format!("spec.targetNodeName={}", self.reconciler.node_name)),
+                WatchParams::default()
+                    .fields(format!("spec.targetNodeName={}", self.reconciler.node_name)),
             )
             .with_cancellation_token(self.reconciler.cancellation_token.clone());
 
-        let config_map_controller = self.dependency_tracker.build_config_map_controller()
+        let config_map_controller = self
+            .dependency_tracker
+            .build_config_map_controller()
             .with_cancellation_token(self.reconciler.cancellation_token.clone());
-        let secret_controller = self.dependency_tracker.build_secret_controller()
+        let secret_controller = self
+            .dependency_tracker
+            .build_secret_controller()
             .with_cancellation_token(self.reconciler.cancellation_token.clone());
 
         let ship_reconciler_fn = {
@@ -140,7 +143,9 @@ async fn handle_dependency_change(
     kind: crate::reconciler::volume::MaterializedVolumeSourceKind,
     name: &str,
 ) -> Result<(), crate::reconciler::error::ReconcileError> {
-    let ships = tracker.ships_referencing_resource(namespace, kind, name).await?;
+    let ships = tracker
+        .ships_referencing_resource(namespace, kind, name)
+        .await?;
     if ships.is_empty() {
         return Ok(());
     }

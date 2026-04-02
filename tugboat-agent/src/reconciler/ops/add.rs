@@ -18,9 +18,7 @@ use crate::csi::{
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::ops::PHASE_READY;
-use crate::reconciler::ops::add_helpers::{
-    validate_recovered_published_volumes, vm_volume_config,
-};
+use crate::reconciler::ops::add_helpers::{validate_recovered_published_volumes, vm_volume_config};
 use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::VolumeInfo;
 use crate::runtime::RuntimeCreateRequest;
@@ -29,10 +27,7 @@ use std::future::Future;
 use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{
-    Node, Ship,
-    ShipCondition, ShipSpec,
-};
+use tugboat_resources::manifests::core::v1::{Node, Ship, ShipCondition, ShipSpec};
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
@@ -349,7 +344,9 @@ impl ShipReconciler {
     ) -> Result<(Vec<PublishedVolume>, Vec<VmVolumeConfig>), ReconcileError> {
         let mut guard = VolumeSetupGuard::new(self, ship_id);
 
-        let vm_volumes = self.setup_volumes_inner(&mut guard, namespace, volumes).await;
+        let vm_volumes = self
+            .setup_volumes_inner(&mut guard, namespace, volumes)
+            .await;
 
         match vm_volumes {
             Ok(vm_volumes) => Ok((guard.commit(), vm_volumes)),
