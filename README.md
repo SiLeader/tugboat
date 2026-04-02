@@ -255,8 +255,9 @@ For a manual multi-node validation flow:
     - [x] Core migration triggered by `target_node_name`
     - [x] Migration state machine (Pending, Ready, Migrating, Completed, Failed)
     - [x] Migration status and conditions reflected on Ship
-    - [ ] Preflight compatibility checks (CPU, storage access, network continuity)
-    - [ ] Reliable recovery and explicit error reporting on migration failure
+    - [x] Preflight compatibility checks (CPU, shared-storage eligibility, target network capability)
+    - [x] Reliable recovery and explicit error reporting on migration failure
+    - [x] Guest/network continuity via deterministic bridge/interface/MAC identity across nodes
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
 

@@ -87,12 +87,12 @@ mod tests {
 
     #[test]
     fn can_parse_equality() {
-        let selector = "app.kubernetes.io/name=nginx";
+        let selector = "app.tugboat.cloud/name=nginx";
         let actual = Selector::try_parse(selector).expect("failed to parse");
         assert_eq!(
             actual,
             vec![Selector::Equal(
-                "app.kubernetes.io/name".to_string(),
+                "app.tugboat.cloud/name".to_string(),
                 "nginx".to_string()
             )]
         );
@@ -100,12 +100,12 @@ mod tests {
 
     #[test]
     fn can_parse_inequality() {
-        let selector = "app.kubernetes.io/name!=nginx";
+        let selector = "app.tugboat.cloud/name!=nginx";
         let actual = Selector::try_parse(selector).expect("failed to parse");
         assert_eq!(
             actual,
             vec![Selector::NotEqual(
-                "app.kubernetes.io/name".to_string(),
+                "app.tugboat.cloud/name".to_string(),
                 "nginx".to_string()
             )]
         );
@@ -113,15 +113,15 @@ mod tests {
 
     #[test]
     fn can_parse_multiple() {
-        let selector = "app.kubernetes.io/instance=abc,app.kubernetes.io/name!=nginx,app.kubernetes.io/component!=controller";
+        let selector = "app.tugboat.cloud/instance=abc,app.tugboat.cloud/name!=nginx,app.tugboat.cloud/component!=controller";
         let actual = Selector::try_parse(selector).expect("failed to parse");
         assert_eq!(
             actual,
             vec![
-                Selector::Equal("app.kubernetes.io/instance".to_string(), "abc".to_string()),
-                Selector::NotEqual("app.kubernetes.io/name".to_string(), "nginx".to_string()),
+                Selector::Equal("app.tugboat.cloud/instance".to_string(), "abc".to_string()),
+                Selector::NotEqual("app.tugboat.cloud/name".to_string(), "nginx".to_string()),
                 Selector::NotEqual(
-                    "app.kubernetes.io/component".to_string(),
+                    "app.tugboat.cloud/component".to_string(),
                     "controller".to_string()
                 )
             ]

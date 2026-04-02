@@ -12,14 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cni::NetworkClassInfo;
+use crate::csi::READ_WRITE_MANY;
+use crate::node_registration::NODE_ARCH_LABEL;
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
+use crate::reconciler::volume::VolumeInfo;
 use crate::runtime::error::RuntimeError;
 use async_trait::async_trait;
+use std::collections::BTreeSet;
 use tracing::{error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus};
+use tugboat_resources::manifests::core::v1::{
+    Node, NodeCniPluginStatus, Ship, ShipClass, ShipMigrationStatus,
+};
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::migrate::VmMigrationPhase;
 
@@ -30,6 +37,11 @@ pub trait MigrationContext: Send + Sync {
     fn node_name(&self) -> &str;
     async fn has_ship(&self, ship_id: &str) -> bool;
     async fn reconcile_deleted(&self, ship: Ship) -> Result<(), ReconcileError>;
+    async fn preflight_migration(
+        &self,
+        ship: &Ship,
+        target_node_name: &str,
+    ) -> Result<MigrationPreflight, ReconcileError>;
     async fn migrate(
         &self,
         ship_id: &str,
@@ -74,6 +86,13 @@ impl MigrationContext for ShipReconciler {
     }
     async fn reconcile_deleted(&self, ship: Ship) -> Result<(), ReconcileError> {
         self.reconcile_deleted(ship).await
+    }
+    async fn preflight_migration(
+        &self,
+        ship: &Ship,
+        target_node_name: &str,
+    ) -> Result<MigrationPreflight, ReconcileError> {
+        ShipReconciler::preflight_migration(self, ship, target_node_name).await
     }
     async fn migrate(
         &self,
@@ -143,6 +162,12 @@ impl MigrationContext for ShipReconciler {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationPreflight {
+    Ready,
+    Reject(String),
+}
+
 pub struct MigrationStateMachine<'a> {
     context: &'a dyn MigrationContext,
 }
@@ -202,6 +227,36 @@ impl<'a> MigrationStateMachine<'a> {
             .and_then(|status| status.migration.clone());
 
         let Some(migration_status) = migration_status else {
+            match self
+                .context
+                .preflight_migration(ship, &target_node_name)
+                .await?
+            {
+                MigrationPreflight::Ready => {}
+                MigrationPreflight::Reject(reason) => {
+                    let message = format!(
+                        "Migration preflight failed: {reason}. Source VM remains on the source node."
+                    );
+                    self.context
+                        .update_migration_status(
+                            namespace,
+                            name,
+                            ShipMigrationStatus {
+                                phase: PHASE_FAILED.to_string(),
+                                source_node_name: ship_spec.node_name.clone(),
+                                target_node_name: Some(target_node_name),
+                                target_address: None,
+                                target_port: None,
+                                message: message.clone(),
+                                timestamp: Some(Time::now()),
+                            },
+                            "VmMigrationPreflightFailed",
+                            message,
+                        )
+                        .await?;
+                    return Ok(true);
+                }
+            }
             self.context
                 .update_migration_status(
                     namespace,
@@ -324,13 +379,13 @@ impl<'a> MigrationStateMachine<'a> {
                                     "targetNodeName": target_node_name,
                                     "targetAddress": target_address,
                                     "targetPort": target_port,
-                                    "message": "Live migration completed successfully",
+                                    "message": "Live migration completed successfully with preserved guest NIC identity",
                                     "timestamp": Time::now(),
                                 },
                                 "conditions": [
                                     {
                                         "status": "VmMigrated",
-                                        "message": format!("VM migrated successfully to node '{target_node_name}'"),
+                                        "message": format!("VM migrated successfully to node '{target_node_name}' with deterministic bridge, interface, and MAC identity"),
                                         "timestamp": Time::now(),
                                     }
                                 ]
@@ -350,7 +405,9 @@ impl<'a> MigrationStateMachine<'a> {
                         Ok(true)
                     }
                     VmMigrationPhase::Failed | VmMigrationPhase::Cancelled => {
-                        let message = format!("Live migration did not complete (phase: {phase:?})");
+                        let message = format!(
+                            "Live migration did not complete (phase: {phase:?}). Source VM remains authoritative; clean up the target and retry when ready."
+                        );
                         self.context
                             .update_migration_status(
                                 namespace,
@@ -384,15 +441,266 @@ impl<'a> MigrationStateMachine<'a> {
     }
 }
 
+impl ShipReconciler {
+    async fn preflight_migration(
+        &self,
+        ship: &Ship,
+        target_node_name: &str,
+    ) -> Result<MigrationPreflight, ReconcileError> {
+        let Some(ship_spec) = ship.spec.as_ref() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+
+        if ship_spec.node_name.as_deref() == Some(target_node_name) {
+            return Ok(MigrationPreflight::Reject(format!(
+                "target node '{target_node_name}' is already hosting the ship"
+            )));
+        }
+
+        let namespace = ship.namespace().unwrap_or("default");
+        let node_api: Api<Node> = Api::all(self.client.clone());
+        let Some(target_node) = node_api.get(target_node_name).await? else {
+            return Ok(MigrationPreflight::Reject(format!(
+                "target node '{target_node_name}' was not found"
+            )));
+        };
+
+        let Some(ship_class) = self.ship_class_api.get(&ship_spec.ship_class).await? else {
+            return Err(ReconcileError::ShipClassNotFound(
+                ship_spec.ship_class.clone(),
+            ));
+        };
+
+        if let Some(reason) = validate_target_node_readiness(&target_node) {
+            return Ok(MigrationPreflight::Reject(reason));
+        }
+        if let Some(reason) = validate_target_architecture(&ship_class, &target_node) {
+            return Ok(MigrationPreflight::Reject(reason));
+        }
+
+        let network_classes = self
+            .get_related_network_classes(namespace, ship_spec)
+            .await?;
+        if let Some(reason) = validate_target_network_capability(&target_node, &network_classes) {
+            return Ok(MigrationPreflight::Reject(reason));
+        }
+
+        let volumes = self.get_related_volumes(namespace, ship_spec).await?;
+        if let Some(reason) = validate_storage_eligibility(&volumes) {
+            return Ok(MigrationPreflight::Reject(reason));
+        }
+
+        Ok(MigrationPreflight::Ready)
+    }
+}
+
+fn validate_target_node_readiness(target_node: &Node) -> Option<String> {
+    let Some(meta) = target_node.object_meta.as_ref() else {
+        return Some("target node is missing metadata".to_string());
+    };
+    let node_name = meta.name.as_deref().unwrap_or("<unknown>");
+    let Some(spec) = target_node.spec.as_ref() else {
+        return Some(format!("target node '{node_name}' is missing spec"));
+    };
+
+    if !spec.ips.iter().any(|ip| {
+        ip.parse::<std::net::IpAddr>()
+            .map(|addr| !addr.is_loopback())
+            .unwrap_or(false)
+    }) {
+        return Some(format!(
+            "target node '{node_name}' does not advertise a reachable non-loopback IP"
+        ));
+    }
+
+    let Some(status) = target_node.status.as_ref() else {
+        return Some(format!("target node '{node_name}' has no published status"));
+    };
+    let Some(condition) = status
+        .conditions
+        .iter()
+        .find(|condition| condition.r#type == "CniReady")
+    else {
+        return Some(format!(
+            "target node '{node_name}' does not publish a CniReady condition"
+        ));
+    };
+
+    if condition.status == "True" {
+        None
+    } else if condition.message.is_empty() {
+        Some(format!("target node '{node_name}' is not CNI-ready"))
+    } else {
+        Some(format!(
+            "target node '{node_name}' is not CNI-ready: {}",
+            condition.message
+        ))
+    }
+}
+
+fn validate_target_architecture(ship_class: &ShipClass, target_node: &Node) -> Option<String> {
+    let requested = ship_class
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.cpu.as_ref())
+        .map(|cpu| normalize_architecture(&cpu.architecture))
+        .filter(|arch| !arch.is_empty())?;
+    let meta = target_node.object_meta.as_ref()?;
+    let node_name = meta.name.as_deref().unwrap_or("<unknown>");
+    let Some(actual) = meta
+        .labels
+        .get(NODE_ARCH_LABEL)
+        .map(|arch| normalize_architecture(arch))
+    else {
+        return Some(format!(
+            "target node '{node_name}' does not advertise '{}' label",
+            NODE_ARCH_LABEL
+        ));
+    };
+
+    if requested == actual {
+        None
+    } else {
+        Some(format!(
+            "target node '{node_name}' architecture '{actual}' is incompatible with ship class architecture '{requested}'"
+        ))
+    }
+}
+
+fn validate_target_network_capability(
+    target_node: &Node,
+    network_classes: &[NetworkClassInfo],
+) -> Option<String> {
+    let statuses = target_node
+        .status
+        .as_ref()
+        .map(|status| status.cni_plugins.as_slice())
+        .unwrap_or(&[]);
+    let mut required_plugins = BTreeSet::from(["loopback".to_string()]);
+
+    for network_class in network_classes {
+        let plugin = normalized_plugin(&network_class.spec);
+        match plugin {
+            "bridge" => {
+                required_plugins.insert("bridge".to_string());
+            }
+            "flannel" => {
+                required_plugins.insert("bridge".to_string());
+                required_plugins.insert("flannel".to_string());
+                if network_class
+                    .spec
+                    .flannel
+                    .as_ref()
+                    .and_then(|flannel| flannel.port_mappings)
+                    .unwrap_or(false)
+                {
+                    required_plugins.insert("portmap".to_string());
+                }
+            }
+            other => {
+                return Some(format!(
+                    "network class '{}' requires unsupported cniPlugin '{}'",
+                    network_class.name, other
+                ));
+            }
+        }
+    }
+
+    for plugin in required_plugins {
+        if let Some(reason) = require_plugin_ready(statuses, &plugin) {
+            return Some(reason);
+        }
+    }
+
+    None
+}
+
+fn validate_storage_eligibility(volumes: &[VolumeInfo]) -> Option<String> {
+    for volume in volumes {
+        let Some(volume) = volume.persistent_volume_claim() else {
+            continue;
+        };
+
+        let claim_supports_rwx = volume
+            .claim
+            .access_modes
+            .iter()
+            .any(|mode| mode == READ_WRITE_MANY);
+        let pv_supports_rwx = volume
+            .volume
+            .access_modes
+            .iter()
+            .any(|mode| mode == READ_WRITE_MANY);
+
+        if !claim_supports_rwx || !pv_supports_rwx {
+            return Some(format!(
+                "persistent volume claim '{}' must use shared storage with '{}' access on both the claim and persistent volume for live migration",
+                volume.claim_name, READ_WRITE_MANY
+            ));
+        }
+    }
+
+    None
+}
+
+fn normalize_architecture(arch: &str) -> String {
+    match arch.trim().to_ascii_lowercase().as_str() {
+        "x86_64" | "amd64" => "amd64".to_string(),
+        "aarch64" | "arm64" => "arm64".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn normalized_plugin(spec: &tugboat_resources::manifests::core::v1::NetworkClassSpec) -> &str {
+    let plugin = spec.cni_plugin.trim();
+    if plugin.is_empty() { "bridge" } else { plugin }
+}
+
+fn require_plugin_ready(statuses: &[NodeCniPluginStatus], plugin: &str) -> Option<String> {
+    let Some(status) = statuses.iter().find(|status| status.name == plugin) else {
+        return Some(format!(
+            "target node does not advertise required CNI plugin '{}'",
+            plugin
+        ));
+    };
+
+    if status.ready.unwrap_or(false) {
+        None
+    } else if status.message.is_empty() {
+        Some(format!("required CNI plugin '{}' is not ready", plugin))
+    } else {
+        Some(format!(
+            "required CNI plugin '{}' is not ready: {}",
+            plugin, status.message
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tugboat_resources::manifests::core::v1::{ShipSpec, ShipStatus};
+    use std::sync::Mutex;
+    use tugboat_resources::manifests::core::v1::{
+        CsiPersistentVolumeSource, PersistentVolumeClaimSpec, PersistentVolumeSpec, ShipSpec,
+        ShipStatus,
+    };
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
+
+    #[derive(Debug, Clone)]
+    struct StatusUpdate {
+        migration: ShipMigrationStatus,
+        condition_status: String,
+        condition_message: String,
+    }
 
     struct FakeContext {
         node_name: String,
         migration_phase: VmMigrationPhase,
+        preflight: MigrationPreflight,
+        updates: Mutex<Vec<StatusUpdate>>,
     }
 
     #[async_trait]
@@ -405,6 +713,13 @@ mod tests {
         }
         async fn reconcile_deleted(&self, _ship: Ship) -> Result<(), ReconcileError> {
             Ok(())
+        }
+        async fn preflight_migration(
+            &self,
+            _ship: &Ship,
+            _target_node_name: &str,
+        ) -> Result<MigrationPreflight, ReconcileError> {
+            Ok(self.preflight.clone())
         }
         async fn migrate(
             &self,
@@ -428,10 +743,15 @@ mod tests {
             &self,
             _namespace: &str,
             _name: &str,
-            _migration: ShipMigrationStatus,
-            _condition_status: &str,
-            _condition_message: String,
+            migration: ShipMigrationStatus,
+            condition_status: &str,
+            condition_message: String,
         ) -> Result<(), ReconcileError> {
+            self.updates.lock().unwrap().push(StatusUpdate {
+                migration,
+                condition_status: condition_status.to_string(),
+                condition_message,
+            });
             Ok(())
         }
 
@@ -459,6 +779,8 @@ mod tests {
         let context = FakeContext {
             node_name: "node-1".to_string(),
             migration_phase: VmMigrationPhase::Completed,
+            preflight: MigrationPreflight::Ready,
+            updates: Mutex::new(Vec::new()),
         };
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
@@ -482,6 +804,8 @@ mod tests {
         let context = FakeContext {
             node_name: "node-1".to_string(),
             migration_phase: VmMigrationPhase::Completed,
+            preflight: MigrationPreflight::Ready,
+            updates: Mutex::new(Vec::new()),
         };
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
@@ -506,6 +830,8 @@ mod tests {
         let context = FakeContext {
             node_name: "node-1".to_string(),
             migration_phase: VmMigrationPhase::Completed,
+            preflight: MigrationPreflight::Ready,
+            updates: Mutex::new(Vec::new()),
         };
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
@@ -538,6 +864,8 @@ mod tests {
         let context = FakeContext {
             node_name: "node-1".to_string(),
             migration_phase: VmMigrationPhase::Completed,
+            preflight: MigrationPreflight::Ready,
+            updates: Mutex::new(Vec::new()),
         };
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
@@ -570,6 +898,8 @@ mod tests {
         let context = FakeContext {
             node_name: "target-node".to_string(),
             migration_phase: VmMigrationPhase::Failed,
+            preflight: MigrationPreflight::Ready,
+            updates: Mutex::new(Vec::new()),
         };
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
@@ -594,5 +924,76 @@ mod tests {
         // Should handle cleanup on target node and return true
         let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
         assert!(result);
+    }
+
+    #[tokio::test]
+    async fn test_migration_preflight_rejection_marks_ship_failed() {
+        let context = FakeContext {
+            node_name: "node-1".to_string(),
+            migration_phase: VmMigrationPhase::Completed,
+            preflight: MigrationPreflight::Reject("target node is not CNI-ready".to_string()),
+            updates: Mutex::new(Vec::new()),
+        };
+        let sm = MigrationStateMachine::new(&context);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("node-1".to_string()),
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
+        assert!(result);
+
+        let updates = context.updates.lock().unwrap();
+        let update = updates.last().expect("expected migration status update");
+        assert_eq!(update.migration.phase, PHASE_FAILED);
+        assert_eq!(update.condition_status, "VmMigrationPreflightFailed");
+        assert!(
+            update
+                .condition_message
+                .contains("Source VM remains on the source node")
+        );
+    }
+
+    #[test]
+    fn normalizes_common_architecture_aliases() {
+        assert_eq!(normalize_architecture("x86_64"), "amd64");
+        assert_eq!(normalize_architecture("amd64"), "amd64");
+        assert_eq!(normalize_architecture("aarch64"), "arm64");
+        assert_eq!(normalize_architecture("arm64"), "arm64");
+    }
+
+    #[test]
+    fn rejects_non_shared_persistent_volumes_for_live_migration() {
+        let volume = VolumeInfo::PersistentVolumeClaim(Box::new(
+            crate::reconciler::volume::PersistentVolumeClaimVolumeInfo {
+                name: "data".to_string(),
+                claim_name: "data-pvc".to_string(),
+                volume_name: "data-pv".to_string(),
+                claim: PersistentVolumeClaimSpec {
+                    access_modes: vec!["ReadWriteOnce".to_string()],
+                    ..Default::default()
+                },
+                volume: PersistentVolumeSpec {
+                    access_modes: vec!["ReadWriteOnce".to_string()],
+                    csi: Some(CsiPersistentVolumeSource::default()),
+                    ..Default::default()
+                },
+                status: None,
+                source: CsiPersistentVolumeSource::default(),
+            },
+        ));
+
+        let reason =
+            validate_storage_eligibility(&[volume]).expect("non-shared storage should be rejected");
+        assert!(reason.contains(READ_WRITE_MANY));
     }
 }

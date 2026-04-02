@@ -10,12 +10,13 @@ Current evidence
 - `tugboat-agent` handles `target_node_name` in the Ship spec to trigger migration and manages the state machine (Pending, Ready, Migrating, Completed, Failed).
 - Ship status and conditions are updated to reflect migration progress.
 - Basic cleanup on source and target nodes after completion or failure is implemented.
+- Migration preflight now rejects incompatible targets before handoff by checking target CNI readiness, architecture labels, reachable node IPs, and shared-storage eligibility for PVC-backed volumes.
+- Current storage policy is explicit: live migration only supports materialized volumes and PVC-backed storage that advertises `ReadWriteMany` on both the claim and backing PersistentVolume.
+- Target-side prepare failures now mark migration as failed with an explicit "source remains authoritative" message so the source VM stays recoverable.
+- Guest network continuity is now an explicit part of the migration contract: bridge selection, interface names, and MAC addresses are deterministic from `ship_id` and network class, so the migrated guest keeps the same NIC identity on the target node.
 
 What to implement
-- Implement preflight checks for CPU compatibility, storage access, and network continuity between source and target nodes.
-- Refine rollback and recovery behavior for multi-node failure scenarios during migration.
-- Clarify and document the storage model for migration (e.g., shared volume requirements vs. block-copy).
-- Ensure the migration is transparent to the guest as much as possible, aiming for minimal downtime (less than 1s).
+- Tighten rollback and recovery further for multi-node failure scenarios that involve agent crashes or long-lived partitions during migration.
 - Verify the flow end-to-end in a multi-node environment.
 
 Implementation surfaces
@@ -29,6 +30,6 @@ Acceptance criteria
 - ✓ The `Ship` successfully migrates to the target node without being stopped or recreated.
 - ✓ Success and failure states are visible through status updates.
 - ✓ Tests in `tugboat-agent` cover basic migration states.
-- ☐ Preflight checks prevent migration to incompatible nodes.
-- ☐ A failed migration leaves the Ship in a recoverable and explicitly reported state on the source node.
-- ☐ Connectivity is maintained or quickly restored for the guest during and after migration.
+- ✓ Preflight checks prevent migration to incompatible nodes.
+- ✓ A failed migration leaves the Ship in a recoverable and explicitly reported state on the source node.
+- ✓ Connectivity is maintained or quickly restored for the guest during and after migration.

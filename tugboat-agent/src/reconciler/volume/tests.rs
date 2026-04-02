@@ -75,7 +75,7 @@ fn allows_node_publish_and_stage_secrets() {
         }),
         fs_type: Some("xfs".to_string()),
         volume_attributes: std::collections::HashMap::from([(
-            "storage.kubernetes.io/csiProvisionerIdentity".to_string(),
+            "storage.tugboat.cloud/csiProvisionerIdentity".to_string(),
             "test".to_string(),
         )]),
         ..Default::default()
