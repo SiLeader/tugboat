@@ -53,20 +53,17 @@ impl ShipReconciler {
             .unwrap_or("default".to_string());
 
         if !self.runtime_operator.has_ship(ship_id).await {
-            if let Some(spec) = &ship.spec {
-                if spec.target_node_name.as_deref() == Some(self.node_name.as_str()) {
-                    if let Some(status) = &ship.status {
-                        if let Some(migration) = &status.migration {
-                            if migration.phase == PHASE_FAILED {
-                                info!(
-                                    "Ship '{}' is a failed migration target and not running, ignoring",
-                                    ship_id
-                                );
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
+            if let Some(spec) = &ship.spec
+                && spec.target_node_name.as_deref() == Some(self.node_name.as_str())
+                && let Some(status) = &ship.status
+                && let Some(migration) = &status.migration
+                && migration.phase == PHASE_FAILED
+            {
+                info!(
+                    "Ship '{}' is a failed migration target and not running, ignoring",
+                    ship_id
+                );
+                return Ok(());
             }
             info!(
                 "Ship modified but not running, treating as added: {}",
@@ -271,24 +268,23 @@ impl ShipReconciler {
         };
 
         if target_node_name == self.node_name {
-            if let Some(status) = &ship.status {
-                if let Some(migration) = &status.migration {
-                    if migration.phase == PHASE_FAILED {
-                        if self.runtime_operator.has_ship(ship_id).await {
-                            info!(
-                                "Migration failed for ship '{}', cleaning up incoming VM on target node",
-                                ship_id
-                            );
-                            if let Err(err) = self.reconcile_deleted(ship.clone()).await {
-                                error!(
-                                    "Failed to clean up incoming VM for failed migration '{}': {}",
-                                    ship_id, err
-                                );
-                            }
-                        }
-                        return Ok(true);
+            if let Some(status) = &ship.status
+                && let Some(migration) = &status.migration
+                && migration.phase == PHASE_FAILED
+            {
+                if self.runtime_operator.has_ship(ship_id).await {
+                    info!(
+                        "Migration failed for ship '{}', cleaning up incoming VM on target node",
+                        ship_id
+                    );
+                    if let Err(err) = self.reconcile_deleted(ship.clone()).await {
+                        error!(
+                            "Failed to clean up incoming VM for failed migration '{}': {}",
+                            ship_id, err
+                        );
                     }
                 }
+                return Ok(true);
             }
             return Ok(self.runtime_operator.has_ship(ship_id).await);
         }
@@ -331,10 +327,7 @@ impl ShipReconciler {
         };
 
         match migration_status.phase.as_str() {
-            PHASE_PENDING => {
-                // Waiting for the target node to start QEMU in incoming mode.
-                return Ok(true);
-            }
+            PHASE_PENDING => Ok(true),
             PHASE_READY => {
                 // Target is ready; issue the non-blocking QMP migrate command.
                 let Some(target_address) = migration_status.target_address.clone() else {

@@ -129,7 +129,7 @@ impl RuntimeOperator {
                 RuntimeSpecState {
                     image: ship_spec.image.clone(),
                     network_class_ref: ship_spec.network_class_ref.clone(),
-                    uefi: ship_spec.uefi.clone(),
+                    uefi: ship_spec.uefi,
                     cpu_cores: cpu.cores,
                     memory_size,
                 },

@@ -96,7 +96,7 @@ pub(super) fn build_runtime_spec_state(
     Ok(RuntimeSpecState {
         image: ship_spec.image.clone(),
         network_class_ref: ship_spec.network_class_ref.clone(),
-        uefi: ship_spec.uefi.clone(),
+        uefi: ship_spec.uefi,
         cpu_cores: cpu.cores,
         memory_size,
     })
@@ -284,10 +284,11 @@ impl ShipReconciler {
 
         // Prefer non-loopback IPv4 addresses.
         for ip in &spec.ips {
-            if let Ok(addr) = ip.parse::<std::net::IpAddr>() {
-                if !addr.is_loopback() && addr.is_ipv4() {
-                    return Ok(ip.clone());
-                }
+            if let Ok(addr) = ip.parse::<std::net::IpAddr>()
+                && !addr.is_loopback()
+                && addr.is_ipv4()
+            {
+                return Ok(ip.clone());
             }
         }
 
