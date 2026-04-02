@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::hotplug::VmHotplugRequest;
 use crate::migrate::{VmMigrateRequest, VmMigrationStatusResponse};
 use crate::run::VmRunRequest;
 use crate::status::VmStatusResponse;
@@ -140,12 +139,6 @@ impl VmRuntimeOperator {
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ))
         }
-    }
-
-    pub async fn hotplug(&self, args: VmHotplugRequest) -> Result<(), Error> {
-        let child = self.call("hotplug", &args).await?;
-        handle_command_response(child).await?;
-        Ok(())
     }
 }
 

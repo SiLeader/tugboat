@@ -16,7 +16,7 @@ use crate::csi::PublishedVolume;
 use crate::reconciler::ShipFingerprints;
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
-use crate::runtime::inner::{Runtime, RuntimeSpecState};
+use crate::runtime::inner::Runtime;
 use tracing::{debug, info};
 use tugboat_resources::manifests::core::v1::{ShipClass, ShipSpec};
 use tugboat_resources::sized::SizedString;
@@ -82,29 +82,14 @@ impl RuntimeOperator {
         let memory_size = memory_size
             .as_byte_length()
             .ok_or(RuntimeError::MemorySize(memory.size.clone()))?;
-        let memory_max_size = memory
-            .max_size
-            .clone()
-            .map(SizedString)
-            .map(|size| {
-                size.as_byte_length()
-                    .ok_or(RuntimeError::MemorySize(size.0))
-            })
-            .transpose()?;
-
         let vm_config = VmRunRequest {
             id: ship_id.clone(),
             image: image.location,
             cpu: VmCpuConfig {
                 architecture: cpu.architecture,
                 cores: cpu.cores,
-                max_cores: cpu.max_cores,
             },
-            memory: VmMemoryConfig {
-                size: memory_size,
-                max_size: memory_max_size,
-                slots: memory.slots,
-            },
+            memory: VmMemoryConfig { size: memory_size },
             networks,
             incoming: incoming_port
                 .map(|port| tugboat_vm_runtime_interface::run::VmIncomingMigrationConfig { port }),
@@ -126,13 +111,6 @@ impl RuntimeOperator {
                 ship_id,
                 fingerprints,
                 published_volumes,
-                RuntimeSpecState {
-                    image: ship_spec.image.clone(),
-                    network_class_ref: ship_spec.network_class_ref.clone(),
-                    uefi: ship_spec.uefi,
-                    cpu_cores: cpu.cores,
-                    memory_size,
-                },
             ),
         );
         Ok(pid)

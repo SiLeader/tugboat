@@ -57,7 +57,7 @@ What is still missing
 - After the Flannel path is stable, evaluate whether Calico/Cilium or richer secondary-network
   semantics still need dedicated work.
 - Implement live update behavior for network attachment changes under Modified reconciliation if
-  hotplug or restart-required flows are desired.
+  restart-required flows are desired.
 
 Implementation surfaces
 - `tugboat-cni-operator/src/`

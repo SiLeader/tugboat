@@ -14,9 +14,7 @@
 
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
-use crate::reconciler::ops::add::build_runtime_spec_state;
 use crate::reconciler::reconcile::AppendStatus;
-use crate::runtime::RuntimeSpecState;
 use crate::runtime::error::RuntimeError;
 use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
@@ -26,12 +24,6 @@ use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::migrate::VmMigrationPhase;
 
 use super::{PHASE_COMPLETED, PHASE_FAILED, PHASE_MIGRATING, PHASE_PENDING, PHASE_READY};
-
-#[derive(Debug, PartialEq, Eq)]
-struct HotplugPlan {
-    cpu_cores: u64,
-    memory_size: u64,
-}
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_modified(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -107,15 +99,6 @@ impl ShipReconciler {
             return Ok(());
         }
 
-        if spec_changed
-            && !pvc_changed
-            && self
-                .try_reconcile_hotplug(&ship, ship_id, &fingerprints)
-                .await?
-        {
-            return Ok(());
-        }
-
         if spec_changed || pvc_changed {
             if spec_changed {
                 info!(
@@ -181,75 +164,6 @@ impl ShipReconciler {
             }
         }
         Ok(())
-    }
-
-    async fn try_reconcile_hotplug(
-        &self,
-        ship: &Ship,
-        ship_id: &str,
-        fingerprints: &super::ShipFingerprints,
-    ) -> Result<bool, ReconcileError> {
-        let Some(ship_spec) = &ship.spec else {
-            return Err(ReconcileError::FieldMissing(
-                "v1.Ship".to_string(),
-                "spec".to_string(),
-            ));
-        };
-        if ship_spec.target_node_name.is_some() {
-            return Ok(false);
-        }
-        let Some(current_state) = self.runtime_operator.spec_state(ship_id).await else {
-            return Ok(false);
-        };
-        let Some(class) = self.ship_class_api.get(&ship_spec.ship_class).await? else {
-            return Err(ReconcileError::ShipClassNotFound(
-                ship_spec.ship_class.clone(),
-            ));
-        };
-        let desired_state = build_runtime_spec_state(ship_spec, &class)?;
-        let Some(plan) = plan_hotplug(&current_state, &desired_state) else {
-            return Ok(false);
-        };
-        let Some(name) = ship.name() else {
-            return Err(ReconcileError::FieldMissing(
-                "v1.Ship".to_string(),
-                "metadata.name".to_string(),
-            ));
-        };
-        let namespace = ship.namespace().unwrap_or("default");
-        let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
-
-        if let Err(err) = self
-            .runtime_operator
-            .hotplug_resources(
-                ship_id,
-                fingerprints.spec.clone(),
-                plan.cpu_cores,
-                plan.memory_size,
-            )
-            .await
-        {
-            let mut status_ship = ship.clone();
-            status_ship.append_status(ShipCondition {
-                status: "VmHotplugFailed".to_string(),
-                message: format!("Failed to update VM resources in place: {err}"),
-                timestamp: Some(Time::now()),
-            });
-            let _ = api.replace_status(name, status_ship).await;
-            return Err(err.into());
-        }
-
-        let mut status_ship = ship.clone();
-        status_ship.append_status(ShipCondition {
-            status: "VmHotplugged".to_string(),
-            message: format!(
-                "Updated VM resources in place to {} vCPU(s) and {} bytes memory",
-                plan.cpu_cores, plan.memory_size
-            ),
-            timestamp: Some(Time::now()),
-        });
-        api.replace_status(name, status_ship).await?;
-        Ok(true)
     }
 
     async fn try_reconcile_migration(
@@ -657,64 +571,5 @@ impl ShipReconciler {
                 );
             }
         }
-    }
-}
-
-fn plan_hotplug(current: &RuntimeSpecState, desired: &RuntimeSpecState) -> Option<HotplugPlan> {
-    if current.image != desired.image
-        || current.network_class_ref != desired.network_class_ref
-        || current.uefi != desired.uefi
-        || desired.cpu_cores < current.cpu_cores
-        || desired.memory_size < current.memory_size
-    {
-        return None;
-    }
-
-    Some(HotplugPlan {
-        cpu_cores: desired.cpu_cores,
-        memory_size: desired.memory_size,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::plan_hotplug;
-    use crate::runtime::RuntimeSpecState;
-
-    fn runtime_spec_state(cpu_cores: u64, memory_size: u64) -> RuntimeSpecState {
-        RuntimeSpecState {
-            image: "registry.example.com/vm:v1".to_string(),
-            network_class_ref: Vec::new(),
-            uefi: None,
-            cpu_cores,
-            memory_size,
-        }
-    }
-
-    #[test]
-    fn plans_hotplug_when_only_resources_increase() {
-        let current = runtime_spec_state(2, 2 * 1024 * 1024 * 1024);
-        let desired = runtime_spec_state(4, 4 * 1024 * 1024 * 1024);
-
-        let plan = plan_hotplug(&current, &desired).expect("hotplug should be allowed");
-        assert_eq!(plan.cpu_cores, 4);
-        assert_eq!(plan.memory_size, 4 * 1024 * 1024 * 1024);
-    }
-
-    #[test]
-    fn rejects_hotplug_when_resources_decrease() {
-        let current = runtime_spec_state(4, 4 * 1024 * 1024 * 1024);
-        let desired = runtime_spec_state(2, 2 * 1024 * 1024 * 1024);
-
-        assert!(plan_hotplug(&current, &desired).is_none());
-    }
-
-    #[test]
-    fn rejects_hotplug_when_non_resource_fields_change() {
-        let current = runtime_spec_state(2, 2 * 1024 * 1024 * 1024);
-        let mut desired = runtime_spec_state(4, 4 * 1024 * 1024 * 1024);
-        desired.image = "registry.example.com/vm:v2".to_string();
-
-        assert!(plan_hotplug(&current, &desired).is_none());
     }
 }

@@ -15,7 +15,7 @@
 use crate::cmd::start;
 use crate::execute::vm::QemuVmConfig;
 use clap::{Parser, Subcommand};
-use cmd::{create, hotplug, migrate, migration_status, run, status, stop};
+use cmd::{create, migrate, migration_status, run, status, stop};
 use nix::errno::Errno;
 use serde::Deserialize;
 use thiserror::Error;
@@ -63,7 +63,6 @@ enum SubCommand {
     MigrationStatus(migration_status::MigrationStatusArgs),
     Create(create::CreateArgs),
     Migrate(migrate::MigrateArgs),
-    Hotplug(hotplug::HotplugArgs),
     Start(start::StartArgs),
     Stop(stop::StopArgs),
 }
@@ -89,7 +88,6 @@ pub async fn run() {
         }
         SubCommand::Create(create_args) => create::create(config.qemu, create_args).await,
         SubCommand::Migrate(migrate_args) => migrate::migrate(config.qemu, migrate_args).await,
-        SubCommand::Hotplug(hotplug_args) => hotplug::hotplug(config.qemu, hotplug_args).await,
         SubCommand::Start(start_args) => start::start(start_args).await,
         SubCommand::Stop(stop_args) => stop::stop(config.qemu, stop_args).await,
     } {

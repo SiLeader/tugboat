@@ -106,10 +106,7 @@ impl QemuArgs<VmCpuConfig> for Command {
     fn qemu_args(&mut self, value: &VmCpuConfig) -> &mut Self {
         let smp = value.cores;
         if smp > 0 {
-            let mut smp_arg = format!("{smp},cores={}", value.cores);
-            if let Some(max_cores) = value.max_cores {
-                smp_arg.push_str(format!(",maxcpus={max_cores}").as_str());
-            }
+            let smp_arg = format!("{smp},cores={}", value.cores);
             self.args(["-smp", smp_arg.as_str()])
         } else {
             self
@@ -120,14 +117,7 @@ impl QemuArgs<VmCpuConfig> for Command {
 impl QemuArgs<VmMemoryConfig> for Command {
     fn qemu_args(&mut self, value: &VmMemoryConfig) -> &mut Self {
         let megs = value.size / 1024 / 1024;
-        let mut memory_arg = format!("{megs}M");
-        if let Some(slots) = value.slots {
-            memory_arg.push_str(format!(",slots={slots}").as_str());
-        }
-        if let Some(max_size) = value.max_size {
-            let max_megs = max_size / 1024 / 1024;
-            memory_arg.push_str(format!(",maxmem={max_megs}M").as_str());
-        }
+        let memory_arg = format!("{megs}M");
         self.args(["-m", memory_arg.as_str()])
     }
 }

@@ -55,7 +55,7 @@ impl ShipFingerprints {
 
 /// Fingerprint covering non-volume runtime fields: image, ship_class, uefi,
 /// network_class_ref, and target_node_name. Changes to any of these require
-/// a VM recreate or a specialized migration/hotplug path.
+/// a VM recreate or a specialized migration path.
 fn spec_fingerprint(spec: &ShipSpec) -> Result<String, serde_json::Error> {
     #[derive(Serialize)]
     struct SpecFields<'a> {

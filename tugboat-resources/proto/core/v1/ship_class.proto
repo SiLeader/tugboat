@@ -33,11 +33,8 @@ message ShipClassSpec {
 message CpuSpec {
   string architecture = 1;
   uint64 cores = 2;
-  optional uint64 max_cores = 3;
 }
 
 message MemorySpec {
   string size = 1;
-  optional string max_size = 2;
-  optional uint32 slots = 3;
 }

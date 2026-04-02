@@ -1,8 +1,8 @@
-Live Migration and Dynamic Resource Adjustment
-============================================
+Live Migration
+==============
 
 Goal
-Allow a running Ship to move between nodes with minimal downtime and adjust its CPU/Memory resources on the fly.
+Allow a running Ship to move between nodes with minimal downtime.
 
 Current evidence
 - README.md lists live migration as unfinished.
@@ -14,7 +14,6 @@ What to implement
 - Support migration triggered by changing the `Ship` spec (e.g., changing its target node in `node_name`).
 - Extend `tugboat-runtime` and `tugboat-vm-runtime-interface` with `migrate` source and target operations.
 - Add agent-side coordination between source and target nodes, including preflight checks for CPU compatibility, storage access, and network continuity.
-- Support CPU and Memory hotplug/unplug during execution (if the guest OS and QEMU support it).
 - Track migration progress and errors through Ship status or a dedicated migration status object.
 - Define rollback and cleanup behavior when migration fails mid-flight.
 - Clarify the storage model for migration, especially whether shared volumes are required or whether block-copy migration is supported.
@@ -34,7 +33,6 @@ Implementation surfaces
 Acceptance criteria
 - Changing the `node_name` of a running `Ship` triggers a live migration.
 - The `Ship` successfully migrates to the target node without being stopped or recreated.
-- Increasing or decreasing CPU/Memory in the `Ship` spec results in a live update to the VM resources.
 - Success and failure states are visible through status updates.
 - A failed migration leaves the Ship in a recoverable and explicitly reported state.
 - Tests cover at least one successful migration flow and one rollback or failure path.

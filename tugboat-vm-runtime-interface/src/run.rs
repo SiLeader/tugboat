@@ -48,18 +48,12 @@ pub struct VmExecUser {
 pub struct VmCpuConfig {
     pub architecture: String,
     pub cores: u64,
-    #[serde(default)]
-    pub max_cores: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VmMemoryConfig {
     pub size: u64,
-    #[serde(default)]
-    pub max_size: Option<u64>,
-    #[serde(default)]
-    pub slots: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -24,18 +24,17 @@ use crate::reconciler::ops::add_helpers::{
 };
 use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::{PersistentVolumeClaimVolumeInfo, VolumeInfo};
-use crate::runtime::{RuntimeCreateRequest, RuntimeSpecState};
+use crate::runtime::RuntimeCreateRequest;
 use std::collections::HashMap;
 use std::future::Future;
 use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    Node, PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship, ShipClass,
+    Node, PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship,
     ShipCondition, ShipSpec,
 };
 use tugboat_resources::manifests::meta::v1::Time;
-use tugboat_resources::sized::SizedString;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
 fn best_effort_stale_volume_cleanup<T>(
@@ -61,45 +60,6 @@ fn best_effort_stale_volume_cleanup<T>(
             None
         }
     }
-}
-
-pub(super) fn build_runtime_spec_state(
-    ship_spec: &ShipSpec,
-    class: &ShipClass,
-) -> Result<RuntimeSpecState, ReconcileError> {
-    let Some(class_spec) = &class.spec else {
-        return Err(ReconcileError::FieldMissing(
-            "v1.ShipClass".to_string(),
-            "spec".to_string(),
-        ));
-    };
-    let Some(cpu) = &class_spec.cpu else {
-        return Err(ReconcileError::FieldMissing(
-            "v1.ShipClass".to_string(),
-            "spec.cpu".to_string(),
-        ));
-    };
-    let Some(memory) = &class_spec.memory else {
-        return Err(ReconcileError::FieldMissing(
-            "v1.ShipClass".to_string(),
-            "spec.memory".to_string(),
-        ));
-    };
-    let memory_size = SizedString(memory.size.clone())
-        .as_byte_length()
-        .ok_or_else(|| {
-            ReconcileError::Runtime(crate::runtime::error::RuntimeError::MemorySize(
-                memory.size.clone(),
-            ))
-        })?;
-
-    Ok(RuntimeSpecState {
-        image: ship_spec.image.clone(),
-        network_class_ref: ship_spec.network_class_ref.clone(),
-        uefi: ship_spec.uefi,
-        cpu_cores: cpu.cores,
-        memory_size,
-    })
 }
 
 fn runtime_fingerprints_for_ship(
@@ -155,7 +115,6 @@ impl ShipReconciler {
             .clone()
             .unwrap_or("default".to_string());
         let runtime_fingerprints = runtime_fingerprints_for_ship(ship_spec, &self.node_name)?;
-        let runtime_spec_state = build_runtime_spec_state(ship_spec, &class)?;
 
         if self.runtime_operator.is_present(ship_id).await? {
             let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
@@ -174,7 +133,6 @@ impl ShipReconciler {
                     ship_id.clone(),
                     runtime_fingerprints,
                     published_volumes,
-                    runtime_spec_state,
                 )
                 .await;
             info!("Recovered existing VM runtime state for ship '{}'", ship_id);
