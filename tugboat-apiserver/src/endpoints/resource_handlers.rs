@@ -169,10 +169,129 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(crate) struct ReplaceOptions {
     pub(crate) preserve_status: bool,
     pub(crate) use_client_resource_version: bool,
+}
+
+pub(crate) struct ResourceUpdater<'a, T> {
+    current: &'a T,
+    options: ReplaceOptions,
+}
+
+impl<'a, T> ResourceUpdater<'a, T>
+where
+    T: ObjectMetaResource + StaticResource + Serialize + DeserializeOwned,
+{
+    pub(crate) fn new(current: &'a T, options: ReplaceOptions) -> Self {
+        Self { current, options }
+    }
+
+    pub(crate) fn apply_patch(
+        self,
+        patch: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<T, Box<StatusResponse>> {
+        let current_value = serde_json::to_value(self.current).map_err(|e| Box::new(e.into()))?;
+        let current_obj = to_object(current_value, "current resource")?;
+
+        let patch_metadata = patch.get("metadata").cloned();
+
+        let mut merged_value = serde_json::Value::Object(current_obj.clone());
+        merged_value.merge(&serde_json::Value::Object(patch));
+        let mut merged_obj = to_object(merged_value, "patched resource")?;
+
+        // Restore fields that must be preserved from current
+        if let Some(v) = current_obj.get("apiVersion") {
+            merged_obj.insert("apiVersion".to_string(), v.clone());
+        }
+        if let Some(v) = current_obj.get("kind") {
+            merged_obj.insert("kind".to_string(), v.clone());
+        }
+
+        if self.options.preserve_status {
+            if let Some(status) = current_obj.get("status") {
+                merged_obj.insert("status".to_string(), status.clone());
+            } else {
+                merged_obj.remove("status");
+            }
+        }
+
+        let mut updated: T = serde_json::from_value(serde_json::Value::Object(merged_obj))
+            .map_err(|e| Box::new(e.into()))?;
+
+        self.enforce_metadata(&mut updated, patch_metadata.as_ref());
+
+        Ok(updated)
+    }
+
+    pub(crate) fn apply_replacement(self, replacement: &T) -> Result<T, Box<StatusResponse>> {
+        let current_value = serde_json::to_value(self.current).map_err(|e| Box::new(e.into()))?;
+        let mut current_obj = to_object(current_value, "current resource")?;
+
+        let replacement_value = serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
+        let replacement_obj = to_object(replacement_value, "replacement resource")?;
+
+        let patch_metadata = replacement_obj.get("metadata").cloned();
+
+        for (key, value) in replacement_obj {
+            if key == "metadata" || key == "apiVersion" || key == "kind" {
+                continue;
+            }
+            if self.options.preserve_status && key == "status" {
+                continue;
+            }
+            current_obj.insert(key, value);
+        }
+
+        let mut updated: T = serde_json::from_value(serde_json::Value::Object(current_obj))
+            .map_err(|e| Box::new(e.into()))?;
+
+        self.enforce_metadata(&mut updated, patch_metadata.as_ref());
+
+        Ok(updated)
+    }
+
+    pub(crate) fn apply_status_update(
+        self,
+        status: serde_json::Value,
+    ) -> Result<T, Box<StatusResponse>> {
+        let current_value = serde_json::to_value(self.current).map_err(|e| Box::new(e.into()))?;
+        let mut current_obj = to_object(current_value, "current resource")?;
+
+        current_obj.insert("status".to_string(), status);
+
+        let mut updated: T = serde_json::from_value(serde_json::Value::Object(current_obj))
+            .map_err(|e| Box::new(e.into()))?;
+
+        // For status updates, we always preserve the current metadata.
+        self.enforce_metadata(&mut updated, None);
+
+        Ok(updated)
+    }
+
+    fn enforce_metadata(&self, updated: &mut T, patch_metadata: Option<&serde_json::Value>) {
+        if let (Some(current_meta), Some(updated_meta)) =
+            (self.current.object_meta(), updated.object_meta_mut())
+        {
+            updated_meta.name = current_meta.name.clone();
+            updated_meta.namespace = current_meta.namespace.clone();
+            updated_meta.uid = current_meta.uid.clone();
+            updated_meta.generation = current_meta.generation;
+            updated_meta.creation_timestamp = current_meta.creation_timestamp.clone();
+            updated_meta.deletion_timestamp = current_meta.deletion_timestamp.clone();
+
+            if self.options.use_client_resource_version {
+                let client_rv = patch_metadata
+                    .and_then(|m| m.get("resourceVersion"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                updated_meta.resource_version = client_rv;
+            } else {
+                updated_meta.resource_version = current_meta.resource_version.clone();
+            }
+        }
+    }
 }
 
 pub(crate) async fn replace_resource<T>(
@@ -202,7 +321,7 @@ where
         )));
     };
     let current = current.apply_revision();
-    let replaced = merge_replacement(&current, &replacement, options)?;
+    let replaced = ResourceUpdater::new(&current, options).apply_replacement(&replacement)?;
 
     let replaced = if current != replaced {
         operator
@@ -244,7 +363,7 @@ where
         )));
     };
     let current = current.apply_revision();
-    let patched = merge_patch(&current, patch, options)?;
+    let patched = ResourceUpdater::new(&current, options).apply_patch(patch)?;
 
     let patched = if current != patched {
         operator
@@ -279,7 +398,6 @@ where
             None,
         )));
     }
-    let patch = serde_json::Value::Object(patch);
 
     let current = operator
         .store
@@ -294,9 +412,11 @@ where
     };
     let current = current.apply_revision();
 
-    let mut patched = serde_json::to_value(&current).map_err(|e| Box::new(e.into()))?;
-    patched.merge(&patch);
-    let patched = serde_json::from_value::<T>(patched).map_err(|e| Box::new(e.into()))?;
+    let options = ReplaceOptions {
+        preserve_status: false,
+        ..Default::default()
+    };
+    let patched = ResourceUpdater::new(&current, options).apply_patch(patch)?;
 
     let patched = if current != patched {
         operator
@@ -338,19 +458,14 @@ where
     };
     let current = current.apply_revision();
 
-    let replacement = serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
-    let status = replacement
+    let replacement_value = serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
+    let status = replacement_value
         .as_object()
         .and_then(|obj| obj.get("status").cloned())
         .unwrap_or(serde_json::Value::Null);
 
-    let mut replaced = to_object(
-        serde_json::to_value(&current).map_err(|e| Box::new(e.into()))?,
-        "current resource",
-    )?;
-    replaced.insert("status".to_string(), status);
-    let replaced = serde_json::from_value::<T>(serde_json::Value::Object(replaced))
-        .map_err(|e| Box::new(e.into()))?;
+    let replaced = ResourceUpdater::new(&current, ReplaceOptions::default())
+        .apply_status_update(status)?;
 
     let replaced = if current != replaced {
         operator
@@ -363,135 +478,6 @@ where
         replaced
     };
     Ok(ModifyResponse::Updated(replaced))
-}
-
-fn merge_replacement<T>(
-    current: &T,
-    replacement: &T,
-    options: ReplaceOptions,
-) -> Result<T, Box<StatusResponse>>
-where
-    T: Serialize + DeserializeOwned,
-{
-    let mut merged = to_object(
-        serde_json::to_value(current).map_err(|e| Box::new(e.into()))?,
-        "current resource",
-    )?;
-    let replacement = to_object(
-        serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?,
-        "replacement resource",
-    )?;
-
-    for (key, value) in &replacement {
-        if key == "metadata" || key == "apiVersion" || key == "kind" {
-            continue;
-        }
-        if options.preserve_status && key == "status" {
-            continue;
-        }
-        let _ = merged.insert(key.clone(), value.clone());
-    }
-
-    let mut metadata = merged
-        .remove("metadata")
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-    if options.use_client_resource_version {
-        if let Some(client_rv) = replacement
-            .get("metadata")
-            .and_then(|meta| meta.get("resourceVersion"))
-            .cloned()
-        {
-            let _ = metadata.insert("resourceVersion".to_string(), client_rv);
-        } else {
-            // If client didn't provide resourceVersion, remove it from metadata
-            // so that it becomes None (unconditional update).
-            let _ = metadata.remove("resourceVersion");
-        }
-    }
-    let _ = merged.insert("metadata".to_string(), serde_json::Value::Object(metadata));
-
-    serde_json::from_value::<T>(serde_json::Value::Object(merged)).map_err(|e| Box::new(e.into()))
-}
-
-fn merge_patch<T>(
-    current: &T,
-    patch: serde_json::Map<String, serde_json::Value>,
-    options: ReplaceOptions,
-) -> Result<T, Box<StatusResponse>>
-where
-    T: Serialize + DeserializeOwned,
-{
-    let current_object = to_object(
-        serde_json::to_value(current).map_err(|e| Box::new(e.into()))?,
-        "current resource",
-    )?;
-    let patch_value = serde_json::Value::Object(patch.clone());
-
-    let mut merged = serde_json::Value::Object(current_object.clone());
-    merged.merge(&patch_value);
-    let mut merged = to_object(merged, "patched resource")?;
-
-    if let Some(value) = current_object.get("apiVersion").cloned() {
-        let _ = merged.insert("apiVersion".to_string(), value);
-    }
-    if let Some(value) = current_object.get("kind").cloned() {
-        let _ = merged.insert("kind".to_string(), value);
-    }
-
-    if options.preserve_status {
-        match current_object.get("status").cloned() {
-            Some(status) => {
-                let _ = merged.insert("status".to_string(), status);
-            }
-            None => {
-                let _ = merged.remove("status");
-            }
-        }
-    }
-
-    let current_metadata = current_object
-        .get("metadata")
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-    let patch_metadata = patch
-        .get("metadata")
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-    let mut merged_metadata = merged
-        .remove("metadata")
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-
-    for key in [
-        "name",
-        "namespace",
-        "uid",
-        "generation",
-        "creationTimestamp",
-        "deletionTimestamp",
-    ] {
-        if let Some(value) = current_metadata.get(key).cloned() {
-            let _ = merged_metadata.insert(key.to_string(), value);
-        }
-    }
-
-    if options.use_client_resource_version {
-        if let Some(client_rv) = patch_metadata.get("resourceVersion").cloned() {
-            let _ = merged_metadata.insert("resourceVersion".to_string(), client_rv);
-        } else {
-            let _ = merged_metadata.remove("resourceVersion");
-        }
-    } else if let Some(value) = current_metadata.get("resourceVersion").cloned() {
-        let _ = merged_metadata.insert("resourceVersion".to_string(), value);
-    }
-
-    let _ = merged.insert(
-        "metadata".to_string(),
-        serde_json::Value::Object(merged_metadata),
-    );
-
-    serde_json::from_value::<T>(serde_json::Value::Object(merged)).map_err(|e| Box::new(e.into()))
 }
 
 fn to_object(
@@ -517,7 +503,7 @@ fn resource_identity(namespace: Option<&str>, name: &str) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{ReplaceOptions, merge_patch};
+    use super::{ReplaceOptions, ResourceUpdater};
     use tugboat_resources::ObjectMetaResource;
     use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipSpec, ShipStatus};
     use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
@@ -556,30 +542,30 @@ mod tests {
     #[test]
     fn merge_patch_preserves_status_and_identity_fields() {
         let current = ship();
-        let patched = merge_patch(
-            &current,
-            serde_json::json!({
-                "metadata": {
-                    "name": "changed",
-                    "labels": {"app": "demo"},
-                    "resourceVersion": "rv-2"
-                },
-                "spec": {
-                    "image": "registry.example.com/vm:v2"
-                },
-                "status": {
-                    "conditions": []
-                }
-            })
-            .as_object()
-            .cloned()
-            .expect("patch should be object"),
-            ReplaceOptions {
-                preserve_status: true,
-                use_client_resource_version: false,
-            },
-        )
-        .expect("patch should merge");
+        let options = ReplaceOptions {
+            preserve_status: true,
+            use_client_resource_version: false,
+        };
+        let patched: Ship = ResourceUpdater::new(&current, options)
+            .apply_patch(
+                serde_json::json!({
+                    "metadata": {
+                        "name": "changed",
+                        "labels": {"app": "demo"},
+                        "resourceVersion": "rv-2"
+                    },
+                    "spec": {
+                        "image": "registry.example.com/vm:v2"
+                    },
+                    "status": {
+                        "conditions": []
+                    }
+                })
+                .as_object()
+                .cloned()
+                .expect("patch should be object"),
+            )
+            .expect("patch should merge");
 
         assert_eq!(patched.name(), Some("demo"));
         assert_eq!(patched.namespace(), Some("default"));
@@ -614,22 +600,22 @@ mod tests {
     #[test]
     fn merge_patch_uses_client_resource_version_when_requested() {
         let current = ship();
-        let patched = merge_patch(
-            &current,
-            serde_json::json!({
-                "metadata": {
-                    "resourceVersion": "rv-9"
-                }
-            })
-            .as_object()
-            .cloned()
-            .expect("patch should be object"),
-            ReplaceOptions {
-                preserve_status: false,
-                use_client_resource_version: true,
-            },
-        )
-        .expect("patch should merge");
+        let options = ReplaceOptions {
+            preserve_status: false,
+            use_client_resource_version: true,
+        };
+        let patched: Ship = ResourceUpdater::new(&current, options)
+            .apply_patch(
+                serde_json::json!({
+                    "metadata": {
+                        "resourceVersion": "rv-9"
+                    }
+                })
+                .as_object()
+                .cloned()
+                .expect("patch should be object"),
+            )
+            .expect("patch should merge");
 
         assert_eq!(
             patched

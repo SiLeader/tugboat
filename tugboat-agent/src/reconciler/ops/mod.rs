@@ -15,7 +15,10 @@
 pub(crate) mod add;
 pub(crate) mod add_helpers;
 pub(crate) mod delete;
+pub(crate) mod migration;
 pub(crate) mod modify;
+pub(crate) mod secret_resolver;
+pub(crate) mod volume_provisioner;
 
 /// Migration phase strings shared between the add and modify reconcile paths.
 pub(super) const PHASE_PENDING: &str = "Pending";
