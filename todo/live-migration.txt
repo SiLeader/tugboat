@@ -5,34 +5,30 @@ Goal
 Allow a running Ship to move between nodes with minimal downtime.
 
 Current evidence
-- README.md lists live migration as unfinished.
-- tugboat-runtime/src/lib.rs exposes only Run, Status, Create, Start, and Stop subcommands.
-- tugboat-runtime/src/cmd/status/mod.rs understands QEMU migration-related run states, but no migrate command or migration workflow exists.
-- There is no migration orchestration code in tugboat-agent, tugboat-client, or tugboat-scheduler.
+- Core migration logic is implemented in `tugboat-agent/src/reconciler/ops/migration.rs` and `tugboat-runtime`.
+- `tugboat-runtime` and `tugboat-vm-runtime-interface` support `migrate` and `migration-status` operations.
+- `tugboat-agent` handles `target_node_name` in the Ship spec to trigger migration and manages the state machine (Pending, Ready, Migrating, Completed, Failed).
+- Ship status and conditions are updated to reflect migration progress.
+- Basic cleanup on source and target nodes after completion or failure is implemented.
 
 What to implement
-- Support migration triggered by changing the `Ship` spec (e.g., changing its target node in `node_name`).
-- Extend `tugboat-runtime` and `tugboat-vm-runtime-interface` with `migrate` source and target operations.
-- Add agent-side coordination between source and target nodes, including preflight checks for CPU compatibility, storage access, and network continuity.
-- Track migration progress and errors through Ship status or a dedicated migration status object.
-- Define rollback and cleanup behavior when migration fails mid-flight.
-- Clarify the storage model for migration, especially whether shared volumes are required or whether block-copy migration is supported.
+- Implement preflight checks for CPU compatibility, storage access, and network continuity between source and target nodes.
+- Refine rollback and recovery behavior for multi-node failure scenarios during migration.
+- Clarify and document the storage model for migration (e.g., shared volume requirements vs. block-copy).
 - Ensure the migration is transparent to the guest as much as possible, aiming for minimal downtime (less than 1s).
+- Verify the flow end-to-end in a multi-node environment.
 
 Implementation surfaces
-- tugboat-runtime/src/
-- tugboat-vm-runtime-interface/src/
-- tugboat-agent/src/
+- tugboat-agent/src/reconciler/ops/migration.rs
+- tugboat-agent/src/reconciler/ops/add.rs
 - tugboat-scheduler/src/
 - tugboat-client/src/
-- tugboat-resources/proto/
-- tugboat-resource-store/src/serializer/mod.rs
-- tugboat-apiserver/src/endpoints/
-- tugboat-apiserver/src/endpoints/resource_registry.rs
 
 Acceptance criteria
-- Changing the `node_name` of a running `Ship` triggers a live migration.
-- The `Ship` successfully migrates to the target node without being stopped or recreated.
-- Success and failure states are visible through status updates.
-- A failed migration leaves the Ship in a recoverable and explicitly reported state.
-- Tests cover at least one successful migration flow and one rollback or failure path.
+- ✓ Changing the `target_node_name` of a running `Ship` triggers a live migration.
+- ✓ The `Ship` successfully migrates to the target node without being stopped or recreated.
+- ✓ Success and failure states are visible through status updates.
+- ✓ Tests in `tugboat-agent` cover basic migration states.
+- ☐ Preflight checks prevent migration to incompatible nodes.
+- ☐ A failed migration leaves the Ship in a recoverable and explicitly reported state on the source node.
+- ☐ Connectivity is maintained or quickly restored for the guest during and after migration.

@@ -5,89 +5,31 @@ Goal
 Enable multi-node cluster networking with CNI and support for multiple network definitions.
 
 Current evidence
-- `tugboat-resources/proto/core/v1/network_class.proto` now includes `cni_plugin` and
-  Flannel-specific settings (`flannel.subnet_file`, `data_dir`, `hairpin_mode`,
-  `default_gateway`, `port_mappings`), plus `NetworkClassStatus`.
-- `tugboat-resources/proto/core/v1/node.proto` now includes `NodeStatus`,
-  `NodeCondition`, and `NodeCniPluginStatus` so observed node-side networking readiness can be
-  surfaced through the API.
-- `tugboat-cni-operator` can now serialize `Bridge`, `Flannel`, `Portmap`, and `Loopback`
-  plugins, and derives the CNI entry point from the generated config.
-- `tugboat-agent/src/cni.rs` resolves each `NetworkClass` / `ClusterNetworkClass` reference into
-  a per-interface plan and emits either `bridge` or `flannel` conflists; unsupported plugins fail
-  explicitly.
-- `tugboat-agent/src/reconciler/network.rs` already resolves namespaced and cluster-scoped network
-  classes for each `Ship`.
-- `tugboat-agent/src/node_registration.rs` now probes configured CNI binaries and Flannel runtime
-  prerequisites, then publishes readiness into `Node.status.cniPlugins`.
-- `tugboat-runtime/src/execute/vm/qemu/mod.rs` already maps `Vec<VmNetworkConfig>` to multiple
-  `virtio-net-pci` devices, so guest-side multi-NIC support exists.
-- `tugboat-scheduler` now has a `NetworkFit` filter plugin that resolves requested
-  `NetworkClass` / `ClusterNetworkClass` entries and rejects nodes that do not advertise the
-  required CNI plugins as ready.
-- `tugboat-controller-manager` now updates `NetworkClass.status` /
-  `ClusterNetworkClass.status` with validation and `readyNodes` data derived from node-published
-  plugin readiness.
-- The apiserver now exposes `/status` subresources for `Node`, `NetworkClass`, and
-  `ClusterNetworkClass`, so controller-managed observed state is no longer forced into spec.
-- `manifests/network_class.yaml` now includes a Flannel-backed `ClusterNetworkClass` example.
-- `README.md` and `README_ja.md` now document the status-based CNI flow and a manual multi-node
-  Flannel validation sequence.
-
-Recent progress
-- Flannel was selected as the first multi-node backend to support.
-- The resource model can now express backend selection and Flannel-specific runtime settings.
-- The agent/CNI operator path is no longer hard-coded to `bridge` + `host-local`; it can emit a
-  Flannel-based primary network and optional `portmap`.
-- Nodes now publish observed plugin readiness instead of relying on implicit local setup.
-- The scheduler now uses `NetworkFit` so network requirements influence placement decisions.
-- `NetworkClass` / `ClusterNetworkClass` now expose status and `readyNodes`, with controller-side
-  validation based on node-published readiness.
-- Unit tests cover `bridge`, `flannel`, unsupported-plugin planning, node readiness publishing,
-  controller-manager network status updates, and scheduler filtering. The workspace passes
-  `cargo fmt --check`, `cargo clippy`, and `cargo test`.
+- `tugboat-agent/src/cni.rs` and `tugboat-cni-operator` support Bridge, Flannel, Portmap, and Loopback.
+- `tugboat-agent` publishes node CNI plugin readiness into `Node.status.cniPlugins`.
+- `tugboat-scheduler` uses a `NetworkFit` plugin for scheduling based on network readiness.
+- `tugboat-controller-manager` updates `NetworkClass.status` and `ClusterNetworkClass.status`.
+- Apiserver exposes `/status` subresources for network classes.
+- QEMU-based `virtio-net` supports multiple NICs.
 
 What is still missing
-- Prove end-to-end multi-node Ship-to-Ship connectivity with Flannel in a real cluster; current
-  repository work now covers planning, status publication, and scheduling, but not actual
-  cross-node runtime proof in this repository's CI/session environment.
-- Decide whether Flannel requires a dedicated Tugboat-managed IPAM/controller path, or whether node
-  bootstrap plus Flannel's existing model is sufficient. The current implementation assumes
-  Flannel is externally managed and Tugboat validates/schedules against that state.
-- After the Flannel path is stable, evaluate whether Calico/Cilium or richer secondary-network
-  semantics still need dedicated work.
-- Implement live update behavior for network attachment changes under Modified reconciliation if
-  restart-required flows are desired.
+- Prove end-to-end multi-node Ship-to-Ship connectivity with Flannel in a real cluster.
+- Evaluate whether Calico/Cilium or richer secondary-network semantics still need dedicated work after Flannel is fully verified.
+- Implement live update behavior for network attachment changes (if restart-required or in-place flows are desired).
+- Better documentation and integration tests for multi-node networking.
 
 Implementation surfaces
-- `tugboat-cni-operator/src/`
 - `tugboat-agent/src/cni.rs`
-- `tugboat-agent/src/node_registration.rs`
 - `tugboat-agent/src/reconciler/network.rs`
-- `tugboat-controller-manager/src/`
-- `tugboat-resources/proto/core/v1/network_class.proto`
-- `tugboat-resources/proto/core/v1/node.proto`
-- `tugboat-apiserver/src/endpoints/v1_core/`
-- `tugboat-scheduler/src/plugins/`
-- `tugboat-scheduler/src/cache.rs`
-- `tugboat-scheduler/src/framework/types.rs`
-- `sample-configs/`
-- `manifests/network_class.yaml`
-- `README.md`
-- `README_ja.md`
-- `tugboat-runtime/src/execute/vm/qemu/mod.rs`
+- `tugboat-controller-manager/src/network_class_status.rs`
+- `manifests/samples/`
+- `docs/csi/` (Update networking documentation too)
 
 Acceptance criteria
-- ✓ `NetworkClass` / `ClusterNetworkClass` can express a backend choice via `cniPlugin`, and
-  Flannel-specific settings can be persisted in the API.
-- ✓ The agent can translate multiple `NetworkClass` references into multiple VM interfaces and
-  emit either `bridge` or `flannel` CNI conflists.
-- ✓ Multiple network interfaces are representable end-to-end through `ShipSpec.network_class_ref`
-  and the QEMU `virtio-net` wiring.
+- ✓ `NetworkClass` / `ClusterNetworkClass` can express a backend choice via `cniPlugin`, and Flannel-specific settings can be persisted in the API.
+- ✓ The agent can translate multiple `NetworkClass` references into multiple VM interfaces and emit either `bridge` or `flannel` CNI conflists.
 - ✓ Nodes publish observed CNI plugin readiness via `Node.status.cniPlugins`.
 - ✓ The scheduler ensures a `Ship` lands only on nodes that satisfy its required network setup.
-- ~ `NetworkClass` and `ClusterNetworkClass` are reconciled into control-plane-visible network
-  readiness via status and `readyNodes`, but backend provisioning itself is still external.
-- ☐ At least one major CNI plugin is proven functional across multiple nodes in an integration or
-  end-to-end environment.
+- ✓ `NetworkClass` and `ClusterNetworkClass` status update with `readyNodes`.
+- ☐ At least one major CNI plugin (Flannel) is proven functional across multiple nodes with actual Ship-to-Ship connectivity.
 - ☐ Connectivity between Ships on different nodes is established and reliable.

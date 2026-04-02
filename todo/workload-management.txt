@@ -5,27 +5,27 @@ Goal
 Implement robust workload controllers (ReplicaSet, Deployment, and Fleet) with support for live migration and shared networking.
 
 Current evidence
-- `replicaset-controller.txt` and `fleet-and-deployment-workloads.txt` exist as separate goals.
-- Deployment and Fleet were noted to have naming/responsibility ambiguity.
-- ReplicaSet is needed for higher-level rollouts.
+- `ReplicaSet` and `Deployment` resource definitions and API endpoints are implemented.
+- Protobuf models for `ReplicaSet` and `Deployment` exist in `tugboat-resources`.
+- `Fleet` is still planned.
+- `tugboat-apiserver` handles CRUD for these resources.
+- `tugboat-controller-manager` is currently missing the controllers for these resources.
 
 What to implement
-- Define `ReplicaSet` and `Deployment` resources. Use `shipTemplate` for the workload specification, and leave room for a future `podTemplate`.
-- Implement `Deployment` as the standard rollout manager, controlling `ReplicaSets`.
-- Implement `Fleet` as a resource that groups multiple different VM types (different `ShipClasses`) but ensures they all belong to the same network.
-- Controllers must support live migration: when a workload determines a Ship needs to move (e.g., due to a change in scheduling or replica distribution), it should trigger a live migration instead of a recreate where possible.
-- Ensure `shipTemplate` is well-defined and includes all necessary VM-specific fields (CPU, memory, storage, network).
-- Rollouts should support standard K8s-like strategies: RollingUpdate, Recreate.
+- Implement `ReplicaSet` controller in `tugboat-controller-manager` to maintain the desired number of Ships.
+- Implement `Deployment` controller to manage `ReplicaSets` and support rollout strategies (RollingUpdate, Recreate).
+- Implement `Fleet` resource and controller to manage multi-component Ship groups sharing a network.
+- Controllers should support live migration: when moving a Ship between nodes, trigger migration instead of recreation if possible.
+- Ensure `shipTemplate` in these resources correctly maps to `ShipSpec`.
 
 Implementation surfaces
-- `tugboat-resources/proto/`
 - `tugboat-controller-manager/src/`
-- `tugboat-apiserver/src/endpoints/`
-- `tugboat-resources/src/manifests/`
+- `tugboat-resources/proto/` (for Fleet)
+- `tugboat-apiserver/src/endpoints/` (for Fleet)
 
 Acceptance criteria
-- Creating a `Deployment` manages `ReplicaSets` and eventually `Ships`.
-- A `Fleet` successfully launches multiple types of VMs sharing the same `NetworkClass`.
-- When a `Deployment` or `ReplicaSet` requires a `Ship` to move to another node (and the target node is known), it uses live migration.
-- `shipTemplate` correctly encapsulates `ShipSpec`.
-- Rolling updates proceed with minimal downtime by coordinating with the migration logic.
+- ✓ `ReplicaSet` and `Deployment` resources are defined and accessible via API.
+- ☐ Creating a `Deployment` manages `ReplicaSets` and eventually `Ships`.
+- ☐ A `Fleet` successfully launches multiple types of VMs sharing the same `NetworkClass`.
+- ☐ When a `Deployment` or `ReplicaSet` requires a `Ship` to move to another node, it uses live migration.
+- ☐ Rolling updates proceed with minimal downtime by coordinating with migration logic.
