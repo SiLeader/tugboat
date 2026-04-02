@@ -3,8 +3,8 @@ use super::normalize::{
     normalized_ship_volumes, validate_materialized_volume_name, validate_relative_target_path,
 };
 use super::{
-    decode_csi_secret_data, decode_secret_volume_data, effective_volume_mode,
-    ensure_access_modes_compatible, ensure_supported_claim_mode, ensure_supported_csi_source,
+    decode_secret_volume_data, effective_volume_mode, ensure_access_modes_compatible,
+    ensure_supported_claim_mode, ensure_supported_csi_source,
     ensure_supported_persistent_volume_mode, ensure_volume_claim_binding,
 };
 use tugboat_resources::manifests::core::v1::{
@@ -82,19 +82,6 @@ fn allows_node_publish_and_stage_secrets() {
     };
 
     assert!(ensure_supported_csi_source("pv", &source).is_ok());
-}
-
-#[test]
-fn decodes_base64_csi_secret_data() {
-    let secret = Secret {
-        data: std::collections::HashMap::from([("token".to_string(), "c2VjcmV0".to_string())]),
-        ..Default::default()
-    };
-
-    let decoded =
-        decode_csi_secret_data("pv", "node_publish_secret_ref", "alpha", "publish", secret)
-            .expect("secret decoding should succeed");
-    assert_eq!(decoded.get("token"), Some(&"secret".to_string()));
 }
 
 #[test]

@@ -10,7 +10,7 @@ Tugboat is a VM orchestration tool that provides Kubernetes‑style functionalit
 and the complexity of OpenStack.
 
 It aims to manage VMs declaratively—similar to Kubernetes—using a minimal set of components: etcd, tugboat‑apiserver,
-tugboat‑agent, tugboat‑runtime, and tugboat‑scheduler.
+tugboat‑agent, tugboat‑runtime, tugboat‑scheduler, and tugboat‑controller‑manager.
 
 ## Why Tugboat?
 
@@ -66,11 +66,14 @@ Existing VM orchestration systems come with significant challenges:
 |   Kubernetes    |     Tugboat     |
 |:---------------:|:---------------:|
 |       Pod       |      Ship       |
-|   Deployment    | Fleet (Planned) |
+|   ReplicaSet    |   ReplicaSet    |
+|   Deployment    |   Deployment    |
 |      Node       |      Node       |
 | Container image | VM image (OCI)  |
 |   Dockerfile    |    Imagefile    |
 |     kubelet     |      agent      |
+
+> **Note:** `Fleet` is a Tugboat-specific resource for grouping multiple Ship types that share a private network — it has no direct Kubernetes equivalent.
 
 ## Manifest Examples
 
@@ -116,6 +119,58 @@ spec:
     - name: app-secret
       secret:
         secretName: app-secret
+```
+
+### Deployment
+
+Manages a set of identical Ships with rolling-update support.
+This is a namespaced resource (`apps/v1`).
+
+> **Note:** The Deployment controller is not yet implemented. Resources can be stored and retrieved via the API, but Ships are not yet reconciled automatically.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: default
+  name: my-deployment
+spec:
+  replicas: 3
+  selector:
+    app: my-app
+  shipTemplate:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+      shipClass: lightweight
+```
+
+### ReplicaSet
+
+Maintains a stable set of replica Ships.
+This is a namespaced resource (`apps/v1`).
+
+> **Note:** The ReplicaSet controller is not yet implemented. Resources can be stored and retrieved via the API, but Ships are not yet reconciled automatically.
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  namespace: default
+  name: my-replicaset
+spec:
+  replicas: 2
+  selector:
+    app: my-app
+  shipTemplate:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+      shipClass: lightweight
 ```
 
 ### CSI support
@@ -190,11 +245,18 @@ For a manual multi-node validation flow:
 - [x] tugboat-controller-manager
     - [x] Dynamic CSI volume provisioning
     - [x] CSI-backed managed PV cleanup
-    - [ ] ReplicaSet (Maintaining the prescribed number of ships)
-    - [ ] Deployment (Deploying same configuration Ships)
-    - [ ] Fleet
+    - [ ] ReplicaSet controller (maintaining the prescribed number of Ships)
+    - [ ] Deployment controller (rolling-update management of ReplicaSets)
+    - [ ] Fleet controller
+- [x] ReplicaSet resource definition and API (`apps/v1`)
+- [x] Deployment resource definition and API (`apps/v1`)
 - [x] ConfigMap
 - [ ] Live migration
+    - [x] Core migration triggered by `target_node_name`
+    - [x] Migration state machine (Pending, Ready, Migrating, Completed, Failed)
+    - [x] Migration status and conditions reflected on Ship
+    - [ ] Preflight compatibility checks (CPU, storage access, network continuity)
+    - [ ] Reliable recovery and explicit error reporting on migration failure
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
 

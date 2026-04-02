@@ -18,22 +18,16 @@ use crate::csi::{
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::ops::PHASE_READY;
-use crate::reconciler::ops::add_helpers::{
-    apply_persistent_volume_claim_csi_observation, apply_persistent_volume_csi_observation,
-    validate_recovered_published_volumes, vm_volume_config,
-};
+use crate::reconciler::ops::add_helpers::{validate_recovered_published_volumes, vm_volume_config};
 use crate::reconciler::reconcile::AppendStatus;
-use crate::reconciler::volume::{PersistentVolumeClaimVolumeInfo, VolumeInfo};
+use crate::reconciler::volume::VolumeInfo;
 use crate::runtime::RuntimeCreateRequest;
 use std::collections::HashMap;
 use std::future::Future;
 use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{
-    Node, PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship,
-    ShipCondition, ShipSpec,
-};
+use tugboat_resources::manifests::core::v1::{Node, Ship, ShipCondition, ShipSpec};
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
@@ -73,6 +67,39 @@ fn runtime_fingerprints_for_ship(
         super::ShipFingerprints::new(&migrated_spec)
     } else {
         super::ShipFingerprints::new(ship_spec)
+    }
+}
+
+struct VolumeSetupGuard<'a> {
+    reconciler: &'a ShipReconciler,
+    ship_id: &'a str,
+    published_volumes: Vec<PublishedVolume>,
+    controller_publish_secrets: HashMap<String, HashMap<String, String>>,
+}
+
+impl<'a> VolumeSetupGuard<'a> {
+    fn new(reconciler: &'a ShipReconciler, ship_id: &'a str) -> Self {
+        Self {
+            reconciler,
+            ship_id,
+            published_volumes: Vec::new(),
+            controller_publish_secrets: HashMap::new(),
+        }
+    }
+
+    async fn cancel(self, context: &str) {
+        self.reconciler
+            .cleanup_after_volume_setup_error(
+                self.ship_id,
+                &self.published_volumes,
+                &self.controller_publish_secrets,
+                context,
+            )
+            .await;
+    }
+
+    fn commit(self) -> Vec<PublishedVolume> {
+        self.published_volumes
     }
 }
 
@@ -315,15 +342,35 @@ impl ShipReconciler {
         namespace: &str,
         volumes: &[VolumeInfo],
     ) -> Result<(Vec<PublishedVolume>, Vec<VmVolumeConfig>), ReconcileError> {
-        let mut published_volumes = Vec::new();
+        let mut guard = VolumeSetupGuard::new(self, ship_id);
+
+        let vm_volumes = self
+            .setup_volumes_inner(&mut guard, namespace, volumes)
+            .await;
+
+        match vm_volumes {
+            Ok(vm_volumes) => Ok((guard.commit(), vm_volumes)),
+            Err(err) => {
+                guard.cancel("volume setup error").await;
+                Err(err)
+            }
+        }
+    }
+
+    async fn setup_volumes_inner(
+        &self,
+        guard: &mut VolumeSetupGuard<'_>,
+        namespace: &str,
+        volumes: &[VolumeInfo],
+    ) -> Result<Vec<VmVolumeConfig>, ReconcileError> {
         let mut vm_volumes = Vec::new();
-        let mut controller_publish_secrets = HashMap::new();
         if volumes
             .iter()
             .any(|volume| volume.persistent_volume_claim().is_some())
         {
-            self.csi.ensure_mount_namespace(ship_id)?;
+            self.csi.ensure_mount_namespace(guard.ship_id)?;
         }
+
         for volume in volumes {
             if let Some(volume) = volume.persistent_volume_claim() {
                 let (_, read_only) = effective_publish_settings(
@@ -331,24 +378,13 @@ impl ShipReconciler {
                     &volume.volume.access_modes,
                     volume.source.read_only,
                 )?;
-                let secrets = match self.resolve_csi_secrets(volume).await {
-                    Ok(secrets) => secrets,
-                    Err(err) => {
-                        self.cleanup_after_volume_setup_error(
-                            ship_id,
-                            &published_volumes,
-                            &controller_publish_secrets,
-                            "secret resolution error",
-                        )
-                        .await;
-                        return Err(err);
-                    }
-                };
-                match self
+                let secrets = self.resolve_csi_secrets(volume).await?;
+
+                let published = self
                     .csi
                     .publish(
                         &self.node_name,
-                        ship_id,
+                        guard.ship_id,
                         &volume.name,
                         &volume.claim_name,
                         &volume.volume,
@@ -356,83 +392,26 @@ impl ShipReconciler {
                         &volume.source,
                         &secrets,
                     )
-                    .await
-                {
-                    Ok(published) => {
-                        controller_publish_secrets
-                            .insert(volume.name.clone(), secrets.controller_publish.clone());
-                        let mut cleanup_targets = published_volumes.clone();
-                        cleanup_targets.push(published.clone());
-                        if let Err(err) = self
-                            .ensure_node_expansion(namespace, volume, &published, &secrets)
-                            .await
-                        {
-                            self.cleanup_after_volume_setup_error(
-                                ship_id,
-                                &cleanup_targets,
-                                &controller_publish_secrets,
-                                "node expansion error",
-                            )
-                            .await;
-                            return Err(err);
-                        }
-                        if let Err(err) = self
-                            .refresh_volume_stats(namespace, volume, &published)
-                            .await
-                        {
-                            self.cleanup_after_volume_setup_error(
-                                ship_id,
-                                &cleanup_targets,
-                                &controller_publish_secrets,
-                                "volume stats refresh error",
-                            )
-                            .await;
-                            return Err(err);
-                        }
-                        if let Err(err) = self.mark_volume_attached(&volume.volume_name, true).await
-                        {
-                            self.cleanup_after_volume_setup_error(
-                                ship_id,
-                                &cleanup_targets,
-                                &controller_publish_secrets,
-                                "attachment status error",
-                            )
-                            .await;
-                            return Err(err);
-                        }
-                        vm_volumes.push(vm_volume_config(volume, &published, read_only));
-                        published_volumes.push(published);
-                    }
-                    Err(err) => {
-                        self.cleanup_after_volume_setup_error(
-                            ship_id,
-                            &published_volumes,
-                            &controller_publish_secrets,
-                            "publish error",
-                        )
-                        .await;
-                        return Err(err.into());
-                    }
-                }
+                    .await?;
+
+                guard
+                    .controller_publish_secrets
+                    .insert(volume.name.clone(), secrets.controller_publish.clone());
+                guard.published_volumes.push(published.clone());
+
+                self.ensure_node_expansion(namespace, volume, &published, &secrets)
+                    .await?;
+                self.refresh_volume_stats(namespace, volume, &published)
+                    .await?;
+                self.mark_volume_attached(&volume.volume_name, true).await?;
+
+                vm_volumes.push(vm_volume_config(volume, &published, read_only));
             } else if let Some(volume) = volume.materialized() {
-                match self.materialize_volume(ship_id, volume) {
-                    Ok(path) => {
-                        vm_volumes.push(VmVolumeConfig::filesystem(path, volume.name.clone(), true))
-                    }
-                    Err(err) => {
-                        self.cleanup_after_volume_setup_error(
-                            ship_id,
-                            &published_volumes,
-                            &controller_publish_secrets,
-                            "materialization error",
-                        )
-                        .await;
-                        return Err(err);
-                    }
-                };
+                let path = self.materialize_volume(guard.ship_id, volume)?;
+                vm_volumes.push(VmVolumeConfig::filesystem(path, volume.name.clone(), true));
             }
         }
-        Ok((published_volumes, vm_volumes))
+        Ok(vm_volumes)
     }
 
     async fn cleanup_after_volume_setup_error(
@@ -627,180 +606,6 @@ impl ShipReconciler {
         }
 
         Ok(secrets)
-    }
-
-    pub(super) async fn ensure_node_expansion(
-        &self,
-        namespace: &str,
-        volume: &PersistentVolumeClaimVolumeInfo,
-        published: &PublishedVolume,
-        secrets: &crate::csi::ResolvedCsiSecrets,
-    ) -> Result<(), ReconcileError> {
-        let needs_node_expansion = volume
-            .status
-            .as_ref()
-            .and_then(|status| status.node_expansion_required)
-            .unwrap_or(false);
-        if !needs_node_expansion {
-            return Ok(());
-        }
-        let Some(target_capacity_bytes) = volume
-            .status
-            .as_ref()
-            .and_then(|status| status.capacity_bytes)
-            .or(volume.volume.capacity_bytes)
-            .or(volume.claim.requested_capacity_bytes)
-            .filter(|value| *value > 0)
-        else {
-            return Ok(());
-        };
-        let expanded_capacity_bytes = self
-            .csi
-            .expand(
-                published,
-                &volume.source,
-                &volume.claim,
-                &volume.volume,
-                secrets,
-                target_capacity_bytes,
-            )
-            .await?;
-        let Some(expanded_capacity_bytes) = expanded_capacity_bytes else {
-            return Err(ReconcileError::UnsupportedPersistentVolumeCsiFeature {
-                volume: volume.volume_name.clone(),
-                feature: "node_expand".to_string(),
-            });
-        };
-        self.mark_volume_node_expanded(
-            namespace,
-            &volume.claim_name,
-            &volume.volume_name,
-            expanded_capacity_bytes,
-        )
-        .await?;
-        Ok(())
-    }
-
-    pub(super) async fn refresh_volume_stats(
-        &self,
-        namespace: &str,
-        volume: &PersistentVolumeClaimVolumeInfo,
-        published: &PublishedVolume,
-    ) -> Result<(), ReconcileError> {
-        let Some(stats) = self.csi.volume_stats(published).await? else {
-            return Ok(());
-        };
-
-        let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
-        let Some(mut persistent_volume) = pv_api.get(&volume.volume_name).await? else {
-            return Ok(());
-        };
-        let mut persistent_volume_changed = false;
-        {
-            let status = persistent_volume
-                .status
-                .get_or_insert_with(Default::default);
-            persistent_volume_changed |=
-                apply_persistent_volume_csi_observation(&mut status.conditions, &stats);
-        }
-        if persistent_volume_changed {
-            pv_api
-                .replace(&volume.volume_name, persistent_volume)
-                .await?;
-        }
-
-        let pvc_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
-        let Some(mut claim) = pvc_api.get(&volume.claim_name).await? else {
-            return Ok(());
-        };
-        let mut claim_changed = false;
-        {
-            let status = claim
-                .status
-                .get_or_insert_with(PersistentVolumeClaimStatus::default);
-            claim_changed |=
-                apply_persistent_volume_claim_csi_observation(&mut status.conditions, &stats);
-        }
-        if claim_changed {
-            pvc_api.replace(&volume.claim_name, claim).await?;
-        }
-
-        Ok(())
-    }
-
-    pub(super) async fn mark_volume_attached(
-        &self,
-        volume_name: &str,
-        attached: bool,
-    ) -> Result<(), ReconcileError> {
-        let api: Api<PersistentVolume> = Api::all(self.client.clone());
-        let Some(mut volume) = api.get(volume_name).await? else {
-            return Ok(());
-        };
-        let status = volume.status.get_or_insert_with(Default::default);
-        status.attached_node = attached.then(|| self.node_name.clone());
-        if status.phase.is_none() {
-            status.phase = Some("Bound".to_string());
-        }
-        api.replace(volume_name, volume).await?;
-        Ok(())
-    }
-
-    async fn mark_volume_node_expanded(
-        &self,
-        namespace: &str,
-        claim_name: &str,
-        volume_name: &str,
-        capacity_bytes: i64,
-    ) -> Result<(), ReconcileError> {
-        let api: Api<PersistentVolume> = Api::all(self.client.clone());
-        let Some(mut volume) = api.get(volume_name).await? else {
-            return Ok(());
-        };
-        if let Some(spec) = volume.spec.as_mut() {
-            spec.capacity_bytes = Some(capacity_bytes);
-        }
-        let status = volume.status.get_or_insert_with(Default::default);
-        status.phase = Some("Bound".to_string());
-        status.capacity_bytes = Some(capacity_bytes);
-        status.node_expansion_required = Some(false);
-        status.attached_node = Some(self.node_name.clone());
-        api.replace(volume_name, volume).await?;
-        self.mark_claim_node_expanded(namespace, claim_name, capacity_bytes)
-            .await?;
-        Ok(())
-    }
-
-    async fn mark_claim_node_expanded(
-        &self,
-        namespace: &str,
-        claim_name: &str,
-        capacity_bytes: i64,
-    ) -> Result<(), ReconcileError> {
-        let api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
-        let Some(mut claim) = api.get(claim_name).await? else {
-            return Ok(());
-        };
-        let status = claim
-            .status
-            .get_or_insert_with(PersistentVolumeClaimStatus::default);
-        let mut changed = false;
-        if status.phase.as_deref() != Some("Bound") {
-            status.phase = Some("Bound".to_string());
-            changed = true;
-        }
-        if status.capacity_bytes != Some(capacity_bytes) {
-            status.capacity_bytes = Some(capacity_bytes);
-            changed = true;
-        }
-        if status.resize_pending != Some(false) {
-            status.resize_pending = Some(false);
-            changed = true;
-        }
-        if changed {
-            api.replace(claim_name, claim).await?;
-        }
-        Ok(())
     }
 }
 

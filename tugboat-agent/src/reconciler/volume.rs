@@ -14,11 +14,9 @@
 
 pub(crate) mod normalize;
 
-use crate::csi::{ResolvedCsiSecrets, is_supported_access_mode};
+use crate::csi::is_supported_access_mode;
 use crate::reconciler::ShipReconciler;
-use crate::reconciler::error::{
-    InvalidCsiSecretDataError, InvalidSecretVolumeDataError, ReconcileError,
-};
+use crate::reconciler::error::{InvalidSecretVolumeDataError, ReconcileError};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 pub(crate) use normalize::{
@@ -30,7 +28,7 @@ use tugboat_client::Api;
 use tugboat_resources::manifests::core::v1::{
     ConfigMap, CsiPersistentVolumeSource, PersistentVolume, PersistentVolumeClaim,
     PersistentVolumeClaimReference, PersistentVolumeClaimSpec, PersistentVolumeSpec,
-    PersistentVolumeStatus, Secret, SecretReference, ShipSpec,
+    PersistentVolumeStatus, Secret, ShipSpec,
 };
 
 #[derive(Debug, Clone)]
@@ -315,86 +313,6 @@ impl ShipReconciler {
     }
 }
 
-impl ShipReconciler {
-    pub(crate) async fn resolve_csi_secrets(
-        &self,
-        volume: &PersistentVolumeClaimVolumeInfo,
-    ) -> Result<ResolvedCsiSecrets, ReconcileError> {
-        Ok(ResolvedCsiSecrets {
-            controller_publish: self
-                .load_secret_reference(
-                    &volume.volume_name,
-                    "controller_publish_secret_ref",
-                    volume.source.controller_publish_secret_ref.as_ref(),
-                )
-                .await?,
-            node_expand: self
-                .load_secret_reference(
-                    &volume.volume_name,
-                    "node_expand_secret_ref",
-                    volume.source.node_expand_secret_ref.as_ref(),
-                )
-                .await?,
-            node_publish: self
-                .load_secret_reference(
-                    &volume.volume_name,
-                    "node_publish_secret_ref",
-                    volume.source.node_publish_secret_ref.as_ref(),
-                )
-                .await?,
-            node_stage: self
-                .load_secret_reference(
-                    &volume.volume_name,
-                    "node_stage_secret_ref",
-                    volume.source.node_stage_secret_ref.as_ref(),
-                )
-                .await?,
-            mount_flags: volume
-                .source
-                .mount_options
-                .iter()
-                .filter(|value| !value.is_empty())
-                .cloned()
-                .collect(),
-        })
-    }
-
-    async fn load_secret_reference(
-        &self,
-        volume_name: &str,
-        field: &str,
-        reference: Option<&SecretReference>,
-    ) -> Result<HashMap<String, String>, ReconcileError> {
-        let Some(reference) = reference else {
-            return Ok(Default::default());
-        };
-        if reference.name.is_empty() || reference.namespace.is_empty() {
-            return Err(ReconcileError::InvalidCsiSecretReference {
-                volume: volume_name.to_string(),
-                field: field.to_string(),
-            });
-        }
-
-        let api: Api<Secret> = Api::namespaced(self.client.clone(), &reference.namespace);
-        let Some(secret) = api.get(&reference.name).await? else {
-            return Err(ReconcileError::CsiSecretNotFound {
-                volume: volume_name.to_string(),
-                field: field.to_string(),
-                namespace: reference.namespace.clone(),
-                name: reference.name.clone(),
-            });
-        };
-
-        decode_csi_secret_data(
-            volume_name,
-            field,
-            &reference.namespace,
-            &reference.name,
-            secret,
-        )
-    }
-}
-
 pub(crate) fn effective_volume_mode(mode: Option<&str>) -> &str {
     mode.unwrap_or("Block")
 }
@@ -512,41 +430,6 @@ pub(crate) fn ensure_supported_persistent_volume_mode(
     }
 }
 
-pub(crate) fn decode_csi_secret_data(
-    volume_name: &str,
-    field: &str,
-    namespace: &str,
-    secret_name: &str,
-    secret: Secret,
-) -> Result<HashMap<String, String>, ReconcileError> {
-    let mut data = HashMap::new();
-    for (key, value) in secret.data {
-        let decoded = BASE64_STANDARD.decode(value).map_err(|err| {
-            invalid_csi_secret_data(
-                volume_name,
-                field,
-                namespace,
-                secret_name,
-                &key,
-                err.to_string(),
-            )
-        })?;
-        let decoded = String::from_utf8(decoded).map_err(|err| {
-            invalid_csi_secret_data(
-                volume_name,
-                field,
-                namespace,
-                secret_name,
-                &key,
-                err.to_string(),
-            )
-        })?;
-        data.insert(key, decoded);
-    }
-    data.extend(secret.string_data);
-    Ok(data)
-}
-
 pub(crate) fn decode_secret_volume_data(
     volume_name: &str,
     namespace: &str,
@@ -570,24 +453,6 @@ pub(crate) fn decode_secret_volume_data(
         data.insert(key, value.into_bytes());
     }
     Ok(data)
-}
-
-fn invalid_csi_secret_data(
-    volume_name: &str,
-    field: &str,
-    namespace: &str,
-    secret_name: &str,
-    key: &str,
-    reason: String,
-) -> ReconcileError {
-    ReconcileError::InvalidCsiSecretData(Box::new(InvalidCsiSecretDataError {
-        volume: volume_name.to_string(),
-        field: field.to_string(),
-        namespace: namespace.to_string(),
-        name: secret_name.to_string(),
-        key: key.to_string(),
-        reason,
-    }))
 }
 
 #[cfg(test)]
