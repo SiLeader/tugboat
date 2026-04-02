@@ -54,13 +54,16 @@ impl FromQmp<RunState> for VmStatus {
 pub(crate) async fn status(vm: QemuVmConfig, args: StatusArgs) -> Result<(), crate::Error> {
     let stream = QmpStreamTokio::open_uds(vm.get_uds_path(&args.id))
         .await
-        .expect("Cannot open UDS");
-    let stream = stream.negotiate().await.expect("Cannot negotiate QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let stream = stream
+        .negotiate()
+        .await
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
     let status = qmp
         .execute(qapi::qmp::query_status {})
         .await
-        .expect("Cannot execute QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     let status = VmStatusResponse {
         status: VmStatus::from_qmp(status.status),
@@ -86,7 +89,8 @@ pub(crate) async fn status(vm: QemuVmConfig, args: StatusArgs) -> Result<(), cra
         }
         .to_string(),
     };
-    serde_json::to_writer(std::io::stdout(), &status).expect("Cannot serialize status");
+    serde_json::to_writer(std::io::stdout(), &status)
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     Ok(())
 }

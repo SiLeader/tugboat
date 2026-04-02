@@ -28,8 +28,11 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
     let req: VmMigrateRequest = load_config_or_panic(args.config);
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
         .await
-        .expect("Cannot open UDS");
-    let stream = stream.negotiate().await.expect("Cannot negotiate QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let stream = stream
+        .negotiate()
+        .await
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
     qmp.execute(qapi::qmp::migrate {
@@ -42,7 +45,7 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
         resume: None,
     })
     .await
-    .expect("Cannot execute QMP");
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     Ok(())
 }

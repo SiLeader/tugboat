@@ -14,12 +14,8 @@
 
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
-use tokio::time::{Duration, sleep};
 use tugboat_vm_runtime_interface::migrate::{VmMigrateRequest, VmMigrationPhase};
 use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
-
-const MIGRATION_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const MIGRATION_POLL_ATTEMPTS: usize = 120;
 
 impl RuntimeOperator {
     pub(crate) async fn migrate(
@@ -38,28 +34,20 @@ impl RuntimeOperator {
         Ok(())
     }
 
-    pub(crate) async fn wait_for_migration_completion(&self, id: &str) -> Result<(), RuntimeError> {
-        for _ in 0..MIGRATION_POLL_ATTEMPTS {
-            let status = self.operator.migration_status(id).await?;
-            match status.phase {
-                VmMigrationPhase::Completed => return Ok(()),
-                VmMigrationPhase::Failed | VmMigrationPhase::Cancelled => {
-                    return Err(RuntimeError::MigrationFailed(format!(
-                        "migration failed for '{id}': {}",
-                        status.message
-                    )));
-                }
-                VmMigrationPhase::None | VmMigrationPhase::Setup | VmMigrationPhase::Active => {}
-            }
-            sleep(MIGRATION_POLL_INTERVAL).await;
-        }
-
-        Err(RuntimeError::MigrationFailed(format!(
-            "timed out waiting for migration of '{id}'"
-        )))
+    /// Check the current migration phase once without blocking.
+    /// The caller is responsible for polling on subsequent reconcile events.
+    pub(crate) async fn check_migration_status(
+        &self,
+        id: &str,
+    ) -> Result<VmMigrationPhase, RuntimeError> {
+        let status = self.operator.migration_status(id).await?;
+        Ok(status.phase)
     }
 
     pub(crate) async fn finish_source_migration(&self, id: &str) -> Result<(), RuntimeError> {
+        // VmStopType::PowerOff maps to QMP `quit`, which gracefully terminates
+        // the QEMU process. The source VM is in a paused postmigrate state at
+        // this point, so no guest-visible disruption occurs.
         self.operator
             .stop(VmStopRequest {
                 id: id.to_string(),

@@ -35,6 +35,10 @@ pub enum Error {
     Syscall(#[from] Errno),
     #[error("Failed to setup network: {0}")]
     NetworkSetupFailed(String),
+    #[error("QMP operation failed: {0}")]
+    Qmp(String),
+    #[error("Action failed: {0}")]
+    ActionFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

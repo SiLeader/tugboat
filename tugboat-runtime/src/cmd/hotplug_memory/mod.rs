@@ -31,17 +31,19 @@ pub async fn hotplug_memory(config: QemuVmConfig, args: HotplugMemoryArgs) -> cr
     let req: VmMemoryHotplugRequest = load_config_or_panic(args.config);
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
         .await
-        .expect("Cannot open UDS");
-    let stream = stream.negotiate().await.expect("Cannot negotiate QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let stream = stream
+        .negotiate()
+        .await
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
-    let memdev_count = qmp
-        .execute(qapi::qmp::query_memdev {})
-        .await
-        .expect("Cannot execute QMP")
-        .len();
-    let memdev_id = format!("mem-hotplug-{memdev_count}");
-    let dimm_id = format!("dimm-hotplug-{memdev_count}");
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let memdev_id = format!("mem-hotplug-{ts}");
+    let dimm_id = format!("dimm-hotplug-{ts}");
 
     qmp.execute(qapi::qmp::object_add::from(
         ObjectOptions::memory_backend_ram {
@@ -62,7 +64,7 @@ pub async fn hotplug_memory(config: QemuVmConfig, args: HotplugMemoryArgs) -> cr
         },
     ))
     .await
-    .expect("Cannot execute QMP");
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     let mut arguments = Dictionary::new();
     arguments.insert("memdev".to_string(), json!(memdev_id));
@@ -73,7 +75,7 @@ pub async fn hotplug_memory(config: QemuVmConfig, args: HotplugMemoryArgs) -> cr
         arguments,
     })
     .await
-    .expect("Cannot execute QMP");
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     Ok(())
 }

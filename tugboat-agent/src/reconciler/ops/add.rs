@@ -17,6 +17,7 @@ use crate::csi::{
 };
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
+use crate::reconciler::ops::PHASE_READY;
 use crate::reconciler::ops::add_helpers::{
     apply_persistent_volume_claim_csi_observation, apply_persistent_volume_csi_observation,
     validate_recovered_published_volumes, vm_volume_config,
@@ -296,12 +297,16 @@ impl ShipReconciler {
     }
 
     async fn find_available_port(&self) -> Result<u16, ReconcileError> {
-        // Let the OS pick a port.
+        // Let the OS assign a free port by binding to port 0.
+        // There is an inherent TOCTOU window between dropping this listener and
+        // QEMU binding the port, but the gap is sub-millisecond on a dedicated
+        // node and is acceptable for the low-frequency migration path.
         let listener = std::net::TcpListener::bind("0.0.0.0:0")
             .map_err(|e| ReconcileError::Runtime(crate::runtime::error::RuntimeError::Io(e)))?;
-        let port = listener.local_addr().map(|a| a.port()).map_err(|e| {
-            ReconcileError::Runtime(crate::runtime::error::RuntimeError::Io(e))
-        })?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| ReconcileError::Runtime(crate::runtime::error::RuntimeError::Io(e)))?
+            .port();
         Ok(port)
     }
 
@@ -323,7 +328,7 @@ impl ShipReconciler {
         let patch = serde_json::json!({
             "status": {
                 "migration": {
-                    "phase": "Ready",
+                    "phase": PHASE_READY,
                     "sourceNodeName": ship.spec.as_ref().and_then(|spec| spec.node_name.clone()),
                     "targetNodeName": self.node_name,
                     "targetAddress": target_address,

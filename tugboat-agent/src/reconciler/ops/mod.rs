@@ -17,6 +17,13 @@ pub(crate) mod add_helpers;
 pub(crate) mod delete;
 pub(crate) mod modify;
 
+/// Migration phase strings shared between the add and modify reconcile paths.
+pub(super) const PHASE_PENDING: &str = "Pending";
+pub(super) const PHASE_READY: &str = "Ready";
+pub(super) const PHASE_MIGRATING: &str = "Migrating";
+pub(super) const PHASE_COMPLETED: &str = "Completed";
+pub(super) const PHASE_FAILED: &str = "Failed";
+
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::volume::normalized_ship_volumes;
 use serde::{Deserialize, Serialize};

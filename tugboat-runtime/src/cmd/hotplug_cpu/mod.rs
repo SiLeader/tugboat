@@ -31,14 +31,17 @@ pub async fn hotplug_cpu(config: QemuVmConfig, args: HotplugCpuArgs) -> crate::R
     let req: VmCpuHotplugRequest = load_config_or_panic(args.config);
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
         .await
-        .expect("Cannot open UDS");
-    let stream = stream.negotiate().await.expect("Cannot negotiate QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let stream = stream
+        .negotiate()
+        .await
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
     let hotpluggable = qmp
         .execute(qapi::qmp::query_hotpluggable_cpus {})
         .await
-        .expect("Cannot execute QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     let slots = hotpluggable
         .into_iter()
@@ -46,11 +49,11 @@ pub async fn hotplug_cpu(config: QemuVmConfig, args: HotplugCpuArgs) -> crate::R
         .take(req.vcpus_to_add as usize)
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        slots.len(),
-        req.vcpus_to_add as usize,
-        "Not enough hotpluggable CPU slots available"
-    );
+    if slots.len() != req.vcpus_to_add as usize {
+        return Err(crate::Error::ActionFailed(
+            "Not enough hotpluggable CPU slots available".to_string(),
+        ));
+    }
 
     for slot in slots {
         let arguments = build_cpu_arguments(&slot.props);
@@ -67,7 +70,7 @@ pub async fn hotplug_cpu(config: QemuVmConfig, args: HotplugCpuArgs) -> crate::R
             arguments,
         })
         .await
-        .expect("Cannot execute QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     }
 
     Ok(())

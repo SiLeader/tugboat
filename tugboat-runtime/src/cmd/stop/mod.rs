@@ -30,8 +30,11 @@ pub async fn stop(config: QemuVmConfig, args: StopArgs) -> crate::Result<()> {
 
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
         .await
-        .expect("Cannot open UDS");
-    let stream = stream.negotiate().await.expect("Cannot negotiate QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let stream = stream
+        .negotiate()
+        .await
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
     match req.stop_type {
@@ -39,13 +42,13 @@ pub async fn stop(config: QemuVmConfig, args: StopArgs) -> crate::Result<()> {
             info!("Sending system_powerdown to VM {}", req.id);
             qmp.execute(qapi::qmp::system_powerdown {})
                 .await
-                .expect("Cannot execute QMP");
+                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
         }
         VmStopType::PowerOff => {
             info!("Sending quit to VM {}", req.id);
             qmp.execute(qapi::qmp::quit {})
                 .await
-                .expect("Cannot execute QMP");
+                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
         }
     }
 

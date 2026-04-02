@@ -27,14 +27,17 @@ pub struct MigrationStatusArgs {
 pub async fn status(config: QemuVmConfig, args: MigrationStatusArgs) -> crate::Result<()> {
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&args.id))
         .await
-        .expect("Cannot open UDS");
-    let stream = stream.negotiate().await.expect("Cannot negotiate QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let stream = stream
+        .negotiate()
+        .await
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
     let migration = qmp
         .execute(qapi::qmp::query_migrate {})
         .await
-        .expect("Cannot execute QMP");
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     let response = VmMigrationStatusResponse {
         phase: match migration.status {
@@ -60,6 +63,7 @@ pub async fn status(config: QemuVmConfig, args: MigrationStatusArgs) -> crate::R
             .unwrap_or_else(|| "Migration is not active.".to_string()),
     };
 
-    serde_json::to_writer(std::io::stdout(), &response).expect("Cannot serialize status");
+    serde_json::to_writer(std::io::stdout(), &response)
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     Ok(())
 }

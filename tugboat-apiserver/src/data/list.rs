@@ -108,10 +108,12 @@ struct TableRow {
 impl Table {
     pub(crate) fn from_raw_items(items: Vec<serde_json::Value>) -> Self {
         let include_namespace = items.iter().any(item_has_namespace);
+        let kind = items.first().and_then(|i| i.pointer("/kind").and_then(|k| k.as_str())).map(String::from);
+        
         let rows = items
             .into_iter()
             .map(|item| TableRow {
-                cells: table_cells(&item, include_namespace),
+                cells: table_cells(&item, include_namespace, kind.as_deref()),
                 object: item,
             })
             .collect();
@@ -122,7 +124,7 @@ impl Table {
                 kind: Some("Table".to_string()),
             },
             object_meta: ObjectMeta::default(),
-            column_definitions: table_columns(include_namespace),
+            column_definitions: table_columns(include_namespace, kind.as_deref()),
             rows,
         }
     }
@@ -142,7 +144,7 @@ pub(crate) fn wants_table_response(req: &HttpRequest) -> bool {
         .is_some_and(|value| value.contains("as=Table"))
 }
 
-fn table_columns(include_namespace: bool) -> Vec<TableColumnDefinition> {
+fn table_columns(include_namespace: bool, kind: Option<&str>) -> Vec<TableColumnDefinition> {
     let mut columns = vec![TableColumnDefinition {
         name: "Name".to_string(),
         type_: "string".to_string(),
@@ -159,6 +161,43 @@ fn table_columns(include_namespace: bool) -> Vec<TableColumnDefinition> {
             priority: 0,
         });
     }
+
+    match kind {
+        Some("Ship") => {
+            columns.push(TableColumnDefinition {
+                name: "Class".to_string(),
+                type_: "string".to_string(),
+                format: None,
+                description: "Ship Class".to_string(),
+                priority: 0,
+            });
+            columns.push(TableColumnDefinition {
+                name: "Node".to_string(),
+                type_: "string".to_string(),
+                format: None,
+                description: "Node".to_string(),
+                priority: 0,
+            });
+        }
+        Some("Deployment") | Some("ReplicaSet") => {
+            columns.push(TableColumnDefinition {
+                name: "Replicas".to_string(),
+                type_: "integer".to_string(),
+                format: None,
+                description: "Desired replicas".to_string(),
+                priority: 0,
+            });
+            columns.push(TableColumnDefinition {
+                name: "Available".to_string(),
+                type_: "integer".to_string(),
+                format: None,
+                description: "Available replicas".to_string(),
+                priority: 0,
+            });
+        }
+        _ => {}
+    }
+
     columns.push(TableColumnDefinition {
         name: "Created".to_string(),
         type_: "string".to_string(),
@@ -174,7 +213,7 @@ fn item_has_namespace(item: &serde_json::Value) -> bool {
         .is_some_and(|value| !value.is_null())
 }
 
-fn table_cells(item: &serde_json::Value, include_namespace: bool) -> Vec<serde_json::Value> {
+fn table_cells(item: &serde_json::Value, include_namespace: bool, kind: Option<&str>) -> Vec<serde_json::Value> {
     let mut cells = vec![
         item.pointer("/metadata/name")
             .cloned()
@@ -187,6 +226,35 @@ fn table_cells(item: &serde_json::Value, include_namespace: bool) -> Vec<serde_j
                 .unwrap_or(serde_json::Value::Null),
         );
     }
+
+    match kind {
+        Some("Ship") => {
+            cells.push(
+                item.pointer("/spec/shipClass")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            cells.push(
+                item.pointer("/spec/nodeName")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        Some("Deployment") | Some("ReplicaSet") => {
+            cells.push(
+                item.pointer("/spec/replicas")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!(1)),
+            );
+            cells.push(
+                item.pointer("/status/availableReplicas")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!(0)),
+            );
+        }
+        _ => {}
+    }
+
     cells.push(
         item.pointer("/metadata/creationTimestamp")
             .cloned()

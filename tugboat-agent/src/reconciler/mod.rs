@@ -144,9 +144,14 @@ impl ShipReconciler {
         &self,
         event: tugboat_client::runtime::ReconcileEvent<ConfigMap>,
     ) -> Result<tugboat_client::runtime::Action, crate::reconciler::error::ReconcileError> {
+        // Skip refresh when the ConfigMap is deleted — the volume files are
+        // already absent and attempting to re-materialize a missing resource
+        // would only produce errors.
         let config_map = match event {
-            tugboat_client::runtime::ReconcileEvent::Applied(config_map)
-            | tugboat_client::runtime::ReconcileEvent::Deleted(config_map) => config_map,
+            tugboat_client::runtime::ReconcileEvent::Applied(config_map) => config_map,
+            tugboat_client::runtime::ReconcileEvent::Deleted(_) => {
+                return Ok(tugboat_client::runtime::Action::await_change());
+            }
         };
         self.reconcile_materialized_resource_change(
             &config_map,
@@ -160,9 +165,12 @@ impl ShipReconciler {
         &self,
         event: tugboat_client::runtime::ReconcileEvent<Secret>,
     ) -> Result<tugboat_client::runtime::Action, crate::reconciler::error::ReconcileError> {
+        // Skip refresh when the Secret is deleted — same reasoning as ConfigMap.
         let secret = match event {
-            tugboat_client::runtime::ReconcileEvent::Applied(secret)
-            | tugboat_client::runtime::ReconcileEvent::Deleted(secret) => secret,
+            tugboat_client::runtime::ReconcileEvent::Applied(secret) => secret,
+            tugboat_client::runtime::ReconcileEvent::Deleted(_) => {
+                return Ok(tugboat_client::runtime::Action::await_change());
+            }
         };
         self.reconcile_materialized_resource_change(&secret, MaterializedVolumeSourceKind::Secret)
             .await?;
@@ -239,12 +247,25 @@ impl ShipReconciler {
         kind: MaterializedVolumeSourceKind,
         resource_name: &str,
     ) -> Result<Vec<Ship>, crate::reconciler::error::ReconcileError> {
-        let ships = self
+        // Query ships owned by this node
+        let mut ships = self
             .ship_all_api
             .list_with_params(
                 &WatchParams::default().fields(format!("spec.nodeName={}", self.node_name)),
             )
             .await?;
+            
+        // Also query ships migrating to this node
+        if let Ok(mut target_ships) = self
+            .ship_all_api
+            .list_with_params(
+                &WatchParams::default().fields(format!("spec.targetNodeName={}", self.node_name)),
+            )
+            .await
+        {
+            ships.append(&mut target_ships);
+        }
+
         let mut matched = Vec::new();
 
         for ship in ships {
