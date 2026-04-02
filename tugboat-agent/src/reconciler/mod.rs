@@ -254,7 +254,7 @@ impl ShipReconciler {
                 &WatchParams::default().fields(format!("spec.nodeName={}", self.node_name)),
             )
             .await?;
-            
+
         // Also query ships migrating to this node
         if let Ok(mut target_ships) = self
             .ship_all_api

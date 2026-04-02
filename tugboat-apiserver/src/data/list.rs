@@ -108,8 +108,11 @@ struct TableRow {
 impl Table {
     pub(crate) fn from_raw_items(items: Vec<serde_json::Value>) -> Self {
         let include_namespace = items.iter().any(item_has_namespace);
-        let kind = items.first().and_then(|i| i.pointer("/kind").and_then(|k| k.as_str())).map(String::from);
-        
+        let kind = items
+            .first()
+            .and_then(|i| i.pointer("/kind").and_then(|k| k.as_str()))
+            .map(String::from);
+
         let rows = items
             .into_iter()
             .map(|item| TableRow {
@@ -213,7 +216,11 @@ fn item_has_namespace(item: &serde_json::Value) -> bool {
         .is_some_and(|value| !value.is_null())
 }
 
-fn table_cells(item: &serde_json::Value, include_namespace: bool, kind: Option<&str>) -> Vec<serde_json::Value> {
+fn table_cells(
+    item: &serde_json::Value,
+    include_namespace: bool,
+    kind: Option<&str>,
+) -> Vec<serde_json::Value> {
     let mut cells = vec![
         item.pointer("/metadata/name")
             .cloned()

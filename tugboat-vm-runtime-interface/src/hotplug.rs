@@ -16,14 +16,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VmCpuHotplugRequest {
+pub struct VmHotplugRequest {
     pub id: String,
-    pub vcpus_to_add: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VmMemoryHotplugRequest {
-    pub id: String,
-    pub size_bytes_to_add: u64,
+    pub vcpus_to_add: Option<u64>,
+    pub size_bytes_to_add: Option<u64>,
 }

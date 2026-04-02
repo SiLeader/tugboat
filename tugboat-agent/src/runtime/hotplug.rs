@@ -15,7 +15,7 @@
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use tracing::info;
-use tugboat_vm_runtime_interface::hotplug::{VmCpuHotplugRequest, VmMemoryHotplugRequest};
+use tugboat_vm_runtime_interface::hotplug::VmHotplugRequest;
 
 impl RuntimeOperator {
     pub(crate) async fn hotplug_resources(
@@ -47,19 +47,12 @@ impl RuntimeOperator {
         let cpu_to_add = cpu_cores - current.cpu_cores;
         let memory_to_add = memory_size - current.memory_size;
 
-        if cpu_to_add > 0 {
+        if cpu_to_add > 0 || memory_to_add > 0 {
             self.operator
-                .hotplug_cpu(VmCpuHotplugRequest {
+                .hotplug(VmHotplugRequest {
                     id: id.to_string(),
-                    vcpus_to_add: cpu_to_add,
-                })
-                .await?;
-        }
-        if memory_to_add > 0 {
-            self.operator
-                .hotplug_memory(VmMemoryHotplugRequest {
-                    id: id.to_string(),
-                    size_bytes_to_add: memory_to_add,
+                    vcpus_to_add: (cpu_to_add > 0).then_some(cpu_to_add),
+                    size_bytes_to_add: (memory_to_add > 0).then_some(memory_to_add),
                 })
                 .await?;
         }

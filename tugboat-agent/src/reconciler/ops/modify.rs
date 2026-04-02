@@ -58,7 +58,10 @@ impl ShipReconciler {
                     if let Some(status) = &ship.status {
                         if let Some(migration) = &status.migration {
                             if migration.phase == PHASE_FAILED {
-                                info!("Ship '{}' is a failed migration target and not running, ignoring", ship_id);
+                                info!(
+                                    "Ship '{}' is a failed migration target and not running, ignoring",
+                                    ship_id
+                                );
                                 return Ok(());
                             }
                         }
@@ -272,9 +275,15 @@ impl ShipReconciler {
                 if let Some(migration) = &status.migration {
                     if migration.phase == PHASE_FAILED {
                         if self.runtime_operator.has_ship(ship_id).await {
-                            info!("Migration failed for ship '{}', cleaning up incoming VM on target node", ship_id);
+                            info!(
+                                "Migration failed for ship '{}', cleaning up incoming VM on target node",
+                                ship_id
+                            );
                             if let Err(err) = self.reconcile_deleted(ship.clone()).await {
-                                error!("Failed to clean up incoming VM for failed migration '{}': {}", ship_id, err);
+                                error!(
+                                    "Failed to clean up incoming VM for failed migration '{}': {}",
+                                    ship_id, err
+                                );
                             }
                         }
                         return Ok(true);
@@ -445,8 +454,7 @@ impl ShipReconciler {
                         Ok(true)
                     }
                     VmMigrationPhase::Failed | VmMigrationPhase::Cancelled => {
-                        let message =
-                            format!("Live migration did not complete (phase: {phase:?})");
+                        let message = format!("Live migration did not complete (phase: {phase:?})");
                         self.update_migration_status(
                             &api,
                             name,

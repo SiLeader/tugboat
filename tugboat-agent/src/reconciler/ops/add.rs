@@ -217,12 +217,12 @@ impl ShipReconciler {
         let networks = self.cni.create_network_configs(ship_id, network_classes);
         let (published_volumes, vm_volumes) =
             self.setup_volumes(ship_id, &namespace, &volumes).await?;
-        let incoming_port = if ship_spec.target_node_name.as_deref() == Some(self.node_name.as_str())
-        {
-            Some(self.find_available_port().await?)
-        } else {
-            None
-        };
+        let incoming_port =
+            if ship_spec.target_node_name.as_deref() == Some(self.node_name.as_str()) {
+                Some(self.find_available_port().await?)
+            } else {
+                None
+            };
         let ship_for_migration_ready = ship.clone();
 
         self.with_cleanup(ship_id, published_volumes.as_slice(), &volumes, || {
