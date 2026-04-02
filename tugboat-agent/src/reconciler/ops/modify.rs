@@ -276,7 +276,6 @@ impl ShipReconciler {
             self.update_migration_status(
                 &api,
                 name,
-                ship.clone(),
                 ShipMigrationStatus {
                     phase: "Pending".to_string(),
                     source_node_name: ship_spec.node_name.clone(),
@@ -312,7 +311,6 @@ impl ShipReconciler {
             self.update_migration_status(
                 &api,
                 name,
-                ship.clone(),
                 ShipMigrationStatus {
                     phase: "Failed".to_string(),
                     source_node_name: Some(self.node_name.clone()),
@@ -336,7 +334,6 @@ impl ShipReconciler {
             self.update_migration_status(
                 &api,
                 name,
-                ship.clone(),
                 ShipMigrationStatus {
                     phase: "Failed".to_string(),
                     source_node_name: Some(self.node_name.clone()),
@@ -356,7 +353,6 @@ impl ShipReconciler {
             self.update_migration_status(
                 &api,
                 name,
-                ship.clone(),
                 ShipMigrationStatus {
                     phase: "Failed".to_string(),
                     source_node_name: Some(self.node_name.clone()),
@@ -373,27 +369,31 @@ impl ShipReconciler {
             return Err(err.into());
         }
 
-        let mut migrated_ship = ship.clone();
-        if let Some(spec) = &mut migrated_ship.spec {
-            spec.node_name = Some(target_node_name.clone());
-            spec.target_node_name = None;
-        }
-        let status = migrated_ship.status.get_or_insert_default();
-        status.migration = Some(ShipMigrationStatus {
-            phase: "Completed".to_string(),
-            source_node_name: Some(self.node_name.clone()),
-            target_node_name: Some(target_node_name.clone()),
-            target_address: Some(target_address),
-            target_port: Some(target_port),
-            message: "Live migration completed successfully".to_string(),
-            timestamp: Some(Time::now()),
+        let patch = serde_json::json!({
+            "spec": {
+                "nodeName": target_node_name,
+                "targetNodeName": null,
+            },
+            "status": {
+                "migration": {
+                    "phase": "Completed",
+                    "sourceNodeName": self.node_name,
+                    "targetNodeName": target_node_name,
+                    "targetAddress": target_address,
+                    "targetPort": target_port,
+                    "message": "Live migration completed successfully",
+                    "timestamp": Time::now(),
+                },
+                "conditions": [
+                    {
+                        "status": "VmMigrated",
+                        "message": format!("VM migrated successfully to node '{target_node_name}'"),
+                        "timestamp": Time::now(),
+                    }
+                ]
+            }
         });
-        migrated_ship.append_status(ShipCondition {
-            status: "VmMigrated".to_string(),
-            message: format!("VM migrated successfully to node '{target_node_name}'"),
-            timestamp: Some(Time::now()),
-        });
-        api.replace(name, migrated_ship).await?;
+        api.patch(name, patch).await?;
         Ok(true)
     }
 
@@ -559,19 +559,23 @@ impl ShipReconciler {
         &self,
         api: &Api<Ship>,
         name: &str,
-        mut ship: Ship,
         migration: ShipMigrationStatus,
         condition_status: &str,
         condition_message: String,
     ) -> Result<(), ReconcileError> {
-        let status = ship.status.get_or_insert_default();
-        status.migration = Some(migration);
-        ship.append_status(ShipCondition {
-            status: condition_status.to_string(),
-            message: condition_message,
-            timestamp: Some(Time::now()),
+        let patch = serde_json::json!({
+            "status": {
+                "migration": migration,
+                "conditions": [
+                    {
+                        "status": condition_status,
+                        "message": condition_message,
+                        "timestamp": Time::now(),
+                    }
+                ]
+            }
         });
-        api.replace_status(name, ship).await?;
+        api.patch_status(name, patch).await?;
         Ok(())
     }
 }

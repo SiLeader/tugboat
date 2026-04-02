@@ -93,6 +93,14 @@ where
         }
     }
 
+    pub async fn patch<P: Serialize>(&self, name: &str, patch: P) -> Result<T, Error> {
+        if let Some(namespace) = &self.namespace {
+            self.client.patch_namespaced(namespace, name, patch).await
+        } else {
+            self.client.patch_cluster_scoped(name, patch).await
+        }
+    }
+
     pub async fn patch_status<P: Serialize>(&self, name: &str, patch: P) -> Result<T, Error> {
         if let Some(namespace) = &self.namespace {
             self.client

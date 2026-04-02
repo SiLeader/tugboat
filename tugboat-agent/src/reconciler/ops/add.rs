@@ -17,7 +17,6 @@ use crate::csi::{
 };
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
-use crate::reconciler::ops::MIGRATION_PORT;
 use crate::reconciler::ops::add_helpers::{
     apply_persistent_volume_claim_csi_observation, apply_persistent_volume_csi_observation,
     validate_recovered_published_volumes, vm_volume_config,
@@ -26,12 +25,13 @@ use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::{PersistentVolumeClaimVolumeInfo, VolumeInfo};
 use crate::runtime::{RuntimeCreateRequest, RuntimeSpecState};
 use std::collections::HashMap;
+use std::future::Future;
 use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
     Node, PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship, ShipClass,
-    ShipCondition, ShipMigrationStatus, ShipSpec,
+    ShipCondition, ShipSpec,
 };
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_resources::sized::SizedString;
@@ -216,9 +216,12 @@ impl ShipReconciler {
         let networks = self.cni.create_network_configs(ship_id, network_classes);
         let (published_volumes, vm_volumes) =
             self.setup_volumes(ship_id, &namespace, &volumes).await?;
-        let incoming_port = (ship_spec.target_node_name.as_deref()
-            == Some(self.node_name.as_str()))
-        .then_some(MIGRATION_PORT);
+        let incoming_port = if ship_spec.target_node_name.as_deref() == Some(self.node_name.as_str())
+        {
+            Some(self.find_available_port().await?)
+        } else {
+            None
+        };
         let ship_for_migration_ready = ship.clone();
 
         self.with_cleanup(ship_id, published_volumes.as_slice(), &volumes, || {
@@ -277,9 +280,29 @@ impl ShipReconciler {
                 "spec".to_string(),
             ));
         };
+
+        // Prefer non-loopback IPv4 addresses.
+        for ip in &spec.ips {
+            if let Ok(addr) = ip.parse::<std::net::IpAddr>() {
+                if !addr.is_loopback() && addr.is_ipv4() {
+                    return Ok(ip.clone());
+                }
+            }
+        }
+
         spec.ips.into_iter().next().ok_or_else(|| {
             ReconcileError::FieldMissing("v1.Node".to_string(), "spec.ips[0]".to_string())
         })
+    }
+
+    async fn find_available_port(&self) -> Result<u16, ReconcileError> {
+        // Let the OS pick a port.
+        let listener = std::net::TcpListener::bind("0.0.0.0:0")
+            .map_err(|e| ReconcileError::Runtime(crate::runtime::error::RuntimeError::Io(e)))?;
+        let port = listener.local_addr().map(|a| a.port()).map_err(|e| {
+            ReconcileError::Runtime(crate::runtime::error::RuntimeError::Io(e))
+        })?;
+        Ok(port)
     }
 
     async fn mark_migration_target_ready(
@@ -295,24 +318,30 @@ impl ShipReconciler {
         };
         let namespace = ship.namespace().unwrap_or("default");
         let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
-        let mut status_ship = ship.clone();
         let target_address = self.local_node_address().await?;
-        let status = status_ship.status.get_or_insert_default();
-        status.migration = Some(ShipMigrationStatus {
-            phase: "Ready".to_string(),
-            source_node_name: ship.spec.as_ref().and_then(|spec| spec.node_name.clone()),
-            target_node_name: Some(self.node_name.clone()),
-            target_address: Some(target_address.clone()),
-            target_port: Some(port.into()),
-            message: "Target VM is ready to accept incoming migration".to_string(),
-            timestamp: Some(Time::now()),
+
+        let patch = serde_json::json!({
+            "status": {
+                "migration": {
+                    "phase": "Ready",
+                    "sourceNodeName": ship.spec.as_ref().and_then(|spec| spec.node_name.clone()),
+                    "targetNodeName": self.node_name,
+                    "targetAddress": target_address,
+                    "targetPort": port,
+                    "message": "Target VM is ready to accept incoming migration",
+                    "timestamp": Time::now(),
+                },
+                "conditions": [
+                    {
+                        "status": "VmMigrationTargetReady",
+                        "message": format!("VM is listening for incoming migration on {target_address}:{port}"),
+                        "timestamp": Time::now(),
+                    }
+                ]
+            }
         });
-        status_ship.append_status(ShipCondition {
-            status: "VmMigrationTargetReady".to_string(),
-            message: format!("VM is listening for incoming migration on {target_address}:{port}"),
-            timestamp: Some(Time::now()),
-        });
-        api.replace_status(name, status_ship).await?;
+
+        api.patch_status(name, patch).await?;
         Ok(())
     }
 

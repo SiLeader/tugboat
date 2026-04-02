@@ -22,8 +22,6 @@ use crate::reconciler::volume::normalized_ship_volumes;
 use serde::{Deserialize, Serialize};
 use tugboat_resources::manifests::core::v1::ShipSpec;
 
-pub(crate) const MIGRATION_PORT: u16 = 4444;
-
 fn sha256_fingerprint<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
     use sha2::Digest;
     let json = serde_json::to_string(value)?;

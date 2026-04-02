@@ -52,9 +52,14 @@ pub async fn hotplug_cpu(config: QemuVmConfig, args: HotplugCpuArgs) -> crate::R
         "Not enough hotpluggable CPU slots available"
     );
 
-    for (index, slot) in slots.into_iter().enumerate() {
+    for slot in slots {
         let arguments = build_cpu_arguments(&slot.props);
-        let device_id = format!("cpu-hotplug-{index}");
+        // Use socket-id and core-id to create a unique device ID
+        let device_id = format!(
+            "cpu-{}-{}",
+            slot.props.socket_id.unwrap_or(0),
+            slot.props.core_id.unwrap_or(0)
+        );
         qmp.execute(qapi::qmp::device_add {
             bus: None,
             id: Some(device_id),

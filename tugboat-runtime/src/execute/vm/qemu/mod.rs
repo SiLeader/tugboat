@@ -192,7 +192,7 @@ impl QemuArgs<Vec<VmVolumeConfig>> for Command {
 impl QemuArgs<Option<VmIncomingMigrationConfig>> for Command {
     fn qemu_args(&mut self, value: &Option<VmIncomingMigrationConfig>) -> &mut Self {
         if let Some(config) = value {
-            let incoming = format!("tcp:[::]:{}", config.port);
+            let incoming = format!("tcp:0.0.0.0:{}", config.port);
             self.args(["-incoming", incoming.as_str()])
         } else {
             self
