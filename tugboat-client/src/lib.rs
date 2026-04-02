@@ -159,6 +159,15 @@ impl TugboatClient {
         self.list_impl_with_params(path, params).await
     }
 
+    pub(crate) async fn patch_cluster_scoped<T: StaticResource + DeserializeOwned, P: Serialize>(
+        &self,
+        name: &str,
+        patch: P,
+    ) -> Result<T, Error> {
+        let path = format!("{}/{}/{name}", self.api_prefix::<T>(), T::plural());
+        self.patch_impl(path, patch).await
+    }
+
     pub(crate) async fn patch_status_cluster_scoped<
         T: StaticResource + DeserializeOwned,
         P: Serialize,
@@ -247,6 +256,20 @@ impl TugboatClient {
             T::plural()
         );
         self.list_impl_with_params(path, params).await
+    }
+
+    pub(crate) async fn patch_namespaced<T: StaticResource + DeserializeOwned, P: Serialize>(
+        &self,
+        namespace: &str,
+        name: &str,
+        patch: P,
+    ) -> Result<T, Error> {
+        let path = format!(
+            "{}/namespaces/{namespace}/{}/{name}",
+            self.api_prefix::<T>(),
+            T::plural()
+        );
+        self.patch_impl(path, patch).await
     }
 
     pub(crate) async fn patch_status_namespaced<

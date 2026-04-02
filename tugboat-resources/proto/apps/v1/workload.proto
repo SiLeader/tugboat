@@ -12,10 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod create;
-pub mod migrate;
-pub mod migration_status;
-pub mod run;
-pub mod start;
-pub mod status;
-pub mod stop;
+syntax = "proto3";
+
+import "meta/v1/object_meta.proto";
+import "core/v1/ship.proto";
+
+package tugboat.apps.v1;
+
+message ShipTemplateSpec {
+  tugboat.meta.v1.ObjectMeta metadata = 1;
+  tugboat.core.v1.ShipSpec spec = 2;
+}
+
+message RollingUpdateStrategy {
+  optional int32 max_unavailable = 1;
+  optional int32 max_surge = 2;
+}
+
+message DeploymentStrategy {
+  string type = 1;
+  optional RollingUpdateStrategy rolling_update = 2;
+}

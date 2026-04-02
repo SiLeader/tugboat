@@ -20,39 +20,39 @@ use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
-use tugboat_resources::manifests::core::v1::Ship;
+use tugboat_resources::manifests::apps::v1::ReplicaSet;
 use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource created", body = Ship),
+            (status = 200, description = "Resource created", body = ReplicaSet),
             (status = 409, description = "Resource already exists", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
         params(
             ("namespace" = String, Path, description = "Namespace of the resource"),
         ),
-        request_body = Ship
+        request_body = ReplicaSet
     )]
-#[post("/api/v1/namespaces/{namespace}/ships")]
-pub(super) async fn handle_ship_create(
+#[post("/apis/apps/v1/namespaces/{namespace}/replicasets")]
+pub(super) async fn handle_replicaset_create(
     path: Path<NamespacedPathParams>,
-    json: Json<Ship>,
+    json: Json<ReplicaSet>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
+) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {
     resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
         .await
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct ShipDeletePathParams {
+pub(super) struct ReplicaSetPathParams {
     namespace: String,
     name: String,
 }
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource deleted", body = Ship),
+            (status = 200, description = "Resource deleted", body = ReplicaSet),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -61,18 +61,19 @@ pub(super) struct ShipDeletePathParams {
             ("name" = String, Path, description = "Name of the resource"),
         )
     )]
-#[delete("/api/v1/namespaces/{namespace}/ships/{name}")]
-pub(super) async fn handle_ship_delete(
-    path: Path<ShipDeletePathParams>,
+#[delete("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}")]
+pub(super) async fn handle_replicaset_delete(
+    path: Path<ReplicaSetPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Ship>, Box<StatusResponse>> {
-    let params = path.into_inner();
-    resource_handlers::delete_resource::<Ship>(&operator, Some(params.namespace), params.name).await
+) -> Result<ReadResponse<ReplicaSet>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::delete_resource::<ReplicaSet>(&operator, Some(path.namespace), path.name)
+        .await
 }
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "List of resources", body = [Ship]),
+            (status = 200, description = "List of resources", body = [ReplicaSet]),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
         params(
@@ -83,13 +84,13 @@ pub(super) async fn handle_ship_delete(
             ("labelSelector" = Option<String>, Query, description = "Filter by label"),
         )
     )]
-#[get("/api/v1/namespaces/{namespace}/ships")]
-pub(super) async fn handle_ship_list(
+#[get("/apis/apps/v1/namespaces/{namespace}/replicasets")]
+pub(super) async fn handle_replicaset_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
 ) -> Result<HttpResponse, Box<StatusResponse>> {
-    resource_handlers::list_resources::<Ship>(
+    resource_handlers::list_resources::<ReplicaSet>(
         &operator,
         query.into_inner(),
         Some(path.into_inner().namespace),
@@ -99,7 +100,7 @@ pub(super) async fn handle_ship_list(
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "List of resources", body = [Ship]),
+            (status = 200, description = "List of resources", body = [ReplicaSet]),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
         params(
@@ -109,23 +110,17 @@ pub(super) async fn handle_ship_list(
             ("labelSelector" = Option<String>, Query, description = "Filter by label"),
         )
     )]
-#[get("/api/v1/ships")]
-pub(super) async fn handle_ship_list_all(
+#[get("/apis/apps/v1/replicasets")]
+pub(super) async fn handle_replicaset_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
 ) -> Result<HttpResponse, Box<StatusResponse>> {
-    resource_handlers::list_resources::<Ship>(&operator, query.into_inner(), None).await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ShipReadPathParams {
-    namespace: String,
-    name: String,
+    resource_handlers::list_resources::<ReplicaSet>(&operator, query.into_inner(), None).await
 }
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource details", body = Ship),
+            (status = 200, description = "Resource details", body = ReplicaSet),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -134,24 +129,18 @@ pub(super) struct ShipReadPathParams {
             ("name" = String, Path, description = "Name of the resource"),
         )
     )]
-#[get("/api/v1/namespaces/{namespace}/ships/{name}")]
-pub(super) async fn handle_ship_read(
-    path: Path<ShipReadPathParams>,
+#[get("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}")]
+pub(super) async fn handle_replicaset_read(
+    path: Path<ReplicaSetPathParams>,
     operator: Data<ApiOperator>,
-) -> Result<ReadResponse<Ship>, Box<StatusResponse>> {
+) -> Result<ReadResponse<ReplicaSet>, Box<StatusResponse>> {
     let path = path.into_inner();
-    resource_handlers::read_resource::<Ship>(&operator, Some(path.namespace), path.name).await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ShipReplacePathParams {
-    namespace: String,
-    name: String,
+    resource_handlers::read_resource::<ReplicaSet>(&operator, Some(path.namespace), path.name).await
 }
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource updated", body = Ship),
+            (status = 200, description = "Resource updated", body = ReplicaSet),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -159,23 +148,23 @@ pub(super) struct ShipReplacePathParams {
             ("namespace" = String, Path, description = "Namespace of the resource"),
             ("name" = String, Path, description = "Name of the resource"),
         ),
-        request_body = Ship
+        request_body = ReplicaSet
     )]
-#[put("/api/v1/namespaces/{namespace}/ships/{name}")]
-pub(super) async fn handle_ship_replace(
-    path: Path<ShipReplacePathParams>,
-    replacement: Json<Ship>,
+#[put("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}")]
+pub(super) async fn handle_replicaset_replace(
+    path: Path<ReplicaSetPathParams>,
+    replacement: Json<ReplicaSet>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
+) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {
     let path = path.into_inner();
-    resource_handlers::replace_resource::<Ship>(
+    resource_handlers::replace_resource::<ReplicaSet>(
         &operator,
         Some(path.namespace),
         path.name,
         replacement.into_inner(),
         ReplaceOptions {
-            preserve_status: true,
-            use_client_resource_version: false,
+            preserve_status: false,
+            use_client_resource_version: true,
         },
     )
     .await
@@ -183,7 +172,7 @@ pub(super) async fn handle_ship_replace(
 
 #[utoipa::path(
         responses(
-            (status = 200, description = "Resource updated", body = Ship),
+            (status = 200, description = "Resource updated", body = ReplicaSet),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -193,84 +182,22 @@ pub(super) async fn handle_ship_replace(
         ),
         request_body = Object
     )]
-#[patch("/api/v1/namespaces/{namespace}/ships/{name}")]
-pub(super) async fn handle_ship_patch(
-    path: Path<ShipReplacePathParams>,
+#[patch("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}")]
+pub(super) async fn handle_replicaset_patch(
+    path: Path<ReplicaSetPathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
+) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {
     let path = path.into_inner();
-    resource_handlers::patch_resource::<Ship>(
+    resource_handlers::patch_resource::<ReplicaSet>(
         &operator,
         Some(path.namespace),
         path.name,
         patch.into_inner(),
         ReplaceOptions {
-            preserve_status: true,
-            use_client_resource_version: false,
+            preserve_status: false,
+            use_client_resource_version: true,
         },
-    )
-    .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ShipPatchPathParams {
-    namespace: String,
-    name: String,
-}
-
-#[utoipa::path(
-        responses(
-            (status = 200, description = "Resource updated", body = Ship),
-            (status = 404, description = "Resource not found", body = StatusResponse),
-            (status = 500, description = "Internal server error", body = StatusResponse),
-        ),
-        params(
-            ("namespace" = String, Path, description = "Namespace of the resource"),
-            ("name" = String, Path, description = "Name of the resource"),
-        ),
-        request_body = Object
-    )]
-#[patch("/api/v1/namespaces/{namespace}/ships/{name}/status")]
-pub(super) async fn handle_ship_status_patch(
-    path: Path<ShipPatchPathParams>,
-    patch: Json<serde_json::Map<String, serde_json::Value>>,
-    operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
-    let path = path.into_inner();
-    resource_handlers::status_patch_resource::<Ship>(
-        &operator,
-        Some(path.namespace),
-        path.name,
-        patch.into_inner(),
-    )
-    .await
-}
-
-#[utoipa::path(
-        responses(
-            (status = 200, description = "Resource updated", body = Ship),
-            (status = 404, description = "Resource not found", body = StatusResponse),
-            (status = 500, description = "Internal server error", body = StatusResponse),
-        ),
-        params(
-            ("namespace" = String, Path, description = "Namespace of the resource"),
-            ("name" = String, Path, description = "Name of the resource"),
-        ),
-        request_body = Ship
-    )]
-#[put("/api/v1/namespaces/{namespace}/ships/{name}/status")]
-pub(super) async fn handle_ship_status_replace(
-    path: Path<ShipReplacePathParams>,
-    replacement: Json<Ship>,
-    operator: Data<ApiOperator>,
-) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
-    let path = path.into_inner();
-    resource_handlers::status_replace_resource::<Ship>(
-        &operator,
-        Some(path.namespace),
-        path.name,
-        replacement.into_inner(),
     )
     .await
 }

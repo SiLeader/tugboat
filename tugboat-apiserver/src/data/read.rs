@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::data::{Table, wants_table_response};
 use actix_web::body::BoxBody;
 use actix_web::{HttpRequest, HttpResponse, Responder};
 use serde::Serialize;
@@ -29,7 +30,14 @@ impl<T: Serialize> ReadResponse<T> {
 impl<T: Serialize> Responder for ReadResponse<T> {
     type Body = BoxBody;
 
-    fn respond_to(self, _req: &HttpRequest) -> HttpResponse<Self::Body> {
-        HttpResponse::Ok().json(&self.data)
+    fn respond_to(self, req: &HttpRequest) -> HttpResponse<Self::Body> {
+        if wants_table_response(req) {
+            match Table::from_serializable(&self.data) {
+                Ok(table) => HttpResponse::Ok().json(table),
+                Err(_) => HttpResponse::InternalServerError().finish(),
+            }
+        } else {
+            HttpResponse::Ok().json(&self.data)
+        }
     }
 }

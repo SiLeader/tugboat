@@ -14,6 +14,7 @@
 
 use crate::data::StatusResponse;
 use crate::endpoints::selector::Selector;
+use crate::endpoints::v1_apps::openapi_apps_v1;
 use crate::endpoints::v1_coordination::openapi_coordination_v1;
 use crate::endpoints::v1_core::openapi_core_v1;
 use serde::Deserialize;
@@ -25,6 +26,7 @@ mod resource_handlers;
 mod resource_registry;
 mod selector;
 mod utils;
+mod v1_apps;
 mod v1_coordination;
 mod v1_core;
 mod watch_utils;
@@ -34,6 +36,7 @@ pub mod openapi;
 pub fn register_openapi_endpoints(config: &mut actix_web::web::ServiceConfig) {
     config
         .service(openapi::discovery)
+        .service(openapi_apps_v1)
         .service(openapi_core_v1)
         .service(openapi_coordination_v1);
 }

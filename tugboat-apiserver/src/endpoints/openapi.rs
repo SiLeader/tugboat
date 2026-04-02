@@ -31,6 +31,12 @@ struct DiscoveryResponse {
 pub async fn discovery() -> impl Responder {
     let mut paths = HashMap::new();
     paths.insert(
+        "apis/apps/v1".to_string(),
+        DiscoveryPath {
+            server_relative_url: "/openapi/v3/apis/apps/v1".to_string(),
+        },
+    );
+    paths.insert(
         "api/v1".to_string(),
         DiscoveryPath {
             server_relative_url: "/openapi/v3/api/v1".to_string(),
@@ -49,6 +55,7 @@ pub async fn discovery() -> impl Responder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::endpoints::v1_apps::openapi_apps_v1;
     use crate::endpoints::v1_coordination::openapi_coordination_v1;
     use crate::endpoints::v1_core::openapi_core_v1;
     use actix_web::{App, test};
@@ -59,6 +66,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .service(discovery)
+                .service(openapi_apps_v1)
                 .service(openapi_core_v1)
                 .service(openapi_coordination_v1),
         )
@@ -67,6 +75,11 @@ mod tests {
         // Test Discovery
         let req = test::TestRequest::get().uri("/openapi/v3").to_request();
         let resp: DiscoveryResponse = test::call_and_read_body_json(&app, req).await;
+        assert!(resp.paths.contains_key("apis/apps/v1"));
+        assert_eq!(
+            resp.paths["apis/apps/v1"].server_relative_url,
+            "/openapi/v3/apis/apps/v1"
+        );
         assert!(resp.paths.contains_key("api/v1"));
         assert_eq!(
             resp.paths["api/v1"].server_relative_url,
@@ -77,6 +90,12 @@ mod tests {
             resp.paths["apis/coordination/v1"].server_relative_url,
             "/openapi/v3/apis/coordination/v1"
         );
+
+        let req = test::TestRequest::get()
+            .uri("/openapi/v3/apis/apps/v1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
 
         // Test Core V1 Schema
         let req = test::TestRequest::get()

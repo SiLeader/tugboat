@@ -41,6 +41,7 @@ mod storage_class;
         configmap::handle_configmap_delete,
         configmap::handle_configmap_list,
         configmap::handle_configmap_list_all,
+        configmap::handle_configmap_patch,
         configmap::handle_configmap_read,
         configmap::handle_configmap_replace,
         namespace::handle_namespace_create,
@@ -50,6 +51,7 @@ mod storage_class;
         node::handle_node_create,
         node::handle_node_delete,
         node::handle_node_list,
+        node::handle_node_patch,
         node::handle_node_read,
         node::handle_node_replace,
         node::handle_node_status_patch,
@@ -57,6 +59,7 @@ mod storage_class;
         persistent_volume::handle_persistent_volume_create,
         persistent_volume::handle_persistent_volume_delete,
         persistent_volume::handle_persistent_volume_list,
+        persistent_volume::handle_persistent_volume_patch,
         persistent_volume::handle_persistent_volume_read,
         persistent_volume::handle_persistent_volume_replace,
         persistent_volume::handle_persistent_volume_status_patch,
@@ -65,6 +68,7 @@ mod storage_class;
         persistent_volume_claim::handle_persistent_volume_claim_delete,
         persistent_volume_claim::handle_persistent_volume_claim_list,
         persistent_volume_claim::handle_persistent_volume_claim_list_all,
+        persistent_volume_claim::handle_persistent_volume_claim_patch,
         persistent_volume_claim::handle_persistent_volume_claim_read,
         persistent_volume_claim::handle_persistent_volume_claim_replace,
         persistent_volume_claim::handle_persistent_volume_claim_status_patch,
@@ -80,6 +84,7 @@ mod storage_class;
         secret::handle_secret_delete,
         secret::handle_secret_list,
         secret::handle_secret_list_all,
+        secret::handle_secret_patch,
         secret::handle_secret_read,
         secret::handle_secret_replace,
         storage_class::handle_storage_class_create,
@@ -90,6 +95,7 @@ mod storage_class;
         ship::handle_ship_delete,
         ship::handle_ship_list,
         ship::handle_ship_list_all,
+        ship::handle_ship_patch,
         ship::handle_ship_read,
         ship::handle_ship_replace,
         ship::handle_ship_status_patch,
@@ -139,6 +145,7 @@ pub(super) fn register_configmap(service: &mut ServiceConfig) {
         .service(configmap::handle_configmap_delete)
         .service(configmap::handle_configmap_list)
         .service(configmap::handle_configmap_list_all)
+        .service(configmap::handle_configmap_patch)
         .service(configmap::handle_configmap_read)
         .service(configmap::handle_configmap_replace);
 }
@@ -156,6 +163,7 @@ pub(super) fn register_node(service: &mut ServiceConfig) {
         .service(node::handle_node_create)
         .service(node::handle_node_delete)
         .service(node::handle_node_list)
+        .service(node::handle_node_patch)
         .service(node::handle_node_read)
         .service(node::handle_node_replace)
         .service(node::handle_node_status_patch)
@@ -167,6 +175,7 @@ pub(super) fn register_persistent_volume(service: &mut ServiceConfig) {
         .service(persistent_volume::handle_persistent_volume_create)
         .service(persistent_volume::handle_persistent_volume_delete)
         .service(persistent_volume::handle_persistent_volume_list)
+        .service(persistent_volume::handle_persistent_volume_patch)
         .service(persistent_volume::handle_persistent_volume_read)
         .service(persistent_volume::handle_persistent_volume_replace)
         .service(persistent_volume::handle_persistent_volume_status_patch)
@@ -179,6 +188,7 @@ pub(super) fn register_persistent_volume_claim(service: &mut ServiceConfig) {
         .service(persistent_volume_claim::handle_persistent_volume_claim_delete)
         .service(persistent_volume_claim::handle_persistent_volume_claim_list)
         .service(persistent_volume_claim::handle_persistent_volume_claim_list_all)
+        .service(persistent_volume_claim::handle_persistent_volume_claim_patch)
         .service(persistent_volume_claim::handle_persistent_volume_claim_read)
         .service(persistent_volume_claim::handle_persistent_volume_claim_replace)
         .service(persistent_volume_claim::handle_persistent_volume_claim_status_patch)
@@ -202,6 +212,7 @@ pub(super) fn register_secret(service: &mut ServiceConfig) {
         .service(secret::handle_secret_delete)
         .service(secret::handle_secret_list)
         .service(secret::handle_secret_list_all)
+        .service(secret::handle_secret_patch)
         .service(secret::handle_secret_read)
         .service(secret::handle_secret_replace);
 }
@@ -220,6 +231,7 @@ pub(super) fn register_ship(service: &mut ServiceConfig) {
         .service(ship::handle_ship_delete)
         .service(ship::handle_ship_list)
         .service(ship::handle_ship_list_all)
+        .service(ship::handle_ship_patch)
         .service(ship::handle_ship_read)
         .service(ship::handle_ship_replace)
         .service(ship::handle_ship_status_patch)

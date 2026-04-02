@@ -17,6 +17,7 @@ use crate::csi::{
 };
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
+use crate::reconciler::ops::PHASE_READY;
 use crate::reconciler::ops::add_helpers::{
     apply_persistent_volume_claim_csi_observation, apply_persistent_volume_csi_observation,
     validate_recovered_published_volumes, vm_volume_config,
@@ -25,11 +26,13 @@ use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::{PersistentVolumeClaimVolumeInfo, VolumeInfo};
 use crate::runtime::RuntimeCreateRequest;
 use std::collections::HashMap;
+use std::future::Future;
 use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship, ShipCondition,
+    Node, PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, Ship,
+    ShipCondition, ShipSpec,
 };
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
@@ -56,6 +59,20 @@ fn best_effort_stale_volume_cleanup<T>(
             );
             None
         }
+    }
+}
+
+fn runtime_fingerprints_for_ship(
+    ship_spec: &ShipSpec,
+    local_node_name: &str,
+) -> Result<super::ShipFingerprints, ReconcileError> {
+    if ship_spec.target_node_name.as_deref() == Some(local_node_name) {
+        let mut migrated_spec = ship_spec.clone();
+        migrated_spec.node_name = Some(local_node_name.to_string());
+        migrated_spec.target_node_name = None;
+        super::ShipFingerprints::new(&migrated_spec)
+    } else {
+        super::ShipFingerprints::new(ship_spec)
     }
 }
 
@@ -97,7 +114,7 @@ impl ShipReconciler {
             .namespace
             .clone()
             .unwrap_or("default".to_string());
-        let fingerprints = super::ShipFingerprints::new(ship_spec)?;
+        let runtime_fingerprints = runtime_fingerprints_for_ship(ship_spec, &self.node_name)?;
 
         if self.runtime_operator.is_present(ship_id).await? {
             let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
@@ -114,7 +131,7 @@ impl ShipReconciler {
                     namespace,
                     name.clone(),
                     ship_id.clone(),
-                    fingerprints,
+                    runtime_fingerprints,
                     published_volumes,
                 )
                 .await;
@@ -158,10 +175,18 @@ impl ShipReconciler {
         let networks = self.cni.create_network_configs(ship_id, network_classes);
         let (published_volumes, vm_volumes) =
             self.setup_volumes(ship_id, &namespace, &volumes).await?;
+        let incoming_port =
+            if ship_spec.target_node_name.as_deref() == Some(self.node_name.as_str()) {
+                Some(self.find_available_port().await?)
+            } else {
+                None
+            };
+        let ship_for_migration_ready = ship.clone();
 
         self.with_cleanup(ship_id, published_volumes.as_slice(), &volumes, || {
             let volumes = vm_volumes;
             let published_volumes = published_volumes.clone();
+            let ship_for_migration_ready = ship_for_migration_ready.clone();
             async move {
                 debug!("Setup virtual machine");
                 if let Err(err) = self
@@ -172,9 +197,10 @@ impl ShipReconciler {
                         namespace,
                         ship_spec,
                         ship_class: class,
+                        incoming_port,
                         networks: networks.iter().map(|n| n.vm.clone()).collect(),
                         volumes,
-                        fingerprints: fingerprints.clone(),
+                        fingerprints: runtime_fingerprints.clone(),
                         published_volumes,
                     })
                     .await
@@ -189,10 +215,98 @@ impl ShipReconciler {
                 if let Err(err) = self.runtime_operator.start(ship_id).await {
                     return Err(err.into());
                 }
+                if let Some(port) = incoming_port {
+                    self.mark_migration_target_ready(&ship_for_migration_ready, port)
+                        .await?;
+                }
                 Ok(())
             }
         })
         .await
+    }
+
+    async fn local_node_address(&self) -> Result<String, ReconcileError> {
+        let api: Api<Node> = Api::all(self.client.clone());
+        let Some(node) = api.get(&self.node_name).await? else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Node".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let Some(spec) = node.spec else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Node".to_string(),
+                "spec".to_string(),
+            ));
+        };
+
+        // Prefer non-loopback IPv4 addresses.
+        for ip in &spec.ips {
+            if let Ok(addr) = ip.parse::<std::net::IpAddr>()
+                && !addr.is_loopback()
+                && addr.is_ipv4()
+            {
+                return Ok(ip.clone());
+            }
+        }
+
+        spec.ips.into_iter().next().ok_or_else(|| {
+            ReconcileError::FieldMissing("v1.Node".to_string(), "spec.ips[0]".to_string())
+        })
+    }
+
+    async fn find_available_port(&self) -> Result<u16, ReconcileError> {
+        // Let the OS assign a free port by binding to port 0.
+        // There is an inherent TOCTOU window between dropping this listener and
+        // QEMU binding the port, but the gap is sub-millisecond on a dedicated
+        // node and is acceptable for the low-frequency migration path.
+        let listener = std::net::TcpListener::bind("0.0.0.0:0")
+            .map_err(|e| ReconcileError::Runtime(crate::runtime::error::RuntimeError::Io(e)))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| ReconcileError::Runtime(crate::runtime::error::RuntimeError::Io(e)))?
+            .port();
+        Ok(port)
+    }
+
+    async fn mark_migration_target_ready(
+        &self,
+        ship: &Ship,
+        port: u16,
+    ) -> Result<(), ReconcileError> {
+        let Some(name) = ship.name() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let namespace = ship.namespace().unwrap_or("default");
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
+        let target_address = self.local_node_address().await?;
+
+        let patch = serde_json::json!({
+            "status": {
+                "migration": {
+                    "phase": PHASE_READY,
+                    "sourceNodeName": ship.spec.as_ref().and_then(|spec| spec.node_name.clone()),
+                    "targetNodeName": self.node_name,
+                    "targetAddress": target_address,
+                    "targetPort": port,
+                    "message": "Target VM is ready to accept incoming migration",
+                    "timestamp": Time::now(),
+                },
+                "conditions": [
+                    {
+                        "status": "VmMigrationTargetReady",
+                        "message": format!("VM is listening for incoming migration on {target_address}:{port}"),
+                        "timestamp": Time::now(),
+                    }
+                ]
+            }
+        });
+
+        api.patch_status(name, patch).await?;
+        Ok(())
     }
 
     async fn setup_volumes(

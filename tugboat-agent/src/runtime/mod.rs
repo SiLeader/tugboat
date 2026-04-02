@@ -16,6 +16,7 @@ mod create;
 mod delete;
 pub(crate) mod error;
 mod inner;
+mod migration;
 mod start;
 mod status;
 

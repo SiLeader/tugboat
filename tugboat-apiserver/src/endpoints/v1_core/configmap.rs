@@ -18,7 +18,7 @@ use crate::endpoints::resource_handlers::ReplaceOptions;
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, delete, get, post, put};
+use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::ConfigMap;
 use utoipa::ToSchema;
@@ -174,6 +174,38 @@ pub(super) async fn handle_configmap_replace(
         Some(path.namespace),
         path.name,
         replacement.into_inner(),
+        ReplaceOptions {
+            preserve_status: false,
+            use_client_resource_version: true,
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = ConfigMap),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/api/v1/namespaces/{namespace}/configmaps/{name}")]
+pub(super) async fn handle_configmap_patch(
+    path: Path<ConfigMapReplacePathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<ConfigMap>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::patch_resource::<ConfigMap>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        patch.into_inner(),
         ReplaceOptions {
             preserve_status: false,
             use_client_resource_version: true,

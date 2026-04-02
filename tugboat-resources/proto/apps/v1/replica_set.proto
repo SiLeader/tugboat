@@ -12,10 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod create;
-pub mod migrate;
-pub mod migration_status;
-pub mod run;
-pub mod start;
-pub mod status;
-pub mod stop;
+syntax = "proto3";
+
+import "meta/v1/object_meta.proto";
+import "meta/v1/type_meta.proto";
+import "apps/v1/workload.proto";
+
+package tugboat.apps.v1;
+
+message ReplicaSet {
+  tugboat.meta.v1.TypeMeta type_meta = 1;
+  tugboat.meta.v1.ObjectMeta object_meta = 2;
+  ReplicaSetSpec spec = 3;
+  optional ReplicaSetStatus status = 4;
+}
+
+message ReplicaSetSpec {
+  optional int32 replicas = 1;
+  map<string, string> selector = 2;
+  ShipTemplateSpec ship_template = 3;
+}
+
+message ReplicaSetStatus {
+  int32 replicas = 1;
+  int32 ready_replicas = 2;
+}

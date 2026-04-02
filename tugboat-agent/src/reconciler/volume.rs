@@ -72,6 +72,24 @@ impl VolumeInfo {
     }
 }
 
+pub(crate) fn ship_references_materialized_resource(
+    ship_spec: &ShipSpec,
+    kind: MaterializedVolumeSourceKind,
+    resource_name: &str,
+) -> Result<bool, ReconcileError> {
+    Ok(normalized_ship_volumes(ship_spec)?
+        .into_iter()
+        .any(|volume| match volume.source {
+            NormalizedVolumeSource::ConfigMap { name, .. } => {
+                kind == MaterializedVolumeSourceKind::ConfigMap && name == resource_name
+            }
+            NormalizedVolumeSource::Secret { secret_name, .. } => {
+                kind == MaterializedVolumeSourceKind::Secret && secret_name == resource_name
+            }
+            NormalizedVolumeSource::PersistentVolumeClaim { .. } => false,
+        }))
+}
+
 impl ShipReconciler {
     pub(crate) async fn get_related_volumes(
         &self,

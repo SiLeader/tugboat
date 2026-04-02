@@ -18,7 +18,7 @@ use crate::endpoints::resource_handlers::ReplaceOptions;
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, delete, get, post, put};
+use actix_web::{HttpResponse, delete, get, patch, post, put};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use serde::Deserialize;
@@ -61,6 +61,36 @@ fn base64_encode(s: &str) -> String {
     let mut str = String::with_capacity(s.len());
     BASE64_STANDARD.encode_string(s, &mut str);
     str
+}
+
+fn normalize_secret_patch(
+    mut patch: serde_json::Map<String, serde_json::Value>,
+) -> Result<serde_json::Map<String, serde_json::Value>, Box<StatusResponse>> {
+    let Some(string_data) = patch.remove("stringData") else {
+        return Ok(patch);
+    };
+    let Some(string_data) = string_data.as_object() else {
+        return Err(Box::new(StatusResponse::bad_request(
+            "stringData must be an object",
+            None,
+        )));
+    };
+
+    let mut data = patch
+        .remove("data")
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    for (key, value) in string_data {
+        let Some(value) = value.as_str() else {
+            return Err(Box::new(StatusResponse::bad_request(
+                "stringData values must be strings",
+                None,
+            )));
+        };
+        let _ = data.insert(key.clone(), serde_json::Value::String(base64_encode(value)));
+    }
+    let _ = patch.insert("data".to_string(), serde_json::Value::Object(data));
+    Ok(patch)
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -206,6 +236,39 @@ pub(super) async fn handle_secret_replace(
         Some(path.namespace),
         path.name,
         replacement,
+        ReplaceOptions {
+            preserve_status: false,
+            use_client_resource_version: true,
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = Secret),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/api/v1/namespaces/{namespace}/secrets/{name}")]
+pub(super) async fn handle_secret_patch(
+    path: Path<SecretReplacePathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Secret>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    let patch = normalize_secret_patch(patch.into_inner())?;
+    resource_handlers::patch_resource::<Secret>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        patch,
         ReplaceOptions {
             preserve_status: false,
             use_client_resource_version: true,

@@ -27,6 +27,7 @@ fn main() {
     config.field_attribute("type_meta", "#[serde(flatten)]");
 
     let resources = [
+        ".tugboat.apps.v1",
         ".tugboat.core.v1",
         ".tugboat.coordination.v1",
         ".tugboat.meta.v1.ObjectMeta",
@@ -53,6 +54,10 @@ fn main() {
     config
         .compile_protos(
             &[
+                // apps/v1
+                "proto/apps/v1/workload.proto",
+                "proto/apps/v1/replica_set.proto",
+                "proto/apps/v1/deployment.proto",
                 // core/v1
                 "proto/core/v1/config_map.proto",
                 "proto/core/v1/namespace.proto",

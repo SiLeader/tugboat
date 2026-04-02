@@ -188,8 +188,9 @@ macro_rules! apply_resource {
 #[cfg(test)]
 mod tests {
     use crate::ObjectMetaResource;
-    use crate::manifests::core::v1::Ship;
+    use crate::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
     use crate::manifests::meta::v1::{ObjectMeta, Time};
+    use serde_json::json;
 
     #[test]
     fn can_manage_finalizers() {
@@ -213,5 +214,35 @@ mod tests {
         assert!(ship.mark_for_deletion(timestamp));
         assert!(ship.deletion_timestamp().is_some());
         assert!(!ship.mark_for_deletion(timestamp));
+    }
+
+    #[test]
+    fn ship_serializes_migration_fields_in_camel_case() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-b".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: "Ready".to_string(),
+                    target_address: Some("10.0.0.8".to_string()),
+                    target_port: Some(4444),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_value(ship).unwrap();
+
+        assert_eq!(json["spec"]["targetNodeName"], json!("node-b"));
+        assert_eq!(json["status"]["migration"]["phase"], json!("Ready"));
+        assert_eq!(
+            json["status"]["migration"]["targetAddress"],
+            json!("10.0.0.8")
+        );
+        assert_eq!(json["status"]["migration"]["targetPort"], json!(4444));
     }
 }

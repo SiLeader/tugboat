@@ -217,6 +217,48 @@ where
     Ok(ModifyResponse::Updated(replaced))
 }
 
+pub(crate) async fn patch_resource<T>(
+    operator: &ApiOperator,
+    namespace: Option<String>,
+    name: String,
+    patch: serde_json::Map<String, serde_json::Value>,
+    options: ReplaceOptions,
+) -> Result<ModifyResponse<T>, Box<StatusResponse>>
+where
+    T: StaticSerializable
+        + ObjectMetaResource
+        + StaticResource
+        + Serialize
+        + DeserializeOwned
+        + PartialEq,
+{
+    let current = operator
+        .store
+        .get::<T>(namespace.clone(), &name)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
+    let Some(current) = current else {
+        return Err(Box::new(StatusResponse::not_found(
+            format!("{} not found", T::kind()),
+            Some(resource_identity(namespace.as_deref(), &name)),
+        )));
+    };
+    let current = current.apply_revision();
+    let patched = merge_patch(&current, patch, options)?;
+
+    let patched = if current != patched {
+        operator
+            .store
+            .put(patched)
+            .await
+            .map_err(|e| Box::new(e.into()))?
+            .apply_revision()
+    } else {
+        patched
+    };
+    Ok(ModifyResponse::Updated(patched))
+}
+
 pub(crate) async fn status_patch_resource<T>(
     operator: &ApiOperator,
     namespace: Option<String>,
@@ -372,6 +414,86 @@ where
     serde_json::from_value::<T>(serde_json::Value::Object(merged)).map_err(|e| Box::new(e.into()))
 }
 
+fn merge_patch<T>(
+    current: &T,
+    patch: serde_json::Map<String, serde_json::Value>,
+    options: ReplaceOptions,
+) -> Result<T, Box<StatusResponse>>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let current_object = to_object(
+        serde_json::to_value(current).map_err(|e| Box::new(e.into()))?,
+        "current resource",
+    )?;
+    let patch_value = serde_json::Value::Object(patch.clone());
+
+    let mut merged = serde_json::Value::Object(current_object.clone());
+    merged.merge(&patch_value);
+    let mut merged = to_object(merged, "patched resource")?;
+
+    if let Some(value) = current_object.get("apiVersion").cloned() {
+        let _ = merged.insert("apiVersion".to_string(), value);
+    }
+    if let Some(value) = current_object.get("kind").cloned() {
+        let _ = merged.insert("kind".to_string(), value);
+    }
+
+    if options.preserve_status {
+        match current_object.get("status").cloned() {
+            Some(status) => {
+                let _ = merged.insert("status".to_string(), status);
+            }
+            None => {
+                let _ = merged.remove("status");
+            }
+        }
+    }
+
+    let current_metadata = current_object
+        .get("metadata")
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    let patch_metadata = patch
+        .get("metadata")
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    let mut merged_metadata = merged
+        .remove("metadata")
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+
+    for key in [
+        "name",
+        "namespace",
+        "uid",
+        "generation",
+        "creationTimestamp",
+        "deletionTimestamp",
+    ] {
+        if let Some(value) = current_metadata.get(key).cloned() {
+            let _ = merged_metadata.insert(key.to_string(), value);
+        }
+    }
+
+    if options.use_client_resource_version {
+        if let Some(client_rv) = patch_metadata.get("resourceVersion").cloned() {
+            let _ = merged_metadata.insert("resourceVersion".to_string(), client_rv);
+        } else {
+            let _ = merged_metadata.remove("resourceVersion");
+        }
+    } else if let Some(value) = current_metadata.get("resourceVersion").cloned() {
+        let _ = merged_metadata.insert("resourceVersion".to_string(), value);
+    }
+
+    let _ = merged.insert(
+        "metadata".to_string(),
+        serde_json::Value::Object(merged_metadata),
+    );
+
+    serde_json::from_value::<T>(serde_json::Value::Object(merged)).map_err(|e| Box::new(e.into()))
+}
+
 fn to_object(
     value: serde_json::Value,
     context: &str,
@@ -390,5 +512,131 @@ fn resource_identity(namespace: Option<&str>, name: &str) -> serde_json::Value {
         serde_json::json!({ "namespace": namespace, "name": name })
     } else {
         serde_json::json!({ "name": name })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReplaceOptions, merge_patch};
+    use tugboat_resources::ObjectMetaResource;
+    use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipSpec, ShipStatus};
+    use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
+
+    fn ship() -> Ship {
+        Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("demo".to_string()),
+                namespace: Some("default".to_string()),
+                uid: Some("uid-1".to_string()),
+                resource_version: Some("rv-1".to_string()),
+                generation: Some(3),
+                creation_timestamp: Some(Time {
+                    seconds: 1_700_000_000,
+                    nanos: 0,
+                }),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                image: "registry.example.com/vm:v1".to_string(),
+                ship_class: "small".to_string(),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                conditions: vec![ShipCondition {
+                    status: "Ready".to_string(),
+                    message: "ok".to_string(),
+                    timestamp: Some(Time::now()),
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_patch_preserves_status_and_identity_fields() {
+        let current = ship();
+        let patched = merge_patch(
+            &current,
+            serde_json::json!({
+                "metadata": {
+                    "name": "changed",
+                    "labels": {"app": "demo"},
+                    "resourceVersion": "rv-2"
+                },
+                "spec": {
+                    "image": "registry.example.com/vm:v2"
+                },
+                "status": {
+                    "conditions": []
+                }
+            })
+            .as_object()
+            .cloned()
+            .expect("patch should be object"),
+            ReplaceOptions {
+                preserve_status: true,
+                use_client_resource_version: false,
+            },
+        )
+        .expect("patch should merge");
+
+        assert_eq!(patched.name(), Some("demo"));
+        assert_eq!(patched.namespace(), Some("default"));
+        assert_eq!(
+            patched.spec.as_ref().map(|spec| spec.image.as_str()),
+            Some("registry.example.com/vm:v2")
+        );
+        assert_eq!(
+            patched
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.resource_version.as_deref()),
+            Some("rv-1")
+        );
+        assert_eq!(
+            patched
+                .status
+                .as_ref()
+                .map(|status| status.conditions.len()),
+            Some(1)
+        );
+        assert_eq!(
+            patched
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.labels.get("app"))
+                .map(String::as_str),
+            Some("demo")
+        );
+    }
+
+    #[test]
+    fn merge_patch_uses_client_resource_version_when_requested() {
+        let current = ship();
+        let patched = merge_patch(
+            &current,
+            serde_json::json!({
+                "metadata": {
+                    "resourceVersion": "rv-9"
+                }
+            })
+            .as_object()
+            .cloned()
+            .expect("patch should be object"),
+            ReplaceOptions {
+                preserve_status: false,
+                use_client_resource_version: true,
+            },
+        )
+        .expect("patch should merge");
+
+        assert_eq!(
+            patched
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.resource_version.as_deref()),
+            Some("rv-9")
+        );
     }
 }

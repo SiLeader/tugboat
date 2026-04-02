@@ -15,11 +15,15 @@
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::reconcile::AppendStatus;
-use tracing::{debug, info, warn};
+use crate::runtime::error::RuntimeError;
+use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipSpec};
+use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipMigrationStatus, ShipSpec};
 use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_vm_runtime_interface::migrate::VmMigrationPhase;
+
+use super::{PHASE_COMPLETED, PHASE_FAILED, PHASE_MIGRATING, PHASE_PENDING, PHASE_READY};
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_modified(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -35,18 +39,24 @@ impl ShipReconciler {
                 "metadata.uid".to_string(),
             ));
         };
-        let Some(name) = &ship_metadata.name else {
-            return Err(ReconcileError::FieldMissing(
-                "v1.Ship".to_string(),
-                "metadata.name".to_string(),
-            ));
-        };
         let namespace = ship_metadata
             .namespace
             .clone()
             .unwrap_or("default".to_string());
 
         if !self.runtime_operator.has_ship(ship_id).await {
+            if let Some(spec) = &ship.spec
+                && spec.target_node_name.as_deref() == Some(self.node_name.as_str())
+                && let Some(status) = &ship.status
+                && let Some(migration) = &status.migration
+                && migration.phase == PHASE_FAILED
+            {
+                info!(
+                    "Ship '{}' is a failed migration target and not running, ignoring",
+                    ship_id
+                );
+                return Ok(());
+            }
             info!(
                 "Ship modified but not running, treating as added: {}",
                 ship_id
@@ -85,6 +95,10 @@ impl ShipReconciler {
             return Ok(());
         }
 
+        if spec_changed && self.try_reconcile_migration(&ship, ship_id).await? {
+            return Ok(());
+        }
+
         if spec_changed || pvc_changed {
             if spec_changed {
                 info!(
@@ -106,38 +120,11 @@ impl ShipReconciler {
             "Ship '{}' materialized volumes changed; refreshing in-place",
             ship_id
         );
-        if let Err(err) = self
-            .refresh_materialized_volumes(ship_id, &namespace, ship_spec)
-            .await
-        {
-            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
-            let mut status_ship = ship.clone();
-            status_ship.append_status(ShipCondition {
-                status: "MaterializedVolumesRefreshFailed".to_string(),
-                message: format!("Failed to refresh materialized volumes: {}", err),
-                timestamp: Some(Time::now()),
-            });
-            let _ = api.replace_status(name, status_ship).await;
-            return Err(err);
-        }
-
-        self.runtime_operator
-            .update_materialized_volume_fingerprint(ship_id, fingerprints.materialized_volume)
-            .await;
-        {
-            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
-            let mut status_ship = ship.clone();
-            status_ship.append_status(ShipCondition {
-                status: "MaterializedVolumesRefreshed".to_string(),
-                message: "Materialized volumes (ConfigMap/Secret) refreshed in-place".to_string(),
-                timestamp: Some(Time::now()),
-            });
-            api.replace_status(name, status_ship).await?;
-        }
-        // Check volume expansions even when only materialized volumes changed.
-        self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
-            .await;
-        Ok(())
+        self.refresh_materialized_volumes_for_ship_with_fingerprint(
+            ship,
+            Some(fingerprints.materialized_volume),
+        )
+        .await
     }
 
     /// Recreate the VM by deleting it and then adding it again.
@@ -176,6 +163,346 @@ impl ShipReconciler {
                 return Err(err);
             }
         }
+        Ok(())
+    }
+
+    async fn try_reconcile_migration(
+        &self,
+        ship: &Ship,
+        ship_id: &str,
+    ) -> Result<bool, ReconcileError> {
+        let Some(ship_spec) = &ship.spec else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+        let Some(target_node_name) = ship_spec.target_node_name.clone() else {
+            return Ok(false);
+        };
+
+        if target_node_name == self.node_name {
+            if let Some(status) = &ship.status
+                && let Some(migration) = &status.migration
+                && migration.phase == PHASE_FAILED
+            {
+                if self.runtime_operator.has_ship(ship_id).await {
+                    info!(
+                        "Migration failed for ship '{}', cleaning up incoming VM on target node",
+                        ship_id
+                    );
+                    if let Err(err) = self.reconcile_deleted(ship.clone()).await {
+                        error!(
+                            "Failed to clean up incoming VM for failed migration '{}': {}",
+                            ship_id, err
+                        );
+                    }
+                }
+                return Ok(true);
+            }
+            return Ok(self.runtime_operator.has_ship(ship_id).await);
+        }
+
+        if ship_spec.node_name.as_deref() != Some(self.node_name.as_str()) {
+            return Ok(false);
+        }
+
+        let Some(name) = ship.name() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let namespace = ship.namespace().unwrap_or("default");
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
+        let migration_status = ship
+            .status
+            .as_ref()
+            .and_then(|status| status.migration.clone());
+
+        let Some(migration_status) = migration_status else {
+            self.update_migration_status(
+                &api,
+                name,
+                ShipMigrationStatus {
+                    phase: PHASE_PENDING.to_string(),
+                    source_node_name: ship_spec.node_name.clone(),
+                    target_node_name: Some(target_node_name),
+                    target_address: None,
+                    target_port: None,
+                    message: "Waiting for target node to prepare migration receiver".to_string(),
+                    timestamp: Some(Time::now()),
+                },
+                "VmMigrationPending",
+                "Waiting for target node to prepare migration receiver".to_string(),
+            )
+            .await?;
+            return Ok(true);
+        };
+
+        match migration_status.phase.as_str() {
+            PHASE_PENDING => Ok(true),
+            PHASE_READY => {
+                // Target is ready; issue the non-blocking QMP migrate command.
+                let Some(target_address) = migration_status.target_address.clone() else {
+                    return Ok(true);
+                };
+                let Some(target_port) = migration_status.target_port else {
+                    return Ok(true);
+                };
+
+                if let Err(err) = self
+                    .runtime_operator
+                    .migrate(ship_id, target_address.clone(), target_port as u16)
+                    .await
+                {
+                    self.update_migration_status(
+                        &api,
+                        name,
+                        ShipMigrationStatus {
+                            phase: PHASE_FAILED.to_string(),
+                            source_node_name: Some(self.node_name.clone()),
+                            target_node_name: Some(target_node_name.clone()),
+                            target_address: Some(target_address.clone()),
+                            target_port: Some(target_port),
+                            message: format!("Failed to start live migration: {err}"),
+                            timestamp: Some(Time::now()),
+                        },
+                        "VmMigrationFailed",
+                        format!("Failed to start live migration: {err}"),
+                    )
+                    .await?;
+                    return Err(err.into());
+                }
+
+                // Migration command dispatched; update the phase so the next
+                // reconcile event (triggered by this status change) will poll
+                // progress rather than re-issuing the migrate command.
+                self.update_migration_status(
+                    &api,
+                    name,
+                    ShipMigrationStatus {
+                        phase: PHASE_MIGRATING.to_string(),
+                        source_node_name: Some(self.node_name.clone()),
+                        target_node_name: Some(target_node_name),
+                        target_address: Some(target_address),
+                        target_port: Some(target_port),
+                        message: "Live migration in progress".to_string(),
+                        timestamp: Some(Time::now()),
+                    },
+                    "VmMigrating",
+                    "Live migration in progress".to_string(),
+                )
+                .await?;
+                Ok(true)
+            }
+            PHASE_MIGRATING => {
+                // Poll migration progress once per reconcile event instead of
+                // spinning inside the reconcile loop.
+                let Some(target_address) = migration_status.target_address.clone() else {
+                    return Ok(true);
+                };
+                let Some(target_port) = migration_status.target_port else {
+                    return Ok(true);
+                };
+                let target_node_name = migration_status
+                    .target_node_name
+                    .clone()
+                    .unwrap_or(target_node_name);
+
+                let phase = match self.runtime_operator.check_migration_status(ship_id).await {
+                    Ok(phase) => phase,
+                    Err(err) => {
+                        warn!(
+                            "Failed to check migration status for ship '{}': {}",
+                            ship_id, err
+                        );
+                        return Ok(true); // retry on next event
+                    }
+                };
+
+                match phase {
+                    VmMigrationPhase::Completed => {
+                        let spec_patch = serde_json::json!({
+                            "spec": {
+                                "nodeName": target_node_name,
+                                "targetNodeName": null,
+                            }
+                        });
+                        api.patch(name, spec_patch).await?;
+
+                        let status_patch = serde_json::json!({
+                            "status": {
+                                "migration": {
+                                    "phase": PHASE_COMPLETED,
+                                    "sourceNodeName": self.node_name,
+                                    "targetNodeName": target_node_name,
+                                    "targetAddress": target_address,
+                                    "targetPort": target_port,
+                                    "message": "Live migration completed successfully",
+                                    "timestamp": Time::now(),
+                                },
+                                "conditions": [
+                                    {
+                                        "status": "VmMigrated",
+                                        "message": format!("VM migrated successfully to node '{target_node_name}'"),
+                                        "timestamp": Time::now(),
+                                    }
+                                ]
+                            }
+                        });
+                        api.patch_status(name, status_patch).await?;
+
+                        if let Err(err) =
+                            self.runtime_operator.finish_source_migration(ship_id).await
+                        {
+                            error!(
+                                "Failed to clean up migrated source VM for ship '{}': {}",
+                                ship_id, err
+                            );
+                            // API server is already updated; log and continue.
+                        }
+                        Ok(true)
+                    }
+                    VmMigrationPhase::Failed | VmMigrationPhase::Cancelled => {
+                        let message = format!("Live migration did not complete (phase: {phase:?})");
+                        self.update_migration_status(
+                            &api,
+                            name,
+                            ShipMigrationStatus {
+                                phase: PHASE_FAILED.to_string(),
+                                source_node_name: Some(self.node_name.clone()),
+                                target_node_name: Some(target_node_name),
+                                target_address: Some(target_address),
+                                target_port: Some(target_port),
+                                message: message.clone(),
+                                timestamp: Some(Time::now()),
+                            },
+                            "VmMigrationFailed",
+                            message.clone(),
+                        )
+                        .await?;
+                        Err(ReconcileError::Runtime(RuntimeError::MigrationFailed(
+                            message,
+                        )))
+                    }
+                    _ => {
+                        // Still active (Setup, Active, None); wait for next event.
+                        Ok(true)
+                    }
+                }
+            }
+            // PHASE_COMPLETED, PHASE_FAILED, or any unknown terminal phase.
+            _ => Ok(true),
+        }
+    }
+
+    pub(crate) async fn refresh_materialized_volumes_for_ship(
+        &self,
+        ship: Ship,
+    ) -> Result<(), ReconcileError> {
+        self.refresh_materialized_volumes_for_ship_with_fingerprint(ship, None)
+            .await
+    }
+
+    async fn refresh_materialized_volumes_for_ship_with_fingerprint(
+        &self,
+        ship: Ship,
+        materialized_volume_fingerprint: Option<String>,
+    ) -> Result<(), ReconcileError> {
+        let Some(ship_metadata) = ship.object_meta() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata".to_string(),
+            ));
+        };
+        let Some(ship_id) = &ship_metadata.uid else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.uid".to_string(),
+            ));
+        };
+        let Some(name) = &ship_metadata.name else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let namespace = ship_metadata
+            .namespace
+            .clone()
+            .unwrap_or("default".to_string());
+        let Some(ship_spec) = &ship.spec else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+
+        if !self.runtime_operator.has_ship(ship_id).await {
+            debug!(
+                "Skipping materialized volume refresh for Ship '{}' because it is not running",
+                ship_id
+            );
+            return Ok(());
+        }
+
+        if let Err(err) = self
+            .refresh_materialized_volumes(ship_id, &namespace, ship_spec)
+            .await
+        {
+            let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+            let mut status_ship = ship.clone();
+            status_ship.append_status(ShipCondition {
+                status: "MaterializedVolumesRefreshFailed".to_string(),
+                message: format!("Failed to refresh materialized volumes: {}", err),
+                timestamp: Some(Time::now()),
+            });
+            let _ = api.replace_status(name, status_ship).await;
+            return Err(err);
+        }
+
+        if let Some(fingerprint) = materialized_volume_fingerprint {
+            self.runtime_operator
+                .update_materialized_volume_fingerprint(ship_id, fingerprint)
+                .await;
+        }
+
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+        let mut status_ship = ship.clone();
+        status_ship.append_status(ShipCondition {
+            status: "MaterializedVolumesRefreshed".to_string(),
+            message: "Materialized volumes (ConfigMap/Secret) refreshed in-place".to_string(),
+            timestamp: Some(Time::now()),
+        });
+        api.replace_status(name, status_ship).await?;
+
+        self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
+            .await;
+        Ok(())
+    }
+
+    async fn update_migration_status(
+        &self,
+        api: &Api<Ship>,
+        name: &str,
+        migration: ShipMigrationStatus,
+        condition_status: &str,
+        condition_message: String,
+    ) -> Result<(), ReconcileError> {
+        let patch = serde_json::json!({
+            "status": {
+                "migration": migration,
+                "conditions": [
+                    {
+                        "status": condition_status,
+                        "message": condition_message,
+                        "timestamp": Time::now(),
+                    }
+                ]
+            }
+        });
+        api.patch_status(name, patch).await?;
         Ok(())
     }
 

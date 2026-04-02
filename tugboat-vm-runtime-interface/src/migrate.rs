@@ -12,10 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod create;
-pub mod migrate;
-pub mod migration_status;
-pub mod run;
-pub mod start;
-pub mod status;
-pub mod stop;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmMigrateRequest {
+    pub id: String,
+    pub destination_address: String,
+    pub destination_port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum VmMigrationPhase {
+    None,
+    Setup,
+    Active,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmMigrationStatusResponse {
+    pub phase: VmMigrationPhase,
+    pub message: String,
+}

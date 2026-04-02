@@ -24,7 +24,8 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, info};
 use tugboat_vm_runtime_interface::run::{
-    VmCpuConfig, VmNetworkConfig, VmRunRequest, VmVolumeConfig, VmVolumeKind,
+    VmCpuConfig, VmIncomingMigrationConfig, VmMemoryConfig, VmNetworkConfig, VmRunRequest,
+    VmVolumeConfig, VmVolumeKind,
 };
 
 #[derive(Debug, Clone)]
@@ -32,9 +33,6 @@ struct QemuVm<'a> {
     config: &'a QemuVmConfig,
     args: VmRunRequest,
 }
-
-#[derive(Debug, Clone)]
-struct SizeInBytes(u64);
 
 impl<'a> QemuVm<'a> {
     fn new(config: &'a QemuVmConfig, args: VmRunRequest) -> Self {
@@ -76,10 +74,11 @@ impl RunVm for QemuVm<'_> {
             .args(["-qmp", qmp_opt.as_str()])
             .args_if(self.config.kvm.enabled, &["-enable-kvm"])
             .qemu_args(&self.args.cpu)
-            .qemu_args(&SizeInBytes(self.args.memory))
+            .qemu_args(&self.args.memory)
             .qemu_args(&self.args.networks)
             .qemu_args(&self.args.volumes)
             .qemu_args(&img)
+            .qemu_args(&self.args.incoming)
             .qemu_args_with_arg_if(self.args.uefi.enabled, &self.config.uefi, &self)
             .debug_command()
             .exec();
@@ -107,7 +106,7 @@ impl QemuArgs<VmCpuConfig> for Command {
     fn qemu_args(&mut self, value: &VmCpuConfig) -> &mut Self {
         let smp = value.cores;
         if smp > 0 {
-            let smp_arg = format!("{smp},cores={}", value.cores,);
+            let smp_arg = format!("{smp},cores={}", value.cores);
             self.args(["-smp", smp_arg.as_str()])
         } else {
             self
@@ -115,10 +114,11 @@ impl QemuArgs<VmCpuConfig> for Command {
     }
 }
 
-impl QemuArgs<SizeInBytes> for Command {
-    fn qemu_args(&mut self, value: &SizeInBytes) -> &mut Self {
-        let megs = value.0 / 1024 / 1024;
-        self.args(["-m", megs.to_string().as_str()])
+impl QemuArgs<VmMemoryConfig> for Command {
+    fn qemu_args(&mut self, value: &VmMemoryConfig) -> &mut Self {
+        let megs = (value.size / 1024 / 1024).max(1);
+        let memory_arg = format!("{megs}M");
+        self.args(["-m", memory_arg.as_str()])
     }
 }
 
@@ -176,6 +176,17 @@ impl QemuArgs<Vec<VmVolumeConfig>> for Command {
             }
         }
         self
+    }
+}
+
+impl QemuArgs<Option<VmIncomingMigrationConfig>> for Command {
+    fn qemu_args(&mut self, value: &Option<VmIncomingMigrationConfig>) -> &mut Self {
+        if let Some(config) = value {
+            let incoming = format!("tcp:0.0.0.0:{}", config.port);
+            self.args(["-incoming", incoming.as_str()])
+        } else {
+            self
+        }
     }
 }
 

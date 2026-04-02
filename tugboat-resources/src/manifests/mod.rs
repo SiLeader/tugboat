@@ -134,6 +134,35 @@ pub mod core {
     }
 }
 
+pub mod apps {
+    pub mod v1 {
+        use crate::validators::NameValidator;
+        use crate::{apply_resource, apply_validators};
+
+        include!(concat!(env!("OUT_DIR"), "/tugboat.apps.v1.rs"));
+
+        apply_resource!(
+            Deployment,
+            "apps",
+            "v1",
+            "deployments",
+            "deployment",
+            namespaced
+        );
+        apply_resource!(
+            ReplicaSet,
+            "apps",
+            "v1",
+            "replicasets",
+            "replicaset",
+            namespaced
+        );
+
+        apply_validators!(Deployment, validators NameValidator);
+        apply_validators!(ReplicaSet, validators NameValidator);
+    }
+}
+
 pub mod coordination {
     pub mod v1 {
         use crate::validators::NameValidator;

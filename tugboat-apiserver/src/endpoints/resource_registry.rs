@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::endpoints::v1_apps;
 use crate::endpoints::v1_coordination;
 use crate::endpoints::v1_core;
 use tugboat_resources::StaticResource;
+use tugboat_resources::manifests::apps::v1::{Deployment, ReplicaSet};
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
@@ -27,6 +29,7 @@ pub(crate) struct ResourceOperations {
     pub(crate) create: bool,
     pub(crate) list: bool,
     pub(crate) read: bool,
+    pub(crate) patch: bool,
     pub(crate) update: bool,
     pub(crate) delete: bool,
     pub(crate) status_patch: bool,
@@ -51,6 +54,9 @@ impl ResourceOperations {
         }
         if self.list {
             verbs.push("list");
+        }
+        if self.patch {
+            verbs.push("patch");
         }
         if self.update {
             verbs.push("update");
@@ -111,6 +117,7 @@ const CLUSTER_DEFAULT_OPS: ResourceOperations = ResourceOperations {
     create: true,
     list: true,
     read: true,
+    patch: false,
     update: false,
     delete: false,
     status_patch: false,
@@ -127,6 +134,7 @@ const NAMESPACED_DEFAULT_OPS: ResourceOperations = ResourceOperations {
     create: true,
     list: true,
     read: true,
+    patch: false,
     update: false,
     delete: false,
     status_patch: false,
@@ -140,6 +148,7 @@ const NAMESPACED_STATUS_OPS: ResourceOperations = ResourceOperations {
 };
 
 const NODE_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
     update: true,
     delete: true,
     status_patch: true,
@@ -148,6 +157,7 @@ const NODE_OPS: ResourceOperations = ResourceOperations {
 };
 
 const PERSISTENT_VOLUME_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
     update: true,
     delete: true,
     status_patch: true,
@@ -156,6 +166,7 @@ const PERSISTENT_VOLUME_OPS: ResourceOperations = ResourceOperations {
 };
 
 const PERSISTENT_VOLUME_CLAIM_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
     update: true,
     delete: true,
     status_patch: true,
@@ -164,12 +175,14 @@ const PERSISTENT_VOLUME_CLAIM_OPS: ResourceOperations = ResourceOperations {
 };
 
 const SECRET_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
     update: true,
     delete: true,
     ..NAMESPACED_DEFAULT_OPS
 };
 
 const CONFIGMAP_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
     update: true,
     delete: true,
     ..NAMESPACED_DEFAULT_OPS
@@ -181,6 +194,7 @@ const STORAGE_CLASS_OPS: ResourceOperations = ResourceOperations {
 };
 
 const SHIP_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
     update: true,
     status_patch: true,
     status_update: true,
@@ -188,12 +202,21 @@ const SHIP_OPS: ResourceOperations = ResourceOperations {
 };
 
 const LEASE_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
     update: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
+const WORKLOAD_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
+    update: true,
+    delete: true,
     ..NAMESPACED_DEFAULT_OPS
 };
 
 pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
     vec![
+        ResourceApiDescriptor::new::<Deployment>(WORKLOAD_OPS, v1_apps::register_deployment),
         ResourceApiDescriptor::new::<ClusterNetworkClass>(
             CLUSTER_STATUS_OPS,
             v1_core::register_clusternetworkclass,
@@ -213,6 +236,7 @@ pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
             PERSISTENT_VOLUME_CLAIM_OPS,
             v1_core::register_persistent_volume_claim,
         ),
+        ResourceApiDescriptor::new::<ReplicaSet>(WORKLOAD_OPS, v1_apps::register_replicaset),
         ResourceApiDescriptor::new::<Secret>(SECRET_OPS, v1_core::register_secret),
         ResourceApiDescriptor::new::<Ship>(SHIP_OPS, v1_core::register_ship),
         ResourceApiDescriptor::new::<ShipClass>(CLUSTER_DEFAULT_OPS, v1_core::register_shipclass),

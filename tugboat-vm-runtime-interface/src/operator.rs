@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::migrate::{VmMigrateRequest, VmMigrationStatusResponse};
 use crate::run::VmRunRequest;
 use crate::status::VmStatusResponse;
 use crate::stop::VmStopRequest;
@@ -113,6 +114,31 @@ impl VmRuntimeOperator {
         let child = self.call("stop", &args).await?;
         handle_command_response(child).await?;
         Ok(())
+    }
+
+    pub async fn migrate(&self, args: VmMigrateRequest) -> Result<(), Error> {
+        let child = self.call("migrate", &args).await?;
+        handle_command_response(child).await?;
+        Ok(())
+    }
+
+    pub async fn migration_status(&self, id: &str) -> Result<VmMigrationStatusResponse, Error> {
+        let output = self
+            .run_command()
+            .args(["migration-status", id])
+            .output()
+            .await?;
+
+        if output.status.success() {
+            let status: VmMigrationStatusResponse = serde_json::from_slice(&output.stdout)?;
+            Ok(status)
+        } else {
+            Err(Error::CommandFailed(
+                output.status,
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ))
+        }
     }
 }
 

@@ -16,18 +16,16 @@ use crate::config::load_config_or_panic;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use qapi::futures::QmpStreamTokio;
-use tracing::info;
-use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
+use tugboat_vm_runtime_interface::migrate::VmMigrateRequest;
 
 #[derive(Debug, Parser)]
-pub struct StopArgs {
-    #[arg(help = "Path to the stop request config file or - for stdin")]
+pub struct MigrateArgs {
+    #[arg(help = "Path to the migrate request config file or - for stdin")]
     config: String,
 }
 
-pub async fn stop(config: QemuVmConfig, args: StopArgs) -> crate::Result<()> {
-    let req: VmStopRequest = load_config_or_panic(args.config);
-
+pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<()> {
+    let req: VmMigrateRequest = load_config_or_panic(args.config);
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
         .await
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;
@@ -37,20 +35,17 @@ pub async fn stop(config: QemuVmConfig, args: StopArgs) -> crate::Result<()> {
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
-    match req.stop_type {
-        VmStopType::Shutdown => {
-            info!("Sending system_powerdown to VM {}", req.id);
-            qmp.execute(qapi::qmp::system_powerdown {})
-                .await
-                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-        }
-        VmStopType::PowerOff => {
-            info!("Sending quit to VM {}", req.id);
-            qmp.execute(qapi::qmp::quit {})
-                .await
-                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-        }
-    }
+    qmp.execute(qapi::qmp::migrate {
+        uri: Some(format!(
+            "tcp:{}:{}",
+            req.destination_address, req.destination_port
+        )),
+        channels: None,
+        detach: None,
+        resume: None,
+    })
+    .await
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     Ok(())
 }

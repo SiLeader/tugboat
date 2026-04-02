@@ -21,7 +21,7 @@ use tracing::{debug, info};
 use tugboat_resources::manifests::core::v1::{ShipClass, ShipSpec};
 use tugboat_resources::sized::SizedString;
 use tugboat_vm_runtime_interface::run::{
-    VmCpuConfig, VmNetworkConfig, VmRunRequest, VmUefiConfig, VmVolumeConfig,
+    VmCpuConfig, VmMemoryConfig, VmNetworkConfig, VmRunRequest, VmUefiConfig, VmVolumeConfig,
 };
 
 pub(crate) struct RuntimeCreateRequest<'a> {
@@ -30,6 +30,7 @@ pub(crate) struct RuntimeCreateRequest<'a> {
     pub namespace: String,
     pub ship_spec: &'a ShipSpec,
     pub ship_class: ShipClass,
+    pub incoming_port: Option<u16>,
     pub networks: Vec<VmNetworkConfig>,
     pub volumes: Vec<VmVolumeConfig>,
     pub fingerprints: ShipFingerprints,
@@ -37,9 +38,12 @@ pub(crate) struct RuntimeCreateRequest<'a> {
 }
 
 impl RuntimeOperator {
-    fn is_http_host(&self, image: &str) -> Option<bool> {
-        let (host, _) = image.split_once('/')?;
-        Some(self.http_hosts.contains(host))
+    fn is_http_host(&self, image: &str) -> bool {
+        if let Some((host, _)) = image.split_once('/') {
+            self.http_hosts.contains(host)
+        } else {
+            false
+        }
     }
 
     pub(crate) async fn create(
@@ -52,6 +56,7 @@ impl RuntimeOperator {
             namespace,
             ship_spec,
             ship_class,
+            incoming_port,
             networks,
             volumes,
             fingerprints,
@@ -73,11 +78,13 @@ impl RuntimeOperator {
         debug!("Pulling image '{}'", ship_spec.image);
         let image = self
             .registry
-            .pull(&ship_spec.image, self.is_http_host(&ship_spec.image))
+            .pull(&ship_spec.image, Some(self.is_http_host(&ship_spec.image)))
             .await?;
 
         let memory_size = SizedString(memory.size.clone());
-
+        let memory_size = memory_size
+            .as_byte_length()
+            .ok_or(RuntimeError::MemorySize(memory.size.clone()))?;
         let vm_config = VmRunRequest {
             id: ship_id.clone(),
             image: image.location,
@@ -85,10 +92,10 @@ impl RuntimeOperator {
                 architecture: cpu.architecture,
                 cores: cpu.cores,
             },
-            memory: memory_size
-                .as_byte_length()
-                .ok_or(RuntimeError::MemorySize(memory.size))?,
+            memory: VmMemoryConfig { size: memory_size },
             networks,
+            incoming: incoming_port
+                .map(|port| tugboat_vm_runtime_interface::run::VmIncomingMigrationConfig { port }),
             user: Default::default(),
             uefi: VmUefiConfig {
                 enabled: ship_spec.uefi.map(|u| u.enabled).unwrap_or(false),
