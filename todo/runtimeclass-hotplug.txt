@@ -1,0 +1,139 @@
+RuntimeClass & Hotplug: Runtime interface, Agent and Runtime support
+=================================================================
+
+Summary
+-------
+Introduce a RuntimeClass API and a unified runtime-interface to enable atomic/combined hotplug operations (CPU, memory, NIC, storage). Implement agent and runtime changes so Ship spec updates that are hotplug-capable are applied without guest restart; fallback to live migration when hotplug cannot satisfy the change. Ensure Deployments/ReplicaSets and node-eviction flows prefer zero-downtime live migration or hotplug where possible.
+
+Goal
+----
+- Add a RuntimeClass resource to describe runtime capabilities (hotplug and migration features).
+- Provide a single runtime-interface "hotplug" call that can apply CPU, memory, NIC, and storage changes in one request.
+- Implement agent and runtime logic so supported Ship spec changes are applied live without reboot; otherwise prefer live migration to avoid downtime.
+- Update workload controllers (Deployment, ReplicaSet) to leverage hotplug/migration for zero-downtime updates.
+- On node drain/evict, use live migration when available to maintain availability.
+
+Background
+----------
+Existing work covers live migration (todo/live-migration.txt) and VM runtime interface. This TODO complements those by focusing on runtime capability discovery (RuntimeClass), a single multi-resource hotplug RPC/CLI, and the agent/runtime orchestration to apply changes atomically where supported.
+
+Scope
+-----
+In-scope:
+- RuntimeClass API design and proto + server registration
+- Runtime-interface (tugboat-vm-runtime-interface) extension: HotplugRequest/Response and capability discovery
+- tugboat-runtime: implement hotplug handler (QMP or equivalent) and capability reporting
+- tugboat-agent: reconcile plan to choose hotplug vs live migration vs recreate; implement hotplug execution and status updates
+- Controller-manager: make Deployment/ReplicaSet controllers prefer hotplug/migration paths
+- Integration and E2E tests and docs
+
+Out-of-scope:
+- Implementing new hypervisor drivers (focus on QEMU/QMP path first)
+- Generic CRI implementation beyond necessary hooks (handled in vm-runtime-interface TODO)
+
+Design
+------
+RuntimeClass (API):
+- name: string
+- runtime_ref: identifier for the runtime implementation
+- capabilities: map/string or repeated enum e.g., ["hotplug_cpu","hotplug_memory","hotplug_nic","hotplug_storage","atomic_hotplug","live_migration"]
+- notes: freeform vendor features
+
+Runtime-interface: Hotplug RPC/CLI
+- Single call semantics: accept a Ship identity + ordered list of operations (cpu, memory, nic, storage) and a dry-run flag.
+- Request example (pseudo-JSON):
+  {
+    "ship_id": "...",
+    "operations": [
+      {"type":"cpu","action":"set","value":4},
+      {"type":"memory","action":"set","value_mib":8192},
+      {"type":"nic","action":"add","spec":{...}},
+      {"type":"storage","action":"attach","claim":{"namespace":"ns","name":"pvc"},"device_opts":{...}}
+    ],
+    "dry_run": false,
+    "timeout_seconds": 300
+  }
+- Response: applied_ops, failed_ops, messages, rollback_performed (bool), partial_state (if any).
+- Atomicity model: runtime should aim for all-or-nothing when possible; if true atomic rollback is impossible, runtime must clearly report applied vs failed and leave Ship.status consistent.
+
+Agent reconciliation behavior
+----------------------------
+- Detect diff between desired ShipSpec and runtime fingerprint (use existing spec_fingerprint and volume_fingerprint conventions).
+- Determine which diffs are hotpluggable by consulting the assigned RuntimeClass.capabilities.
+- If all diffs are hotpluggable: call runtime hotplug RPC with combined operations; monitor and update Ship.status conditions (HotplugInProgress, HotplugSucceeded, HotplugFailed).
+- If some diffs are not hotpluggable but migration can satisfy them: schedule live migration (reusing existing migration logic) and, if needed, perform any hotplug steps pre/post migration.
+- If neither hotplug nor migration can apply the change nondisruptively: fall back to recreate (stop/start) and mark in status.
+- Concurrency: serialize operations per-Ship (agent-level locking) to prevent overlapping hotplug/migration operations.
+
+Deployment/ReplicaSet controller behavior
+----------------------------------------
+- Controllers should prefer in-place updates (hotplug) for spec changes when all replicas and runtime classes support the change.
+- For changes not supported by hotplug, prefer live migration of replicas in a rolling manner to preserve availability.
+- Controllers must detect per-Ship runtime capability variations and choose safest strategy (some replicas may need recreate).
+
+Eviction / Node drain behavior
+------------------------------
+- On node drain, attempt to live-migrate Ships that advertise migration capability in their RuntimeClass and whose volumes/networks are compatible on targets.
+- If migration not available or fails, follow current eviction fallback (recreate) and mark containers as unschedulable until resolved.
+
+Runtime changes
+---------------
+- tugboat-runtime: implement hotplug handler that batches and executes atomic or best-effort QEMU QMP commands needed to add/remove CPUs, change memory, attach/detach NICs, and attach/detach block devices.
+- Expose capability discovery endpoint/command so apiserver/agent can populate RuntimeClass.capabilities.
+- Implement robust rollback where possible and clear failure reporting.
+
+Work items (high-level)
+-----------------------
+1. Define RuntimeClass proto and add to tugboat-resources/proto/core/v1; update build.rs.
+2. Implement API server handlers and register resource in apiserver endpoints/resource_registry.
+3. Add sample RuntimeClass YAML in sample-configs/.
+4. Define HotplugRequest/Response and Capabilities messages in tugboat-vm-runtime-interface proto and regenerate bindings.
+5. Implement hotplug handler in tugboat-runtime (CLI) and the runtime library used by the agent interface.
+6. Implement capability query RPC in runtime (used to seed RuntimeClass or for runtime discovery).
+7. Extend tugboat-agent reconciler:
+   - Diff & capability check logic in reconciler/ops (integrate with spec_fingerprint logic)
+   - Hotplug executor module that calls vm runtime-interface hotplug
+   - Status and condition updates for hotplug/migration states
+   - Add integration tests that simulate hotplugable changes
+8. Update tugboat-controller-manager controllers (Deployment/ReplicaSet) to prefer hotplug/migration when safe.
+9. Add E2E tests covering:
+   - CPU and memory hotplug without reboot
+   - NIC add/remove and network connectivity preservation
+   - Storage attach/detach (block device via SCSI/virtio) without reboot when supported
+   - Spec change that requires migration is handled via live migration without downtime
+   - Node drain triggers migration when possible
+10. Documentation: design doc, API docs, operator runbook for RuntimeClass and hotplug capabilities.
+
+Acceptance criteria
+-------------------
+- RuntimeClass resource exists and can be created via API.
+- tugboat-runtime reports its hotplug and migration capabilities.
+- The runtime-interface accepts a single combined hotplug request and applies CPU, memory, NIC and storage changes in one operation for supported runtimes.
+- tugboat-agent applies hotpluggable Ship spec changes without VM restart and updates status accordingly.
+- Changes that cannot be hotplugged are applied by live migration when possible, preserving service availability.
+- Deployment and ReplicaSet updates that are hotplug-capable use hotplug; otherwise they use live migration rolling updates to maintain availability.
+- Node drain/eviction uses live migration for supported Ships and completes without service interruption.
+- Integration tests validate the above flows.
+
+Dependencies & Risks
+--------------------
+- Requires QEMU/QMP or other hypervisor hotplug support; not all runtimes/hypervisors support atomic multi-resource hotplug.
+- Storage hotplug/attach semantics depend on CSI driver and underlying storage (some volume types cannot be hot-attached or require host-level support).
+- Network hotplug requires CNI and node network configuration that can accept new virtual interfaces without admin intervention.
+- Live migration still requires shared storage or PVC ReadWriteMany for some volume types.
+
+Related TODOs
+-------------
+- todo/live-migration.txt (migration flows and preflight)
+- todo/vm-runtime-interface.txt (VMRI and Agent architecture)
+- todo/workload-management.txt (Deployment/ReplicaSet controller behavior)
+
+Notes
+-----
+- Start with QEMU (QMP) path and expand to other runtimes later.
+- Prefer non-breaking incremental changes: implement capability discovery first, then crude hotplug proof-of-concept, then improve atomicity and rollback.
+
+Owner: TBD
+Priority: High
+Estimated effort: TBD
+
