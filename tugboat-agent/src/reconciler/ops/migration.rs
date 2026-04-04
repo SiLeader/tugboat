@@ -793,7 +793,7 @@ impl<'a> MigrationStateMachine<'a> {
                                         target_address: Some(target_address.clone()),
                                         target_port: Some(target_port),
                                         message: runtime_status.message.clone(),
-                                        timestamp: migration_status.timestamp.clone(),
+                                        timestamp: migration_status.timestamp,
                                         bytes_transferred: None,
                                         bytes_remaining: None,
                                     },
