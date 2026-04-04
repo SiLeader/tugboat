@@ -28,7 +28,9 @@ use tugboat_resources::manifests::core::v1::{
     Node, NodeCniPluginStatus, Ship, ShipClass, ShipMigrationStatus,
 };
 use tugboat_resources::manifests::meta::v1::Time;
-use tugboat_vm_runtime_interface::migrate::{VmMigrationParams, VmMigrationPhase};
+use tugboat_vm_runtime_interface::migrate::{
+    VmMigrationParams, VmMigrationPhase, VmMigrationStatusResponse,
+};
 use tugboat_vm_runtime_interface::status::VmStatus;
 
 use super::{PHASE_COMPLETED, PHASE_FAILED, PHASE_MIGRATING, PHASE_PENDING, PHASE_READY};
@@ -70,8 +72,10 @@ pub trait MigrationContext: Send + Sync {
         target_port: u16,
         params: VmMigrationParams,
     ) -> Result<(), RuntimeError>;
-    async fn check_migration_status(&self, ship_id: &str)
-    -> Result<VmMigrationPhase, RuntimeError>;
+    async fn check_migration_status(
+        &self,
+        ship_id: &str,
+    ) -> Result<VmMigrationStatusResponse, RuntimeError>;
     async fn finish_source_migration(&self, ship_id: &str) -> Result<(), RuntimeError>;
     async fn cancel_migration(&self, ship_id: &str) -> Result<(), RuntimeError>;
     /// Resolve migration tuning parameters for the given Ship from its ShipClass.
@@ -127,7 +131,7 @@ impl MigrationContext for ShipReconciler {
     async fn check_migration_status(
         &self,
         ship_id: &str,
-    ) -> Result<VmMigrationPhase, RuntimeError> {
+    ) -> Result<VmMigrationStatusResponse, RuntimeError> {
         self.runtime_operator.check_migration_status(ship_id).await
     }
     async fn finish_source_migration(&self, ship_id: &str) -> Result<(), RuntimeError> {
@@ -209,6 +213,16 @@ impl<'a> MigrationStateMachine<'a> {
         Self { context }
     }
 
+    fn with_stats(
+        &self,
+        mut migration: ShipMigrationStatus,
+        runtime_status: Option<&VmMigrationStatusResponse>,
+    ) -> ShipMigrationStatus {
+        migration.bytes_transferred = runtime_status.and_then(|status| status.bytes_transferred);
+        migration.bytes_remaining = runtime_status.and_then(|status| status.bytes_remaining);
+        migration
+    }
+
     async fn mark_source_migration_failed(
         &self,
         namespace: &str,
@@ -230,6 +244,8 @@ impl<'a> MigrationStateMachine<'a> {
                     target_port,
                     message: message.clone(),
                     timestamp: Some(Time::now()),
+                    bytes_transferred: None,
+                    bytes_remaining: None,
                 },
                 "VmMigrationFailed",
                 message,
@@ -272,6 +288,8 @@ impl<'a> MigrationStateMachine<'a> {
                         "Live migration completed successfully with preserved guest NIC identity"
                             .to_string(),
                     timestamp: Some(Time::now()),
+                    bytes_transferred: None,
+                    bytes_remaining: None,
                 },
                 "VmMigrated",
                 format!(
@@ -316,6 +334,8 @@ impl<'a> MigrationStateMachine<'a> {
                     message: "Target node recovered a completed live migration and finalized cutover"
                         .to_string(),
                     timestamp: Some(Time::now()),
+                    bytes_transferred: None,
+                    bytes_remaining: None,
                 },
                 "VmMigrated",
                 format!(
@@ -439,6 +459,8 @@ impl<'a> MigrationStateMachine<'a> {
                                 target_port: None,
                                 message: message.clone(),
                                 timestamp: Some(Time::now()),
+                                bytes_transferred: None,
+                                bytes_remaining: None,
                             },
                             "VmMigrationPreflightFailed",
                             message,
@@ -460,6 +482,8 @@ impl<'a> MigrationStateMachine<'a> {
                         message: "Waiting for target node to prepare migration receiver"
                             .to_string(),
                         timestamp: Some(Time::now()),
+                        bytes_transferred: None,
+                        bytes_remaining: None,
                     },
                     "VmMigrationPending",
                     "Waiting for target node to prepare migration receiver".to_string(),
@@ -501,7 +525,7 @@ impl<'a> MigrationStateMachine<'a> {
                 };
 
                 match self.context.check_migration_status(ship_id).await {
-                    Ok(VmMigrationPhase::None) => {
+                    Ok(status) if matches!(status.phase, VmMigrationPhase::None) => {
                         if is_migration_timed_out(
                             &migration_status.timestamp,
                             MIGRATION_PENDING_TIMEOUT_SECS,
@@ -560,6 +584,8 @@ impl<'a> MigrationStateMachine<'a> {
                                     target_port: Some(target_port),
                                     message: "Live migration in progress".to_string(),
                                     timestamp: Some(Time::now()),
+                                    bytes_transferred: None,
+                                    bytes_remaining: None,
                                 },
                                 "VmMigrating",
                                 "Live migration in progress".to_string(),
@@ -567,27 +593,40 @@ impl<'a> MigrationStateMachine<'a> {
                             .await?;
                         Ok(true)
                     }
-                    Ok(VmMigrationPhase::Setup | VmMigrationPhase::Active) => {
+                    Ok(status)
+                        if matches!(
+                            status.phase,
+                            VmMigrationPhase::Setup | VmMigrationPhase::Active
+                        ) =>
+                    {
                         self.context
                             .update_migration_status(
                                 namespace,
                                 name,
-                                ShipMigrationStatus {
-                                    phase: PHASE_MIGRATING.to_string(),
-                                    source_node_name: Some(self.context.node_name().to_string()),
-                                    target_node_name: Some(target_node_name),
-                                    target_address: Some(target_address),
-                                    target_port: Some(target_port),
-                                    message: "Live migration is already in progress".to_string(),
-                                    timestamp: Some(Time::now()),
-                                },
+                                self.with_stats(
+                                    ShipMigrationStatus {
+                                        phase: PHASE_MIGRATING.to_string(),
+                                        source_node_name: Some(
+                                            self.context.node_name().to_string(),
+                                        ),
+                                        target_node_name: Some(target_node_name),
+                                        target_address: Some(target_address),
+                                        target_port: Some(target_port),
+                                        message: "Live migration is already in progress"
+                                            .to_string(),
+                                        timestamp: Some(Time::now()),
+                                        bytes_transferred: None,
+                                        bytes_remaining: None,
+                                    },
+                                    Some(&status),
+                                ),
                                 "VmMigrating",
                                 "Live migration is already in progress".to_string(),
                             )
                             .await?;
                         Ok(true)
                     }
-                    Ok(VmMigrationPhase::Completed) => {
+                    Ok(status) if matches!(status.phase, VmMigrationPhase::Completed) => {
                         self.finalize_completed_source_migration(
                             ship_id,
                             namespace,
@@ -599,9 +638,15 @@ impl<'a> MigrationStateMachine<'a> {
                         .await?;
                         Ok(true)
                     }
-                    Ok(phase @ (VmMigrationPhase::Failed | VmMigrationPhase::Cancelled)) => {
+                    Ok(status)
+                        if matches!(
+                            status.phase,
+                            VmMigrationPhase::Failed | VmMigrationPhase::Cancelled
+                        ) =>
+                    {
                         let message = format!(
-                            "Live migration did not complete (phase: {phase:?}). Source VM remains authoritative; clean up the target and retry when ready."
+                            "Live migration did not complete (phase: {:?}). Source VM remains authoritative; clean up the target and retry when ready.",
+                            status.phase
                         );
                         self.best_effort_cancel(ship_id).await;
                         self.mark_source_migration_failed(
@@ -615,6 +660,7 @@ impl<'a> MigrationStateMachine<'a> {
                         .await?;
                         Ok(true)
                     }
+                    Ok(_) => Ok(true),
                     Err(err) => {
                         warn!(
                             "Failed to check migration status before starting migration for ship '{}': {}",
@@ -638,8 +684,8 @@ impl<'a> MigrationStateMachine<'a> {
                     .clone()
                     .unwrap_or(target_node_name);
 
-                let phase = match self.context.check_migration_status(ship_id).await {
-                    Ok(phase) => phase,
+                let runtime_status = match self.context.check_migration_status(ship_id).await {
+                    Ok(status) => status,
                     Err(err) => {
                         warn!(
                             "Failed to check migration status for ship '{}': {}",
@@ -649,7 +695,7 @@ impl<'a> MigrationStateMachine<'a> {
                     }
                 };
 
-                match phase {
+                match &runtime_status.phase {
                     VmMigrationPhase::Completed => {
                         self.finalize_completed_source_migration(
                             ship_id,
@@ -664,7 +710,8 @@ impl<'a> MigrationStateMachine<'a> {
                     }
                     VmMigrationPhase::Failed | VmMigrationPhase::Cancelled => {
                         let message = format!(
-                            "Live migration did not complete (phase: {phase:?}). Source VM remains authoritative; clean up the target and retry when ready."
+                            "Live migration did not complete (phase: {:?}). Source VM remains authoritative; clean up the target and retry when ready.",
+                            runtime_status.phase
                         );
                         self.best_effort_cancel(ship_id).await;
                         self.mark_source_migration_failed(
@@ -681,6 +728,30 @@ impl<'a> MigrationStateMachine<'a> {
                         )))
                     }
                     _ => {
+                        self.context
+                            .update_migration_status(
+                                namespace,
+                                name,
+                                self.with_stats(
+                                    ShipMigrationStatus {
+                                        phase: PHASE_MIGRATING.to_string(),
+                                        source_node_name: Some(
+                                            self.context.node_name().to_string(),
+                                        ),
+                                        target_node_name: Some(target_node_name.clone()),
+                                        target_address: Some(target_address.clone()),
+                                        target_port: Some(target_port),
+                                        message: runtime_status.message.clone(),
+                                        timestamp: Some(Time::now()),
+                                        bytes_transferred: None,
+                                        bytes_remaining: None,
+                                    },
+                                    Some(&runtime_status),
+                                ),
+                                "VmMigrating",
+                                "Live migration in progress".to_string(),
+                            )
+                            .await?;
                         // Still active (Setup, Active, None); check for timeout.
                         if is_migration_timed_out(
                             &migration_status.timestamp,
@@ -1210,8 +1281,14 @@ mod tests {
         async fn check_migration_status(
             &self,
             _ship_id: &str,
-        ) -> Result<VmMigrationPhase, RuntimeError> {
-            Ok(self.migration_phase.clone())
+        ) -> Result<VmMigrationStatusResponse, RuntimeError> {
+            Ok(VmMigrationStatusResponse {
+                phase: self.migration_phase.clone(),
+                message: format!("{:?}", &self.migration_phase),
+                bytes_transferred: None,
+                bytes_remaining: None,
+                ram_dirty_rate_mbps: None,
+            })
         }
         async fn finish_source_migration(&self, _ship_id: &str) -> Result<(), RuntimeError> {
             *self.finish_calls.lock().unwrap() += 1;

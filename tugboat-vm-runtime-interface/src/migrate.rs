@@ -59,4 +59,10 @@ pub enum VmMigrationPhase {
 pub struct VmMigrationStatusResponse {
     pub phase: VmMigrationPhase,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_transferred: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_remaining: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ram_dirty_rate_mbps: Option<f64>,
 }

@@ -15,7 +15,7 @@
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use tugboat_vm_runtime_interface::migrate::{
-    VmMigrateCancelRequest, VmMigrateRequest, VmMigrationParams, VmMigrationPhase,
+    VmMigrateCancelRequest, VmMigrateRequest, VmMigrationParams, VmMigrationStatusResponse,
 };
 use tugboat_vm_runtime_interface::status::VmStatus;
 use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
@@ -46,9 +46,8 @@ impl RuntimeOperator {
     pub(crate) async fn check_migration_status(
         &self,
         id: &str,
-    ) -> Result<VmMigrationPhase, RuntimeError> {
-        let status = self.operator.migration_status(id).await?;
-        Ok(status.phase)
+    ) -> Result<VmMigrationStatusResponse, RuntimeError> {
+        Ok(self.operator.migration_status(id).await?)
     }
 
     pub(crate) async fn status(&self, id: &str) -> Result<Option<VmStatus>, RuntimeError> {
