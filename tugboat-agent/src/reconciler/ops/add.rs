@@ -18,7 +18,9 @@ use crate::csi::{
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::ops::add_helpers::{validate_recovered_published_volumes, vm_volume_config};
-use crate::reconciler::ops::{PHASE_FAILED, PHASE_READY};
+use crate::reconciler::ops::{
+    PHASE_COMPLETED, PHASE_FAILED, PHASE_MIGRATING, PHASE_PENDING, PHASE_READY,
+};
 use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::VolumeInfo;
 use crate::runtime::RuntimeCreateRequest;
@@ -67,6 +69,34 @@ fn runtime_fingerprints_for_ship(
         super::ShipFingerprints::new(&migrated_spec)
     } else {
         super::ShipFingerprints::new(ship_spec)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecoveredRuntimeAction {
+    Register,
+    RecreateTarget,
+    CleanupFailedTarget,
+}
+
+fn recovered_runtime_action(ship: &Ship, local_node_name: &str) -> RecoveredRuntimeAction {
+    let Some(spec) = ship.spec.as_ref() else {
+        return RecoveredRuntimeAction::Register;
+    };
+    if spec.target_node_name.as_deref() != Some(local_node_name) {
+        return RecoveredRuntimeAction::Register;
+    }
+
+    match ship
+        .status
+        .as_ref()
+        .and_then(|status| status.migration.as_ref())
+        .map(|migration| migration.phase.as_str())
+    {
+        Some(PHASE_FAILED) => RecoveredRuntimeAction::CleanupFailedTarget,
+        None | Some(PHASE_PENDING) => RecoveredRuntimeAction::RecreateTarget,
+        Some(PHASE_READY | PHASE_MIGRATING | PHASE_COMPLETED) => RecoveredRuntimeAction::Register,
+        Some(_) => RecoveredRuntimeAction::Register,
     }
 }
 
@@ -142,6 +172,27 @@ impl ShipReconciler {
             .clone()
             .unwrap_or("default".to_string());
         let runtime_fingerprints = runtime_fingerprints_for_ship(ship_spec, &self.node_name)?;
+
+        if self.runtime_operator.is_present(ship_id).await? {
+            match recovered_runtime_action(&ship, &self.node_name) {
+                RecoveredRuntimeAction::CleanupFailedTarget => {
+                    info!(
+                        "Recovered stale failed migration target for ship '{}', cleaning it up",
+                        ship_id
+                    );
+                    self.reconcile_deleted(ship.clone()).await?;
+                    return Ok(());
+                }
+                RecoveredRuntimeAction::RecreateTarget => {
+                    info!(
+                        "Recovered incomplete migration target for ship '{}', recreating receiver",
+                        ship_id
+                    );
+                    self.reconcile_deleted(ship.clone()).await?;
+                }
+                RecoveredRuntimeAction::Register => {}
+            }
+        }
 
         if self.runtime_operator.is_present(ship_id).await? {
             let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
@@ -667,8 +718,12 @@ impl ShipReconciler {
 
 #[cfg(test)]
 mod tests {
-    use super::best_effort_stale_volume_cleanup;
+    use super::{
+        RecoveredRuntimeAction, best_effort_stale_volume_cleanup, recovered_runtime_action,
+    };
     use crate::reconciler::error::ReconcileError;
+    use crate::reconciler::ops::{PHASE_COMPLETED, PHASE_FAILED, PHASE_PENDING, PHASE_READY};
+    use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
 
     #[test]
     fn best_effort_stale_volume_cleanup_keeps_success_values() {
@@ -689,5 +744,97 @@ mod tests {
         );
 
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn recovered_target_runtime_is_recreated_when_receiver_was_never_published_ready() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_PENDING.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recovered_runtime_action(&ship, "node-2"),
+            RecoveredRuntimeAction::RecreateTarget
+        );
+    }
+
+    #[test]
+    fn recovered_failed_target_runtime_is_cleaned_up() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_FAILED.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recovered_runtime_action(&ship, "node-2"),
+            RecoveredRuntimeAction::CleanupFailedTarget
+        );
+    }
+
+    #[test]
+    fn recovered_ready_target_runtime_is_registered() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_READY.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recovered_runtime_action(&ship, "node-2"),
+            RecoveredRuntimeAction::Register
+        );
+    }
+
+    #[test]
+    fn recovered_completed_target_runtime_is_registered() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_COMPLETED.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recovered_runtime_action(&ship, "node-2"),
+            RecoveredRuntimeAction::Register
+        );
     }
 }

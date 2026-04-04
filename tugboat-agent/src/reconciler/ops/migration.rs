@@ -67,13 +67,6 @@ pub trait MigrationContext: Send + Sync {
         name: &str,
         patch: serde_json::Value,
     ) -> Result<(), ReconcileError>;
-
-    async fn patch_ship_status(
-        &self,
-        namespace: &str,
-        name: &str,
-        patch: serde_json::Value,
-    ) -> Result<(), ReconcileError>;
 }
 
 #[async_trait]
@@ -149,17 +142,6 @@ impl MigrationContext for ShipReconciler {
         api.patch(name, patch).await?;
         Ok(())
     }
-
-    async fn patch_ship_status(
-        &self,
-        namespace: &str,
-        name: &str,
-        patch: serde_json::Value,
-    ) -> Result<(), ReconcileError> {
-        let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
-        api.patch_status(name, patch).await?;
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,6 +157,79 @@ pub struct MigrationStateMachine<'a> {
 impl<'a> MigrationStateMachine<'a> {
     pub fn new(context: &'a dyn MigrationContext) -> Self {
         Self { context }
+    }
+
+    async fn mark_source_migration_failed(
+        &self,
+        namespace: &str,
+        name: &str,
+        target_node_name: String,
+        target_address: Option<String>,
+        target_port: Option<u32>,
+        message: String,
+    ) -> Result<(), ReconcileError> {
+        self.context
+            .update_migration_status(
+                namespace,
+                name,
+                ShipMigrationStatus {
+                    phase: PHASE_FAILED.to_string(),
+                    source_node_name: Some(self.context.node_name().to_string()),
+                    target_node_name: Some(target_node_name),
+                    target_address,
+                    target_port,
+                    message: message.clone(),
+                    timestamp: Some(Time::now()),
+                },
+                "VmMigrationFailed",
+                message,
+            )
+            .await
+    }
+
+    async fn finalize_completed_source_migration(
+        &self,
+        ship_id: &str,
+        namespace: &str,
+        name: &str,
+        target_node_name: String,
+        target_address: String,
+        target_port: u32,
+    ) -> Result<(), ReconcileError> {
+        self.context
+            .update_migration_status(
+                namespace,
+                name,
+                ShipMigrationStatus {
+                    phase: PHASE_COMPLETED.to_string(),
+                    source_node_name: Some(self.context.node_name().to_string()),
+                    target_node_name: Some(target_node_name.clone()),
+                    target_address: Some(target_address.clone()),
+                    target_port: Some(target_port),
+                    message:
+                        "Live migration completed successfully with preserved guest NIC identity"
+                            .to_string(),
+                    timestamp: Some(Time::now()),
+                },
+                "VmMigrated",
+                format!(
+                    "VM migrated successfully to node '{target_node_name}' with deterministic bridge, interface, and MAC identity"
+                ),
+            )
+            .await?;
+
+        if self.context.has_ship(ship_id).await {
+            self.context.finish_source_migration(ship_id).await?;
+        }
+
+        let spec_patch = serde_json::json!({
+            "spec": {
+                "nodeName": target_node_name,
+                "targetNodeName": null,
+            }
+        });
+        self.context.patch_ship(namespace, name, spec_patch).await?;
+        Ok(())
     }
 
     pub async fn try_reconcile(&self, ship: &Ship, ship_id: &str) -> Result<bool, ReconcileError> {
@@ -281,7 +336,6 @@ impl<'a> MigrationStateMachine<'a> {
         match migration_status.phase.as_str() {
             PHASE_PENDING => Ok(true),
             PHASE_READY => {
-                // Target is ready; issue the non-blocking QMP migrate command.
                 let Some(target_address) = migration_status.target_address.clone() else {
                     return Ok(true);
                 };
@@ -289,52 +343,100 @@ impl<'a> MigrationStateMachine<'a> {
                     return Ok(true);
                 };
 
-                if let Err(err) = self
-                    .context
-                    .migrate(ship_id, target_address.clone(), target_port as u16)
-                    .await
-                {
-                    self.context
-                        .update_migration_status(
+                match self.context.check_migration_status(ship_id).await {
+                    Ok(VmMigrationPhase::None) => {
+                        if let Err(err) = self
+                            .context
+                            .migrate(ship_id, target_address.clone(), target_port as u16)
+                            .await
+                        {
+                            let message = format!("Failed to start live migration: {err}");
+                            self.mark_source_migration_failed(
+                                namespace,
+                                name,
+                                target_node_name,
+                                Some(target_address),
+                                Some(target_port),
+                                message.clone(),
+                            )
+                            .await?;
+                            return Err(err.into());
+                        }
+
+                        self.context
+                            .update_migration_status(
+                                namespace,
+                                name,
+                                ShipMigrationStatus {
+                                    phase: PHASE_MIGRATING.to_string(),
+                                    source_node_name: Some(self.context.node_name().to_string()),
+                                    target_node_name: Some(target_node_name),
+                                    target_address: Some(target_address),
+                                    target_port: Some(target_port),
+                                    message: "Live migration in progress".to_string(),
+                                    timestamp: Some(Time::now()),
+                                },
+                                "VmMigrating",
+                                "Live migration in progress".to_string(),
+                            )
+                            .await?;
+                        Ok(true)
+                    }
+                    Ok(VmMigrationPhase::Setup | VmMigrationPhase::Active) => {
+                        self.context
+                            .update_migration_status(
+                                namespace,
+                                name,
+                                ShipMigrationStatus {
+                                    phase: PHASE_MIGRATING.to_string(),
+                                    source_node_name: Some(self.context.node_name().to_string()),
+                                    target_node_name: Some(target_node_name),
+                                    target_address: Some(target_address),
+                                    target_port: Some(target_port),
+                                    message: "Live migration is already in progress".to_string(),
+                                    timestamp: Some(Time::now()),
+                                },
+                                "VmMigrating",
+                                "Live migration is already in progress".to_string(),
+                            )
+                            .await?;
+                        Ok(true)
+                    }
+                    Ok(VmMigrationPhase::Completed) => {
+                        self.finalize_completed_source_migration(
+                            ship_id,
                             namespace,
                             name,
-                            ShipMigrationStatus {
-                                phase: PHASE_FAILED.to_string(),
-                                source_node_name: Some(self.context.node_name().to_string()),
-                                target_node_name: Some(target_node_name.clone()),
-                                target_address: Some(target_address.clone()),
-                                target_port: Some(target_port),
-                                message: format!("Failed to start live migration: {err}"),
-                                timestamp: Some(Time::now()),
-                            },
-                            "VmMigrationFailed",
-                            format!("Failed to start live migration: {err}"),
+                            target_node_name,
+                            target_address,
+                            target_port,
                         )
                         .await?;
-                    return Err(err.into());
+                        Ok(true)
+                    }
+                    Ok(phase @ (VmMigrationPhase::Failed | VmMigrationPhase::Cancelled)) => {
+                        let message = format!(
+                            "Live migration did not complete (phase: {phase:?}). Source VM remains authoritative; clean up the target and retry when ready."
+                        );
+                        self.mark_source_migration_failed(
+                            namespace,
+                            name,
+                            target_node_name,
+                            Some(target_address),
+                            Some(target_port),
+                            message,
+                        )
+                        .await?;
+                        Ok(true)
+                    }
+                    Err(err) => {
+                        warn!(
+                            "Failed to check migration status before starting migration for ship '{}': {}",
+                            ship_id, err
+                        );
+                        Ok(true)
+                    }
                 }
-
-                // Migration command dispatched; update the phase so the next
-                // reconcile event (triggered by this status change) will poll
-                // progress rather than re-issuing the migrate command.
-                self.context
-                    .update_migration_status(
-                        namespace,
-                        name,
-                        ShipMigrationStatus {
-                            phase: PHASE_MIGRATING.to_string(),
-                            source_node_name: Some(self.context.node_name().to_string()),
-                            target_node_name: Some(target_node_name),
-                            target_address: Some(target_address),
-                            target_port: Some(target_port),
-                            message: "Live migration in progress".to_string(),
-                            timestamp: Some(Time::now()),
-                        },
-                        "VmMigrating",
-                        "Live migration in progress".to_string(),
-                    )
-                    .await?;
-                Ok(true)
             }
             PHASE_MIGRATING => {
                 // Poll migration progress once per reconcile event instead of
@@ -363,68 +465,30 @@ impl<'a> MigrationStateMachine<'a> {
 
                 match phase {
                     VmMigrationPhase::Completed => {
-                        let spec_patch = serde_json::json!({
-                            "spec": {
-                                "nodeName": target_node_name,
-                                "targetNodeName": null,
-                            }
-                        });
-                        self.context.patch_ship(namespace, name, spec_patch).await?;
-
-                        let status_patch = serde_json::json!({
-                            "status": {
-                                "migration": {
-                                    "phase": PHASE_COMPLETED,
-                                    "sourceNodeName": self.context.node_name(),
-                                    "targetNodeName": target_node_name,
-                                    "targetAddress": target_address,
-                                    "targetPort": target_port,
-                                    "message": "Live migration completed successfully with preserved guest NIC identity",
-                                    "timestamp": Time::now(),
-                                },
-                                "conditions": [
-                                    {
-                                        "status": "VmMigrated",
-                                        "message": format!("VM migrated successfully to node '{target_node_name}' with deterministic bridge, interface, and MAC identity"),
-                                        "timestamp": Time::now(),
-                                    }
-                                ]
-                            }
-                        });
-                        self.context
-                            .patch_ship_status(namespace, name, status_patch)
-                            .await?;
-
-                        if let Err(err) = self.context.finish_source_migration(ship_id).await {
-                            error!(
-                                "Failed to clean up migrated source VM for ship '{}': {}",
-                                ship_id, err
-                            );
-                            // API server is already updated; log and continue.
-                        }
+                        self.finalize_completed_source_migration(
+                            ship_id,
+                            namespace,
+                            name,
+                            target_node_name,
+                            target_address,
+                            target_port,
+                        )
+                        .await?;
                         Ok(true)
                     }
                     VmMigrationPhase::Failed | VmMigrationPhase::Cancelled => {
                         let message = format!(
                             "Live migration did not complete (phase: {phase:?}). Source VM remains authoritative; clean up the target and retry when ready."
                         );
-                        self.context
-                            .update_migration_status(
-                                namespace,
-                                name,
-                                ShipMigrationStatus {
-                                    phase: PHASE_FAILED.to_string(),
-                                    source_node_name: Some(self.context.node_name().to_string()),
-                                    target_node_name: Some(target_node_name),
-                                    target_address: Some(target_address),
-                                    target_port: Some(target_port),
-                                    message: message.clone(),
-                                    timestamp: Some(Time::now()),
-                                },
-                                "VmMigrationFailed",
-                                message.clone(),
-                            )
-                            .await?;
+                        self.mark_source_migration_failed(
+                            namespace,
+                            name,
+                            target_node_name,
+                            Some(target_address),
+                            Some(target_port),
+                            message.clone(),
+                        )
+                        .await?;
                         Err(ReconcileError::Runtime(RuntimeError::MigrationFailed(
                             message,
                         )))
@@ -435,7 +499,32 @@ impl<'a> MigrationStateMachine<'a> {
                     }
                 }
             }
-            // PHASE_COMPLETED, PHASE_FAILED, or any unknown terminal phase.
+            PHASE_COMPLETED => {
+                let Some(target_address) = migration_status.target_address.clone() else {
+                    return Ok(true);
+                };
+                let Some(target_port) = migration_status.target_port else {
+                    return Ok(true);
+                };
+                let target_node_name = migration_status
+                    .target_node_name
+                    .clone()
+                    .unwrap_or(target_node_name);
+
+                if ship_spec.node_name.as_deref() == Some(self.context.node_name()) {
+                    self.finalize_completed_source_migration(
+                        ship_id,
+                        namespace,
+                        name,
+                        target_node_name,
+                        target_address,
+                        target_port,
+                    )
+                    .await?;
+                }
+                Ok(true)
+            }
+            // PHASE_FAILED or any unknown terminal phase.
             _ => Ok(true),
         }
     }
@@ -698,9 +787,13 @@ mod tests {
 
     struct FakeContext {
         node_name: String,
+        has_ship: bool,
         migration_phase: VmMigrationPhase,
         preflight: MigrationPreflight,
         updates: Mutex<Vec<StatusUpdate>>,
+        migrate_calls: Mutex<Vec<(String, u16)>>,
+        finish_calls: Mutex<usize>,
+        ship_patches: Mutex<Vec<serde_json::Value>>,
     }
 
     #[async_trait]
@@ -709,7 +802,7 @@ mod tests {
             &self.node_name
         }
         async fn has_ship(&self, _ship_id: &str) -> bool {
-            true
+            self.has_ship
         }
         async fn reconcile_deleted(&self, _ship: Ship) -> Result<(), ReconcileError> {
             Ok(())
@@ -724,9 +817,10 @@ mod tests {
         async fn migrate(
             &self,
             _ship_id: &str,
-            _addr: String,
-            _port: u16,
+            addr: String,
+            port: u16,
         ) -> Result<(), RuntimeError> {
+            self.migrate_calls.lock().unwrap().push((addr, port));
             Ok(())
         }
         async fn check_migration_status(
@@ -736,6 +830,7 @@ mod tests {
             Ok(self.migration_phase.clone())
         }
         async fn finish_source_migration(&self, _ship_id: &str) -> Result<(), RuntimeError> {
+            *self.finish_calls.lock().unwrap() += 1;
             Ok(())
         }
 
@@ -759,29 +854,29 @@ mod tests {
             &self,
             _namespace: &str,
             _name: &str,
-            _patch: serde_json::Value,
+            patch: serde_json::Value,
         ) -> Result<(), ReconcileError> {
+            self.ship_patches.lock().unwrap().push(patch);
             Ok(())
         }
+    }
 
-        async fn patch_ship_status(
-            &self,
-            _namespace: &str,
-            _name: &str,
-            _patch: serde_json::Value,
-        ) -> Result<(), ReconcileError> {
-            Ok(())
+    fn fake_context(node_name: &str, migration_phase: VmMigrationPhase) -> FakeContext {
+        FakeContext {
+            node_name: node_name.to_string(),
+            has_ship: true,
+            migration_phase,
+            preflight: MigrationPreflight::Ready,
+            updates: Mutex::new(Vec::new()),
+            migrate_calls: Mutex::new(Vec::new()),
+            finish_calls: Mutex::new(0),
+            ship_patches: Mutex::new(Vec::new()),
         }
     }
 
     #[tokio::test]
     async fn test_migration_not_for_me() {
-        let context = FakeContext {
-            node_name: "node-1".to_string(),
-            migration_phase: VmMigrationPhase::Completed,
-            preflight: MigrationPreflight::Ready,
-            updates: Mutex::new(Vec::new()),
-        };
+        let context = fake_context("node-1", VmMigrationPhase::Completed);
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
             object_meta: Some(ObjectMeta {
@@ -801,12 +896,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_migration_source_initial() {
-        let context = FakeContext {
-            node_name: "node-1".to_string(),
-            migration_phase: VmMigrationPhase::Completed,
-            preflight: MigrationPreflight::Ready,
-            updates: Mutex::new(Vec::new()),
-        };
+        let context = fake_context("node-1", VmMigrationPhase::Completed);
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
             object_meta: Some(ObjectMeta {
@@ -827,12 +917,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_migration_source_ready() {
-        let context = FakeContext {
-            node_name: "node-1".to_string(),
-            migration_phase: VmMigrationPhase::Completed,
-            preflight: MigrationPreflight::Ready,
-            updates: Mutex::new(Vec::new()),
-        };
+        let context = fake_context("node-1", VmMigrationPhase::None);
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
             object_meta: Some(ObjectMeta {
@@ -857,16 +942,21 @@ mod tests {
         };
         let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
         assert!(result);
+        assert_eq!(context.migrate_calls.lock().unwrap().len(), 1);
+        assert_eq!(
+            context
+                .updates
+                .lock()
+                .unwrap()
+                .last()
+                .map(|update| update.migration.phase.as_str()),
+            Some(PHASE_MIGRATING)
+        );
     }
 
     #[tokio::test]
     async fn test_migration_source_migrating_completed() {
-        let context = FakeContext {
-            node_name: "node-1".to_string(),
-            migration_phase: VmMigrationPhase::Completed,
-            preflight: MigrationPreflight::Ready,
-            updates: Mutex::new(Vec::new()),
-        };
+        let context = fake_context("node-1", VmMigrationPhase::Completed);
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
             object_meta: Some(ObjectMeta {
@@ -891,16 +981,13 @@ mod tests {
         };
         let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
         assert!(result);
+        assert_eq!(*context.finish_calls.lock().unwrap(), 1);
+        assert_eq!(context.ship_patches.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn test_migration_target_failed_cleanup() {
-        let context = FakeContext {
-            node_name: "target-node".to_string(),
-            migration_phase: VmMigrationPhase::Failed,
-            preflight: MigrationPreflight::Ready,
-            updates: Mutex::new(Vec::new()),
-        };
+        let context = fake_context("target-node", VmMigrationPhase::Failed);
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
             object_meta: Some(ObjectMeta {
@@ -929,10 +1016,8 @@ mod tests {
     #[tokio::test]
     async fn test_migration_preflight_rejection_marks_ship_failed() {
         let context = FakeContext {
-            node_name: "node-1".to_string(),
-            migration_phase: VmMigrationPhase::Completed,
             preflight: MigrationPreflight::Reject("target node is not CNI-ready".to_string()),
-            updates: Mutex::new(Vec::new()),
+            ..fake_context("node-1", VmMigrationPhase::Completed)
         };
         let sm = MigrationStateMachine::new(&context);
         let ship = Ship {
@@ -961,6 +1046,81 @@ mod tests {
                 .condition_message
                 .contains("Source VM remains on the source node")
         );
+    }
+
+    #[tokio::test]
+    async fn test_migration_source_ready_detects_existing_active_migration() {
+        let context = fake_context("node-1", VmMigrationPhase::Active);
+        let sm = MigrationStateMachine::new(&context);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("node-1".to_string()),
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_READY.to_string(),
+                    target_address: Some("1.2.3.4".to_string()),
+                    target_port: Some(1234),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
+        assert!(result);
+        assert!(context.migrate_calls.lock().unwrap().is_empty());
+        assert_eq!(
+            context
+                .updates
+                .lock()
+                .unwrap()
+                .last()
+                .map(|update| update.migration.phase.as_str()),
+            Some(PHASE_MIGRATING)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migration_completed_without_runtime_still_finalizes_cutover() {
+        let context = FakeContext {
+            has_ship: false,
+            ..fake_context("node-1", VmMigrationPhase::Completed)
+        };
+        let sm = MigrationStateMachine::new(&context);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("node-1".to_string()),
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_COMPLETED.to_string(),
+                    target_address: Some("1.2.3.4".to_string()),
+                    target_port: Some(1234),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
+        assert!(result);
+        assert_eq!(*context.finish_calls.lock().unwrap(), 0);
+        assert_eq!(context.ship_patches.lock().unwrap().len(), 1);
     }
 
     #[test]
