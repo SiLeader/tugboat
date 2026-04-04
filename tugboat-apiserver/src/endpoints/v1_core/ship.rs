@@ -14,7 +14,7 @@
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
-use crate::endpoints::resource_handlers::ReplaceOptions;
+use crate::endpoints::resource_handlers::{ReplaceOptions, ResourceUpdater};
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
@@ -24,6 +24,7 @@ use tugboat_resources::manifests::core::v1::{
     Ship, ShipCondition, ShipMigrationStatus, ShipStatus,
 };
 use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_resources::ShipMigrationExt;
 use utoipa::ToSchema;
 
 const PHASE_FAILED: &str = "Failed";
@@ -159,6 +160,8 @@ pub(super) struct ShipReplacePathParams {
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource updated", body = Ship),
+            (status = 400, description = "Invalid targetNodeName", body = StatusResponse),
+            (status = 409, description = "Migration is already in progress", body = StatusResponse),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -175,22 +178,39 @@ pub(super) async fn handle_ship_replace(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
     let path = path.into_inner();
-    resource_handlers::replace_resource::<Ship>(
-        &operator,
-        Some(path.namespace),
-        path.name,
-        replacement.into_inner(),
+    let namespace = path.namespace;
+    let name = path.name;
+    let current = get_current_ship(&operator, namespace.clone(), name.clone()).await?;
+    let replacement = replacement.into_inner();
+    let replaced = ResourceUpdater::new(
+        &current,
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,
         },
     )
-    .await
+    .apply_replacement(&replacement)?;
+    validate_ship_target_node_name_update(&current, &replaced)?;
+
+    let replaced = if current != replaced {
+        operator
+            .store
+            .put(replaced)
+            .await
+            .map_err(Box::<StatusResponse>::from)?
+            .apply_revision()
+    } else {
+        replaced
+    };
+
+    Ok(ModifyResponse::Updated(replaced))
 }
 
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource updated", body = Ship),
+            (status = 400, description = "Invalid targetNodeName", body = StatusResponse),
+            (status = 409, description = "Migration is already in progress", body = StatusResponse),
             (status = 404, description = "Resource not found", body = StatusResponse),
             (status = 500, description = "Internal server error", body = StatusResponse),
         ),
@@ -207,17 +227,31 @@ pub(super) async fn handle_ship_patch(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
     let path = path.into_inner();
-    resource_handlers::patch_resource::<Ship>(
-        &operator,
-        Some(path.namespace),
-        path.name,
-        patch.into_inner(),
+    let namespace = path.namespace;
+    let name = path.name;
+    let current = get_current_ship(&operator, namespace.clone(), name.clone()).await?;
+    let patched = ResourceUpdater::new(
+        &current,
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,
         },
     )
-    .await
+    .apply_patch(patch.into_inner())?;
+    validate_ship_target_node_name_update(&current, &patched)?;
+
+    let patched = if current != patched {
+        operator
+            .store
+            .put(patched)
+            .await
+            .map_err(Box::<StatusResponse>::from)?
+            .apply_revision()
+    } else {
+        patched
+    };
+
+    Ok(ModifyResponse::Updated(patched))
 }
 
 #[utoipa::path(
@@ -365,13 +399,82 @@ fn abort_ship_migration(mut ship: Ship) -> Result<Ship, Box<StatusResponse>> {
     Ok(ship)
 }
 
+async fn get_current_ship(
+    operator: &ApiOperator,
+    namespace: String,
+    name: String,
+) -> Result<Ship, Box<StatusResponse>> {
+    let current = operator
+        .store
+        .get::<Ship>(Some(namespace.clone()), &name)
+        .await
+        .map_err(Box::<StatusResponse>::from)?;
+    let Some(current) = current else {
+        return Err(Box::new(StatusResponse::not_found(
+            "Ship not found",
+            Some(serde_json::json!({
+                "namespace": namespace,
+                "name": name,
+            })),
+        )));
+    };
+
+    Ok(current.apply_revision())
+}
+
+fn validate_ship_target_node_name_update(
+    current: &Ship,
+    updated: &Ship,
+) -> Result<(), Box<StatusResponse>> {
+    let updated_spec = updated.spec.as_ref();
+    let updated_node_name = updated_spec.and_then(|spec| spec.node_name.as_deref());
+    let updated_target_node_name = updated_spec.and_then(|spec| spec.target_node_name.as_deref());
+
+    if matches!(updated_target_node_name, Some("")) {
+        return Err(Box::new(StatusResponse::bad_request(
+            "spec.targetNodeName must not be empty",
+            None,
+        )));
+    }
+
+    if updated_target_node_name.is_some() && updated_target_node_name == updated_node_name {
+        return Err(Box::new(StatusResponse::bad_request(
+            "spec.targetNodeName must differ from spec.nodeName",
+            None,
+        )));
+    }
+
+    let current_target_node_name = current
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.target_node_name.as_deref());
+
+    if current_target_node_name != updated_target_node_name && ship_has_active_migration(current) {
+        return Err(Box::new(StatusResponse::conflict(
+            "Cannot change spec.targetNodeName while migration is in progress; use /migrate/abort to cancel it first",
+            None,
+        )));
+    }
+
+    Ok(())
+}
+
+fn ship_has_active_migration(ship: &Ship) -> bool {
+    ship.has_active_migration()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        CONDITION_VM_MIGRATION_ABORTED, MIGRATION_ABORT_MESSAGE, PHASE_FAILED, abort_ship_migration,
+        CONDITION_VM_MIGRATION_ABORTED, MIGRATION_ABORT_MESSAGE, PHASE_FAILED,
+        abort_ship_migration, ship_has_active_migration, validate_ship_target_node_name_update,
     };
     use actix_web::ResponseError;
     use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
+
+    const PHASE_PENDING: &str = "Pending";
+    const PHASE_READY: &str = "Ready";
+    const PHASE_MIGRATING: &str = "Migrating";
 
     fn ship_with_target(target: &str) -> Ship {
         Ship {
@@ -465,5 +568,125 @@ mod tests {
         let err = abort_ship_migration(Ship::default()).expect_err("abort should fail");
 
         assert_eq!(err.status_code().as_u16(), 409);
+    }
+
+    #[test]
+    fn validate_target_node_name_rejects_empty_string() {
+        let updated = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-a".to_string()),
+                target_node_name: Some(String::new()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let err = validate_ship_target_node_name_update(&Ship::default(), &updated)
+            .expect_err("empty target node name should fail");
+
+        assert_eq!(err.status_code().as_u16(), 400);
+    }
+
+    #[test]
+    fn validate_target_node_name_rejects_same_as_node_name() {
+        let updated = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-a".to_string()),
+                target_node_name: Some("node-a".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let err = validate_ship_target_node_name_update(&Ship::default(), &updated)
+            .expect_err("same target and current node should fail");
+
+        assert_eq!(err.status_code().as_u16(), 400);
+    }
+
+    #[test]
+    fn validate_target_node_name_rejects_change_during_active_migration() {
+        let current = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-a".to_string()),
+                target_node_name: Some("node-b".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_READY.to_string(),
+                    target_node_name: Some("node-b".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let updated = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-a".to_string()),
+                target_node_name: Some("node-c".to_string()),
+                ..Default::default()
+            }),
+            status: current.status.clone(),
+            ..Default::default()
+        };
+
+        let err = validate_ship_target_node_name_update(&current, &updated)
+            .expect_err("retargeting active migration should fail");
+
+        assert_eq!(err.status_code().as_u16(), 409);
+    }
+
+    #[test]
+    fn validate_target_node_name_allows_unchanged_target_during_active_migration() {
+        let current = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-a".to_string()),
+                target_node_name: Some("node-b".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_MIGRATING.to_string(),
+                    target_node_name: Some("node-b".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        validate_ship_target_node_name_update(&current, &current)
+            .expect("unchanged target should be allowed");
+    }
+
+    #[test]
+    fn ship_has_active_migration_matches_expected_phases() {
+        for phase in [PHASE_PENDING, PHASE_READY, PHASE_MIGRATING] {
+            let ship = Ship {
+                status: Some(ShipStatus {
+                    migration: Some(ShipMigrationStatus {
+                        phase: phase.to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            assert!(ship_has_active_migration(&ship), "phase={phase}");
+        }
+
+        let ship = Ship {
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_FAILED.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!ship_has_active_migration(&ship));
     }
 }
