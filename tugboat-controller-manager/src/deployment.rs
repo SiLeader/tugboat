@@ -5,6 +5,7 @@ use serde_json::{Value, to_string};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::Duration;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
@@ -453,12 +454,10 @@ impl DeploymentReconciler {
         &self,
         namespace: &str,
         dep: &Deployment,
+        managed: &[&ReplicaSet],
     ) -> Result<(), ControllerError> {
-        let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), namespace);
-        let replicasets = rs_api.list().await?;
-        let managed = managed_replicasets(&replicasets, dep);
-        let active = active_replicaset(&managed);
-        let new_status = build_deployment_status(&managed, active);
+        let active = active_replicaset(managed);
+        let new_status = build_deployment_status(managed, active);
 
         if dep.status.as_ref() == Some(&new_status) {
             return Ok(());
@@ -801,12 +800,26 @@ impl DeploymentReconciler {
             }
         }?;
 
+        let stale_replicaset_names: HashSet<&str> = stale_replicasets
+            .iter()
+            .filter_map(|rs| rs.name())
+            .collect();
         for rs in stale_replicasets {
             let name = rs.name().unwrap_or_default().to_string();
             rs_api.delete(&name).await?;
         }
 
-        self.sync_deployment_status(namespace, &dep).await?;
+        let managed_for_status: Vec<&ReplicaSet> = managed
+            .iter()
+            .copied()
+            .filter(|rs| {
+                rs.name()
+                    .map(|name| !stale_replicaset_names.contains(name))
+                    .unwrap_or(true)
+            })
+            .collect();
+        self.sync_deployment_status(namespace, &dep, &managed_for_status)
+            .await?;
 
         Ok(action)
     }

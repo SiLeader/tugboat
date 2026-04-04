@@ -1,5 +1,6 @@
 use crate::base::TugboatController;
 use crate::error::ControllerError;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
@@ -13,6 +14,8 @@ use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta};
 
 const FLEET_NAME_LABEL: &str = "fleet-name";
 const FLEET_COMPONENT_LABEL: &str = "fleet-component";
+const SHIP_TEMPLATE_HASH_LABEL: &str = "ship-template-hash";
+const TEMPLATE_HASH_BYTES: usize = 8;
 
 #[derive(Clone)]
 struct FleetReconciler {
@@ -96,6 +99,43 @@ fn find_rs_for_component<'a>(
         .find(|rs| component_name(rs) == Some(target_component_name))
 }
 
+fn component_replicasets<'a>(
+    replicasets: &'a [&ReplicaSet],
+    target_component_name: &str,
+) -> Vec<&'a ReplicaSet> {
+    replicasets
+        .iter()
+        .copied()
+        .filter(|rs| component_name(rs) == Some(target_component_name))
+        .collect()
+}
+
+fn replicaset_creation_sort_key(rs: &ReplicaSet) -> (i64, i32, String) {
+    let (seconds, nanos) = rs
+        .object_meta()
+        .as_ref()
+        .and_then(|meta| meta.creation_timestamp.as_ref())
+        .map(|time| (time.seconds, time.nanos))
+        .unwrap_or((0, 0));
+    (seconds, nanos, rs.name().unwrap_or_default().to_string())
+}
+
+fn active_replicaset<'a>(replicasets: &'a [&ReplicaSet]) -> Option<&'a ReplicaSet> {
+    replicasets
+        .iter()
+        .copied()
+        .max_by_key(|rs| replicaset_creation_sort_key(rs))
+}
+
+fn template_hash(template: &ShipTemplateSpec) -> String {
+    let json = serde_json::to_vec(template).unwrap_or_default();
+    let hash = Sha256::digest(json);
+    hash[..TEMPLATE_HASH_BYTES]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn inject_fleet_network(template: &mut ShipTemplateSpec, network_class_name: &str) {
     let spec = template.spec.get_or_insert_with(Default::default);
     if !spec
@@ -118,19 +158,19 @@ fn build_replicaset_for_component(
 ) -> ReplicaSet {
     let fleet_name = fleet.name().unwrap_or_default();
     let namespace = fleet.namespace().map(str::to_string);
+    let template = desired_component_template(component, network_class_name);
+    let hash = template_hash(&template);
     let selector: HashMap<String, String> = [
         (FLEET_NAME_LABEL.to_string(), fleet_name.to_string()),
         (FLEET_COMPONENT_LABEL.to_string(), component.name.clone()),
+        (SHIP_TEMPLATE_HASH_LABEL.to_string(), hash.clone()),
     ]
     .into_iter()
     .collect();
 
-    let mut template = component.ship_template.clone().unwrap_or_default();
-    inject_fleet_network(&mut template, network_class_name);
-
     let mut rs = ReplicaSet {
         object_meta: Some(ObjectMeta {
-            name: Some(format!("{fleet_name}-{}", component.name)),
+            name: Some(format!("{fleet_name}-{}-{hash}", component.name)),
             namespace,
             labels: selector.clone(),
             owner_references: vec![owner_reference_for_fleet(fleet)],
@@ -148,28 +188,55 @@ fn build_replicaset_for_component(
     rs
 }
 
-fn update_replicaset_for_component(
-    rs: &ReplicaSet,
+fn desired_component_template(
     component: &FleetComponent,
     network_class_name: &str,
-) -> Option<ReplicaSet> {
-    let mut updated = rs.clone();
-    let rs_spec = updated.spec.get_or_insert_with(ReplicaSetSpec::default);
-    let mut changed = false;
-
-    if rs_spec.replicas != Some(component.replicas) {
-        rs_spec.replicas = Some(component.replicas);
-        changed = true;
-    }
-
+) -> ShipTemplateSpec {
     let mut desired_template = component.ship_template.clone().unwrap_or_default();
     inject_fleet_network(&mut desired_template, network_class_name);
-    if rs_spec.ship_template != Some(desired_template.clone()) {
-        rs_spec.ship_template = Some(desired_template);
-        changed = true;
-    }
+    desired_template
+}
 
-    changed.then_some(updated)
+fn replicaset_template_hash(rs: &ReplicaSet) -> Option<&str> {
+    rs.object_meta()
+        .as_ref()
+        .and_then(|meta| meta.labels.get(SHIP_TEMPLATE_HASH_LABEL))
+        .map(String::as_str)
+        .or_else(|| {
+            rs.spec
+                .as_ref()
+                .and_then(|spec| spec.selector.get(SHIP_TEMPLATE_HASH_LABEL))
+                .map(String::as_str)
+        })
+}
+
+fn find_replicaset_for_template<'a>(
+    replicasets: &'a [&ReplicaSet],
+    desired_hash: &str,
+) -> Option<&'a ReplicaSet> {
+    replicasets
+        .iter()
+        .copied()
+        .find(|rs| replicaset_template_hash(rs) == Some(desired_hash))
+}
+
+fn update_replicaset_replicas(rs: &ReplicaSet, replicas: i32) -> Option<ReplicaSet> {
+    let mut updated = rs.clone();
+    let rs_spec = updated.spec.get_or_insert_with(ReplicaSetSpec::default);
+    if rs_spec.replicas == Some(replicas) {
+        return None;
+    }
+    rs_spec.replicas = Some(replicas);
+    Some(updated)
+}
+
+fn replicaset_ready(rs: &ReplicaSet, desired_replicas: i32) -> bool {
+    rs.status
+        .as_ref()
+        .map(|status| {
+            status.ready_replicas >= desired_replicas && status.replicas >= desired_replicas
+        })
+        .unwrap_or(false)
 }
 
 async fn create_replicaset_if_absent(
@@ -195,8 +262,22 @@ async fn delete_replicaset_ignore_not_found(
 }
 
 fn fleet_status(owned_replicasets: &[&ReplicaSet], total_components: usize) -> FleetStatus {
-    let ready_components = owned_replicasets
-        .iter()
+    let mut latest_by_component: HashMap<&str, &ReplicaSet> = HashMap::new();
+    for rs in owned_replicasets {
+        let Some(name) = component_name(rs) else {
+            continue;
+        };
+        match latest_by_component.get(name) {
+            Some(current)
+                if replicaset_creation_sort_key(current) >= replicaset_creation_sort_key(rs) => {}
+            _ => {
+                latest_by_component.insert(name, rs);
+            }
+        }
+    }
+
+    let ready_components = latest_by_component
+        .into_values()
         .filter(|rs| {
             rs.status
                 .as_ref()
@@ -262,15 +343,51 @@ impl FleetReconciler {
         let managed = managed_replicasets(&replicasets, &fleet);
 
         for component in &fleet_spec.components {
-            if let Some(existing_rs) = find_rs_for_component(&managed, &component.name) {
-                if let Some(updated_rs) = update_replicaset_for_component(
-                    existing_rs,
-                    component,
-                    &fleet_spec.network_class_name,
-                ) {
+            let component_replicasets = component_replicasets(&managed, &component.name);
+            let desired_hash = template_hash(&desired_component_template(
+                component,
+                &fleet_spec.network_class_name,
+            ));
+
+            if let Some(desired_rs) =
+                find_replicaset_for_template(&component_replicasets, &desired_hash)
+            {
+                if let Some(updated_rs) = update_replicaset_replicas(desired_rs, component.replicas)
+                {
                     rs_api
-                        .replace(existing_rs.name().unwrap_or_default(), updated_rs)
+                        .replace(desired_rs.name().unwrap_or_default(), updated_rs)
                         .await?;
+                    return Ok(Action::requeue(Duration::from_secs(2)));
+                }
+
+                if component_replicasets
+                    .iter()
+                    .any(|rs| rs.name() != desired_rs.name())
+                    && !replicaset_ready(desired_rs, component.replicas)
+                {
+                    return Ok(Action::requeue(Duration::from_secs(2)));
+                }
+
+                for rs in component_replicasets.iter().copied() {
+                    if rs.name() == desired_rs.name() {
+                        continue;
+                    }
+                    if let Some(updated_rs) = update_replicaset_replicas(rs, 0) {
+                        rs_api
+                            .replace(rs.name().unwrap_or_default(), updated_rs)
+                            .await?;
+                        return Ok(Action::requeue(Duration::from_secs(2)));
+                    }
+                    if rs
+                        .status
+                        .as_ref()
+                        .map(|status| status.replicas == 0)
+                        .unwrap_or(true)
+                    {
+                        delete_replicaset_ignore_not_found(&rs_api, rs.name().unwrap_or_default())
+                            .await?;
+                        return Ok(Action::requeue(Duration::from_secs(2)));
+                    }
                 }
                 continue;
             }
@@ -343,9 +460,11 @@ impl Reconciler<Fleet> for FleetReconciler {
 #[cfg(test)]
 mod tests {
     use super::{
-        FLEET_COMPONENT_LABEL, FLEET_NAME_LABEL, build_replicaset_for_component, component_name,
-        find_rs_for_component, fleet_status, inject_fleet_network, is_owned_by_fleet,
-        managed_replicasets, owner_reference_for_fleet, update_replicaset_for_component,
+        FLEET_COMPONENT_LABEL, FLEET_NAME_LABEL, SHIP_TEMPLATE_HASH_LABEL, active_replicaset,
+        build_replicaset_for_component, component_name, component_replicasets,
+        find_replicaset_for_template, find_rs_for_component, fleet_status, inject_fleet_network,
+        is_owned_by_fleet, managed_replicasets, owner_reference_for_fleet,
+        replicaset_template_hash, template_hash, update_replicaset_replicas,
     };
     use tugboat_resources::ObjectMetaResource;
     use tugboat_resources::manifests::apps::v1::{
@@ -387,9 +506,18 @@ mod tests {
     }
 
     fn managed_rs(component_name: &str) -> ReplicaSet {
+        let template = ShipTemplateSpec {
+            spec: Some(ShipSpec {
+                image: "ghcr.io/example/demo:v1".to_string(),
+                ship_class: "standard".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let hash = template_hash(&template);
         ReplicaSet {
             object_meta: Some(ObjectMeta {
-                name: Some(format!("demo-{component_name}")),
+                name: Some(format!("demo-{component_name}-{hash}")),
                 namespace: Some("default".to_string()),
                 labels: [
                     (FLEET_NAME_LABEL.to_string(), "demo".to_string()),
@@ -397,6 +525,7 @@ mod tests {
                         FLEET_COMPONENT_LABEL.to_string(),
                         component_name.to_string(),
                     ),
+                    (SHIP_TEMPLATE_HASH_LABEL.to_string(), hash.clone()),
                 ]
                 .into_iter()
                 .collect(),
@@ -417,17 +546,11 @@ mod tests {
                         FLEET_COMPONENT_LABEL.to_string(),
                         component_name.to_string(),
                     ),
+                    (SHIP_TEMPLATE_HASH_LABEL.to_string(), hash),
                 ]
                 .into_iter()
                 .collect(),
-                ship_template: Some(ShipTemplateSpec {
-                    spec: Some(ShipSpec {
-                        image: "ghcr.io/example/demo:v1".to_string(),
-                        ship_class: "standard".to_string(),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
+                ship_template: Some(template),
             }),
             ..Default::default()
         }
@@ -511,7 +634,9 @@ mod tests {
         let spec = rs.spec.as_ref().unwrap();
         let template_spec = spec.ship_template.as_ref().unwrap().spec.as_ref().unwrap();
 
-        assert_eq!(meta.name.as_deref(), Some("demo-api"));
+        let template_hash = template_hash(spec.ship_template.as_ref().unwrap());
+        let expected_name = format!("demo-api-{template_hash}");
+        assert_eq!(meta.name.as_deref(), Some(expected_name.as_str()));
         assert_eq!(meta.namespace.as_deref(), Some("default"));
         assert_eq!(
             meta.labels.get(FLEET_NAME_LABEL).map(String::as_str),
@@ -530,6 +655,12 @@ mod tests {
             spec.selector.get(FLEET_COMPONENT_LABEL).map(String::as_str),
             Some("api")
         );
+        assert_eq!(
+            meta.labels
+                .get(SHIP_TEMPLATE_HASH_LABEL)
+                .map(String::as_str),
+            Some(template_hash.as_str())
+        );
         assert_eq!(template_spec.image, "ghcr.io/example/api:v1");
         assert_eq!(
             template_spec.network_class_ref,
@@ -542,36 +673,23 @@ mod tests {
     }
 
     #[test]
-    fn update_replicaset_for_component_updates_replicas_and_template() {
+    fn update_replicaset_replicas_updates_replicas_only() {
         let rs = managed_rs("api");
-        let component = component("api", 4, "ghcr.io/example/api:v2");
-
-        let updated = update_replicaset_for_component(&rs, &component, "overlay").unwrap();
-        let spec = updated.spec.unwrap();
-        let template_spec = spec.ship_template.unwrap().spec.unwrap();
+        let updated = update_replicaset_replicas(&rs, 4).unwrap();
+        let spec = updated.spec.as_ref().unwrap();
 
         assert_eq!(spec.replicas, Some(4));
-        assert_eq!(template_spec.image, "ghcr.io/example/api:v2");
         assert_eq!(
-            template_spec.network_class_ref,
-            vec![ShipNetworkClassReference {
-                kind: "ClusterNetworkClass".to_string(),
-                name: "overlay".to_string(),
-                api_group: "core".to_string(),
-            }]
+            replicaset_template_hash(&updated),
+            replicaset_template_hash(&rs)
         );
     }
 
     #[test]
-    fn update_replicaset_for_component_returns_none_when_unchanged() {
-        let mut rs = managed_rs("api");
-        inject_fleet_network(
-            rs.spec.as_mut().unwrap().ship_template.as_mut().unwrap(),
-            "overlay",
-        );
-        let component = component("api", 1, "ghcr.io/example/demo:v1");
+    fn update_replicaset_replicas_returns_none_when_unchanged() {
+        let rs = managed_rs("api");
 
-        assert!(update_replicaset_for_component(&rs, &component, "overlay").is_none());
+        assert!(update_replicaset_replicas(&rs, 1).is_none());
     }
 
     #[test]
@@ -585,7 +703,11 @@ mod tests {
         let managed = managed_replicasets(&replicasets, &fleet);
 
         assert_eq!(managed.len(), 1);
-        assert_eq!(managed[0].name(), Some("demo-api"));
+        assert!(
+            managed[0]
+                .name()
+                .is_some_and(|name| name.starts_with("demo-api-"))
+        );
         assert!(is_owned_by_fleet(managed[0], &fleet));
     }
 
@@ -619,6 +741,68 @@ mod tests {
                 ready_components: 1,
                 total_components: 3,
             }
+        );
+    }
+
+    #[test]
+    fn fleet_status_counts_only_latest_revision_per_component() {
+        let mut old = managed_rs("api");
+        old.object_meta.as_mut().unwrap().creation_timestamp =
+            Some(tugboat_resources::manifests::meta::v1::Time {
+                seconds: 1,
+                nanos: 0,
+            });
+        old.status = Some(ReplicaSetStatus {
+            replicas: 1,
+            ready_replicas: 1,
+        });
+
+        let mut new = managed_rs("api");
+        new.object_meta.as_mut().unwrap().creation_timestamp =
+            Some(tugboat_resources::manifests::meta::v1::Time {
+                seconds: 2,
+                nanos: 0,
+            });
+        new.status = Some(ReplicaSetStatus {
+            replicas: 1,
+            ready_replicas: 0,
+        });
+
+        assert_eq!(
+            fleet_status(&[&old, &new], 1),
+            FleetStatus {
+                ready_components: 0,
+                total_components: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn component_replicasets_and_template_lookup_select_latest_matching_revision() {
+        let old = managed_rs("api");
+        let mut current = build_replicaset_for_component(
+            &fleet(),
+            &component("api", 2, "ghcr.io/example/api:v2"),
+            "overlay",
+        );
+        current.object_meta.as_mut().unwrap().creation_timestamp =
+            Some(tugboat_resources::manifests::meta::v1::Time {
+                seconds: 1,
+                nanos: 0,
+            });
+        let replicasets = vec![&old, &current];
+        let hash = replicaset_template_hash(&current).unwrap().to_string();
+
+        let component_sets = component_replicasets(&replicasets, "api");
+
+        assert_eq!(component_sets.len(), 2);
+        assert_eq!(
+            find_replicaset_for_template(&component_sets, &hash).and_then(|rs| rs.name()),
+            current.name()
+        );
+        assert_eq!(
+            active_replicaset(&replicasets).and_then(|rs| rs.name()),
+            current.name()
         );
     }
 }

@@ -282,7 +282,7 @@ impl ReplicaSetReconciler {
         }
 
         let mut updated_any = false;
-        for ship in matching_ships {
+        for ship in &matching_ships {
             let Some(ship_spec) = ship.spec.as_ref() else {
                 continue;
             };
@@ -292,19 +292,18 @@ impl ReplicaSetReconciler {
             let Some(name) = ship.name() else {
                 continue;
             };
-            let mut updated = ship.clone();
+            let mut updated = (*ship).clone();
             apply_template_spec(&mut updated, &template_spec);
             ship_api.replace(name, updated).await?;
             updated_any = true;
+            break;
         }
 
         if updated_any {
             return Ok(Action::requeue(Duration::from_secs(5)));
         }
 
-        let latest_ships = ship_api.list().await?;
-        let latest_owned_ships = owned_ships(&latest_ships, selector);
-        let new_status = build_replicaset_status(&latest_owned_ships);
+        let new_status = build_replicaset_status(&matching_ships);
 
         if rs.status.as_ref() != Some(&new_status) {
             let mut updated = rs.clone();
