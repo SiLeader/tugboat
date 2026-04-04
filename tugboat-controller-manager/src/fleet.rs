@@ -89,6 +89,7 @@ fn component_name(rs: &ReplicaSet) -> Option<&str> {
         })
 }
 
+#[cfg(test)]
 fn find_rs_for_component<'a>(
     replicasets: &'a [&ReplicaSet],
     target_component_name: &str,
@@ -120,6 +121,7 @@ fn replicaset_creation_sort_key(rs: &ReplicaSet) -> (i64, i32, String) {
     (seconds, nanos, rs.name().unwrap_or_default().to_string())
 }
 
+#[cfg(test)]
 fn active_replicaset<'a>(replicasets: &'a [&ReplicaSet]) -> Option<&'a ReplicaSet> {
     replicasets
         .iter()
