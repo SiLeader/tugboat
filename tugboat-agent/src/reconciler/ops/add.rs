@@ -17,8 +17,10 @@ use crate::csi::{
 };
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
-use crate::reconciler::ops::PHASE_READY;
 use crate::reconciler::ops::add_helpers::{validate_recovered_published_volumes, vm_volume_config};
+use crate::reconciler::ops::{
+    PHASE_COMPLETED, PHASE_FAILED, PHASE_MIGRATING, PHASE_PENDING, PHASE_READY,
+};
 use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::VolumeInfo;
 use crate::runtime::RuntimeCreateRequest;
@@ -67,6 +69,45 @@ fn runtime_fingerprints_for_ship(
         super::ShipFingerprints::new(&migrated_spec)
     } else {
         super::ShipFingerprints::new(ship_spec)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecoveredRuntimeAction {
+    Register,
+    RecreateTarget,
+    CleanupFailedTarget,
+}
+
+fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
+    if let Some(existing) = conditions
+        .iter_mut()
+        .find(|existing| existing.status == condition.status)
+    {
+        *existing = condition;
+    } else {
+        conditions.push(condition);
+    }
+}
+
+fn recovered_runtime_action(ship: &Ship, local_node_name: &str) -> RecoveredRuntimeAction {
+    let Some(spec) = ship.spec.as_ref() else {
+        return RecoveredRuntimeAction::Register;
+    };
+    if spec.target_node_name.as_deref() != Some(local_node_name) {
+        return RecoveredRuntimeAction::Register;
+    }
+
+    match ship
+        .status
+        .as_ref()
+        .and_then(|status| status.migration.as_ref())
+        .map(|migration| migration.phase.as_str())
+    {
+        Some(PHASE_FAILED) => RecoveredRuntimeAction::CleanupFailedTarget,
+        None | Some(PHASE_PENDING) => RecoveredRuntimeAction::RecreateTarget,
+        Some(PHASE_READY | PHASE_MIGRATING | PHASE_COMPLETED) => RecoveredRuntimeAction::Register,
+        Some(_) => RecoveredRuntimeAction::Register,
     }
 }
 
@@ -144,6 +185,27 @@ impl ShipReconciler {
         let runtime_fingerprints = runtime_fingerprints_for_ship(ship_spec, &self.node_name)?;
 
         if self.runtime_operator.is_present(ship_id).await? {
+            match recovered_runtime_action(&ship, &self.node_name) {
+                RecoveredRuntimeAction::CleanupFailedTarget => {
+                    info!(
+                        "Recovered stale failed migration target for ship '{}', cleaning it up",
+                        ship_id
+                    );
+                    self.reconcile_deleted(ship.clone()).await?;
+                    return Ok(());
+                }
+                RecoveredRuntimeAction::RecreateTarget => {
+                    info!(
+                        "Recovered incomplete migration target for ship '{}', recreating receiver",
+                        ship_id
+                    );
+                    self.reconcile_deleted(ship.clone()).await?;
+                }
+                RecoveredRuntimeAction::Register => {}
+            }
+        }
+
+        if self.runtime_operator.is_present(ship_id).await? {
             let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
             let planned_published_volumes = self
                 .plan_desired_published_volumes(ship_id, &volumes)
@@ -210,46 +272,64 @@ impl ShipReconciler {
             };
         let ship_for_migration_ready = ship.clone();
 
-        self.with_cleanup(ship_id, published_volumes.as_slice(), &volumes, || {
-            let volumes = vm_volumes;
-            let published_volumes = published_volumes.clone();
-            let ship_for_migration_ready = ship_for_migration_ready.clone();
-            async move {
-                debug!("Setup virtual machine");
-                if let Err(err) = self
-                    .runtime_operator
-                    .create(RuntimeCreateRequest {
-                        ship_id: ship_id.clone(),
-                        ship_name: name.clone(),
-                        namespace,
-                        ship_spec,
-                        ship_class: class,
-                        incoming_port,
-                        networks: networks.iter().map(|n| n.vm.clone()).collect(),
-                        volumes,
-                        fingerprints: runtime_fingerprints.clone(),
-                        published_volumes,
-                    })
-                    .await
-                {
-                    return Err(err.into());
+        let result = self
+            .with_cleanup(ship_id, published_volumes.as_slice(), &volumes, || {
+                let volumes = vm_volumes;
+                let published_volumes = published_volumes.clone();
+                let ship_for_migration_ready = ship_for_migration_ready.clone();
+                async move {
+                    debug!("Setup virtual machine");
+                    if let Err(err) = self
+                        .runtime_operator
+                        .create(RuntimeCreateRequest {
+                            ship_id: ship_id.clone(),
+                            ship_name: name.clone(),
+                            namespace,
+                            ship_spec,
+                            ship_class: class,
+                            incoming_port,
+                            networks: networks.iter().map(|n| n.vm.clone()).collect(),
+                            volumes,
+                            fingerprints: runtime_fingerprints.clone(),
+                            published_volumes,
+                        })
+                        .await
+                    {
+                        return Err(err.into());
+                    }
+                    debug!("Creating network resources");
+                    if let Err(err) = self.cni.add(ship_id, networks).await {
+                        return Err(err.into());
+                    }
+                    debug!("Starting runtime operator");
+                    if let Err(err) = self.runtime_operator.start(ship_id).await {
+                        return Err(err.into());
+                    }
+                    if let Some(port) = incoming_port {
+                        self.mark_migration_target_ready(&ship_for_migration_ready, port)
+                            .await?;
+                    }
+                    Ok(())
                 }
-                debug!("Creating network resources");
-                if let Err(err) = self.cni.add(ship_id, networks).await {
-                    return Err(err.into());
-                }
-                debug!("Starting runtime operator");
-                if let Err(err) = self.runtime_operator.start(ship_id).await {
-                    return Err(err.into());
-                }
-                if let Some(port) = incoming_port {
-                    self.mark_migration_target_ready(&ship_for_migration_ready, port)
-                        .await?;
-                }
-                Ok(())
-            }
-        })
-        .await
+            })
+            .await;
+
+        if let Err(err) = &result
+            && incoming_port.is_some()
+            && let Err(status_err) = self
+                .mark_migration_target_failed(
+                    &ship,
+                    format!(
+                        "Failed to prepare migration target on node '{}': {err}. Source VM remains authoritative.",
+                        self.node_name
+                    ),
+                )
+                .await
+        {
+            error!("Failed to publish migration target failure status: {status_err}");
+        }
+
+        result
     }
 
     async fn local_node_address(&self) -> Result<String, ReconcileError> {
@@ -310,6 +390,22 @@ impl ShipReconciler {
         let namespace = ship.namespace().unwrap_or("default");
         let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
         let target_address = self.local_node_address().await?;
+        let mut conditions = api
+            .get(name)
+            .await?
+            .and_then(|ship| ship.status)
+            .map(|status| status.conditions)
+            .unwrap_or_default();
+        upsert_ship_condition(
+            &mut conditions,
+            ShipCondition {
+                status: "VmMigrationTargetReady".to_string(),
+                message: format!(
+                    "VM is listening for incoming migration on {target_address}:{port} with deterministic NIC names and MAC addresses"
+                ),
+                timestamp: Some(Time::now()),
+            },
+        );
 
         let patch = serde_json::json!({
             "status": {
@@ -319,16 +415,56 @@ impl ShipReconciler {
                     "targetNodeName": self.node_name,
                     "targetAddress": target_address,
                     "targetPort": port,
-                    "message": "Target VM is ready to accept incoming migration",
+                    "message": "Target VM is ready to accept incoming migration with the same guest NIC identity",
                     "timestamp": Time::now(),
                 },
-                "conditions": [
-                    {
-                        "status": "VmMigrationTargetReady",
-                        "message": format!("VM is listening for incoming migration on {target_address}:{port}"),
-                        "timestamp": Time::now(),
-                    }
-                ]
+                "conditions": conditions
+            }
+        });
+
+        api.patch_status(name, patch).await?;
+        Ok(())
+    }
+
+    async fn mark_migration_target_failed(
+        &self,
+        ship: &Ship,
+        message: String,
+    ) -> Result<(), ReconcileError> {
+        let Some(name) = ship.name() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.name".to_string(),
+            ));
+        };
+        let namespace = ship.namespace().unwrap_or("default");
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
+        let condition_message = message.clone();
+        let mut conditions = api
+            .get(name)
+            .await?
+            .and_then(|ship| ship.status)
+            .map(|status| status.conditions)
+            .unwrap_or_default();
+        upsert_ship_condition(
+            &mut conditions,
+            ShipCondition {
+                status: "VmMigrationFailed".to_string(),
+                message: condition_message.clone(),
+                timestamp: Some(Time::now()),
+            },
+        );
+
+        let patch = serde_json::json!({
+            "status": {
+                "migration": {
+                    "phase": PHASE_FAILED,
+                    "sourceNodeName": ship.spec.as_ref().and_then(|spec| spec.node_name.clone()),
+                    "targetNodeName": self.node_name,
+                    "message": message,
+                    "timestamp": Time::now(),
+                },
+                "conditions": conditions
             }
         });
 
@@ -611,8 +747,12 @@ impl ShipReconciler {
 
 #[cfg(test)]
 mod tests {
-    use super::best_effort_stale_volume_cleanup;
+    use super::{
+        RecoveredRuntimeAction, best_effort_stale_volume_cleanup, recovered_runtime_action,
+    };
     use crate::reconciler::error::ReconcileError;
+    use crate::reconciler::ops::{PHASE_COMPLETED, PHASE_FAILED, PHASE_PENDING, PHASE_READY};
+    use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
 
     #[test]
     fn best_effort_stale_volume_cleanup_keeps_success_values() {
@@ -633,5 +773,97 @@ mod tests {
         );
 
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn recovered_target_runtime_is_recreated_when_receiver_was_never_published_ready() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_PENDING.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recovered_runtime_action(&ship, "node-2"),
+            RecoveredRuntimeAction::RecreateTarget
+        );
+    }
+
+    #[test]
+    fn recovered_failed_target_runtime_is_cleaned_up() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_FAILED.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recovered_runtime_action(&ship, "node-2"),
+            RecoveredRuntimeAction::CleanupFailedTarget
+        );
+    }
+
+    #[test]
+    fn recovered_ready_target_runtime_is_registered() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_READY.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recovered_runtime_action(&ship, "node-2"),
+            RecoveredRuntimeAction::Register
+        );
+    }
+
+    #[test]
+    fn recovered_completed_target_runtime_is_registered() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_COMPLETED.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            recovered_runtime_action(&ship, "node-2"),
+            RecoveredRuntimeAction::Register
+        );
     }
 }

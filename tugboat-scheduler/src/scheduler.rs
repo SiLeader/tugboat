@@ -133,6 +133,8 @@ impl Scheduler {
             all_network_classes: cache.network_classes().to_vec(),
             all_ships: cache.ships().to_vec(),
             all_ship_classes: cache.ship_classes().to_vec(),
+            all_persistent_volume_claims: cache.persistent_volume_claims().to_vec(),
+            all_persistent_volumes: cache.persistent_volumes().to_vec(),
         };
 
         let Some(selected_node) = self.framework.schedule(&ctx, cache.nodes()) else {

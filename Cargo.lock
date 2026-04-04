@@ -3282,6 +3282,7 @@ dependencies = [
  "tracing-subscriber",
  "tugboat-resource-store",
  "tugboat-resources",
+ "tugboat-scheduler",
  "utoipa",
  "utoipa-actix-web",
  "uuid",

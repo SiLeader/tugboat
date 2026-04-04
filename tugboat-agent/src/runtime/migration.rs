@@ -14,7 +14,10 @@
 
 use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
-use tugboat_vm_runtime_interface::migrate::{VmMigrateRequest, VmMigrationPhase};
+use tugboat_vm_runtime_interface::migrate::{
+    VmMigrateCancelRequest, VmMigrateRequest, VmMigrationParams, VmMigrationStatusResponse,
+};
+use tugboat_vm_runtime_interface::status::VmStatus;
 use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
 
 impl RuntimeOperator {
@@ -23,12 +26,16 @@ impl RuntimeOperator {
         id: &str,
         destination_address: String,
         destination_port: u16,
+        params: VmMigrationParams,
     ) -> Result<(), RuntimeError> {
         self.operator
             .migrate(VmMigrateRequest {
                 id: id.to_string(),
                 destination_address,
                 destination_port,
+                max_bandwidth_bytes_per_sec: params.max_bandwidth_bytes_per_sec,
+                downtime_limit_ms: params.downtime_limit_ms,
+                xbzrle_cache_size_bytes: params.xbzrle_cache_size_bytes,
             })
             .await?;
         Ok(())
@@ -39,9 +46,23 @@ impl RuntimeOperator {
     pub(crate) async fn check_migration_status(
         &self,
         id: &str,
-    ) -> Result<VmMigrationPhase, RuntimeError> {
-        let status = self.operator.migration_status(id).await?;
-        Ok(status.phase)
+    ) -> Result<VmMigrationStatusResponse, RuntimeError> {
+        Ok(self.operator.migration_status(id).await?)
+    }
+
+    pub(crate) async fn status(&self, id: &str) -> Result<Option<VmStatus>, RuntimeError> {
+        match self.operator.status(id).await {
+            Ok(status) => Ok(Some(status.status)),
+            Err(err) if super::delete::runtime_is_absent(&err) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    pub(crate) async fn cancel_migration(&self, id: &str) -> Result<(), RuntimeError> {
+        self.operator
+            .migrate_cancel(VmMigrateCancelRequest { id: id.to_string() })
+            .await?;
+        Ok(())
     }
 
     pub(crate) async fn finish_source_migration(&self, id: &str) -> Result<(), RuntimeError> {

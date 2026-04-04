@@ -282,7 +282,10 @@ fn create_bridge_name(namespace: &Option<String>, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::cni::{CniWrapper, NetworkClassInfo, PlannedNetworkConfig, create_bridge_name};
+    use crate::cni::{
+        CniWrapper, NetworkClassInfo, PlannedNetworkConfig, create_bridge_name, mac_address,
+    };
+    use tugboat_cni_operator::TugboatCniOperator;
     use tugboat_cni_operator::{CniConfContent, CniFlannelDelegate, CniIpamRoute};
     use tugboat_resources::manifests::core::v1::{
         FlannelNetworkClass, NetworkClassRoute, NetworkClassSpec,
@@ -400,5 +403,65 @@ mod tests {
             err,
             tugboat_cni_operator::Error::InvalidConfiguration(_)
         ));
+    }
+
+    #[test]
+    fn mac_address_is_stable_for_same_ship_and_network() {
+        let namespace = Some("default".to_string());
+        let first = mac_address(&namespace, "frontend", "ship-123");
+        let second = mac_address(&namespace, "frontend", "ship-123");
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn network_plan_preserves_guest_nic_identity_for_migration() {
+        let wrapper = CniWrapper::new(TugboatCniOperator::new(
+            toml::from_str(
+                r#"
+[location]
+bin = "/tmp"
+config = "/tmp"
+netns = "/tmp"
+"#,
+            )
+            .expect("test config should parse"),
+        ));
+        let network_classes = vec![
+            NetworkClassInfo {
+                name: "frontend".to_string(),
+                namespace: Some("default".to_string()),
+                spec: NetworkClassSpec {
+                    subnet: "10.42.0.0/24".to_string(),
+                    ..Default::default()
+                },
+            },
+            NetworkClassInfo {
+                name: "overlay".to_string(),
+                namespace: None,
+                spec: NetworkClassSpec {
+                    cni_plugin: "flannel".to_string(),
+                    flannel: Some(FlannelNetworkClass {
+                        subnet_file: "/run/flannel/subnet.env".to_string(),
+                        data_dir: "/run/flannel".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            },
+        ];
+
+        let first = wrapper.create_network_configs("ship-123", network_classes.clone());
+        let second = wrapper.create_network_configs("ship-123", network_classes);
+
+        let first_vm: Vec<_> = first.into_iter().map(|item| item.vm).collect();
+        let second_vm: Vec<_> = second.into_iter().map(|item| item.vm).collect();
+        assert_eq!(first_vm.len(), second_vm.len());
+        for (first_vm, second_vm) in first_vm.iter().zip(second_vm.iter()) {
+            assert_eq!(first_vm.iface_name, second_vm.iface_name);
+            assert_eq!(first_vm.mac_address, second_vm.mac_address);
+        }
+        assert_eq!(first_vm[0].iface_name, "eth0");
+        assert_eq!(first_vm[1].iface_name, "eth1");
     }
 }

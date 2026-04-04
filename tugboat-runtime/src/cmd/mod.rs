@@ -14,6 +14,7 @@
 
 pub mod create;
 pub mod migrate;
+pub mod migrate_cancel;
 pub mod migration_status;
 pub mod run;
 pub mod start;

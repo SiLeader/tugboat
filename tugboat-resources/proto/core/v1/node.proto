@@ -32,6 +32,7 @@ message NodeSpec {
   repeated string ips = 2;
   NodeResource resource = 3;
   repeated Taint taints = 4;
+  optional bool unschedulable = 5;
 }
 
 message Taint {

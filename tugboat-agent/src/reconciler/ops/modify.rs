@@ -21,8 +21,8 @@ use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipSpec};
 use tugboat_resources::manifests::meta::v1::Time;
 
-use super::PHASE_FAILED;
 use super::migration::MigrationStateMachine;
+use super::{PHASE_COMPLETED, PHASE_FAILED};
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_modified(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -44,6 +44,39 @@ impl ShipReconciler {
             .unwrap_or("default".to_string());
 
         if !self.runtime_operator.has_ship(ship_id).await {
+            if let Some(spec) = &ship.spec
+                && spec.target_node_name.is_some()
+                && let Some(status) = &ship.status
+                && let Some(migration) = &status.migration
+                && matches!(
+                    migration.phase.as_str(),
+                    super::PHASE_PENDING
+                        | super::PHASE_READY
+                        | super::PHASE_MIGRATING
+                        | PHASE_COMPLETED
+                )
+            {
+                let migration_sm = MigrationStateMachine::new(self);
+                if migration_sm.try_reconcile(&ship, ship_id).await? {
+                    return Ok(());
+                }
+            }
+            if let Some(spec) = &ship.spec
+                && spec.node_name.as_deref() == Some(self.node_name.as_str())
+                && spec.target_node_name.is_some()
+                && let Some(status) = &ship.status
+                && let Some(migration) = &status.migration
+                && migration.phase == PHASE_COMPLETED
+            {
+                info!(
+                    "Ship '{}' already completed source cleanup, finalizing migration cutover",
+                    ship_id
+                );
+                let migration_sm = MigrationStateMachine::new(self);
+                if migration_sm.try_reconcile(&ship, ship_id).await? {
+                    return Ok(());
+                }
+            }
             if let Some(spec) = &ship.spec
                 && spec.target_node_name.as_deref() == Some(self.node_name.as_str())
                 && let Some(status) = &ship.status

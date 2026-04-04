@@ -41,6 +41,7 @@ tugboat-vm-image = { path = "tugboat-vm-image" }
 tugboat-vm-runtime-interface = { path = "tugboat-vm-runtime-interface" }
 tugboat-cni-operator = { path = "tugboat-cni-operator" }
 tugboat-csi-operator = { path = "tugboat-csi-operator" }
+tugboat-scheduler = { path = "tugboat-scheduler" }
 
 # command line
 clap = "4.5.60"

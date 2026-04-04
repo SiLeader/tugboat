@@ -251,12 +251,16 @@ For a manual multi-node validation flow:
 - [x] ReplicaSet resource definition and API (`apps/v1`)
 - [x] Deployment resource definition and API (`apps/v1`)
 - [x] ConfigMap
-- [ ] Live migration
+- [x] Live migration
     - [x] Core migration triggered by `target_node_name`
     - [x] Migration state machine (Pending, Ready, Migrating, Completed, Failed)
     - [x] Migration status and conditions reflected on Ship
-    - [ ] Preflight compatibility checks (CPU, storage access, network continuity)
-    - [ ] Reliable recovery and explicit error reporting on migration failure
+    - [x] Preflight compatibility checks (CPU, shared-storage eligibility, target network capability)
+    - [x] Reliable recovery and explicit error reporting on migration failure
+    - [x] Guest/network continuity via deterministic bridge/interface/MAC identity across nodes
+    - [x] Timeout detection with automatic QEMU cancel (Pending: 2 min, Migrating: 30 min)
+    - [x] Per-ShipClass configurable QEMU migration parameters (bandwidth, downtime, xbzrle cache)
+    - [x] Scheduler StorageFit plugin rejects nodes for Ships with non-RWX volumes
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
 

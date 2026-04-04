@@ -113,6 +113,22 @@ pub trait ObjectMetaResource: Resource {
     }
 }
 
+pub trait ShipMigrationExt {
+    fn has_active_migration(&self) -> bool;
+}
+
+impl ShipMigrationExt for crate::manifests::core::v1::Ship {
+    fn has_active_migration(&self) -> bool {
+        matches!(
+            self.status
+                .as_ref()
+                .and_then(|status| status.migration.as_ref())
+                .map(|migration| migration.phase.as_str()),
+            Some("Pending" | "Ready" | "Migrating")
+        )
+    }
+}
+
 impl<T: StaticResource> Resource for T {
     fn type_meta() -> TypeMeta {
         TypeMeta {
@@ -187,9 +203,9 @@ macro_rules! apply_resource {
 
 #[cfg(test)]
 mod tests {
-    use crate::ObjectMetaResource;
     use crate::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
     use crate::manifests::meta::v1::{ObjectMeta, Time};
+    use crate::{ObjectMetaResource, ShipMigrationExt};
     use serde_json::json;
 
     #[test]
@@ -244,5 +260,36 @@ mod tests {
             json!("10.0.0.8")
         );
         assert_eq!(json["status"]["migration"]["targetPort"], json!(4444));
+    }
+
+    #[test]
+    fn ship_has_active_migration_only_for_active_phases() {
+        for phase in ["Pending", "Ready", "Migrating"] {
+            let ship = Ship {
+                status: Some(ShipStatus {
+                    migration: Some(ShipMigrationStatus {
+                        phase: phase.to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+
+            assert!(ship.has_active_migration(), "phase={phase}");
+        }
+
+        let ship = Ship {
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: "Completed".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert!(!ship.has_active_migration());
     }
 }

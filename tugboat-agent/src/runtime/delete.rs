@@ -90,7 +90,7 @@ impl RuntimeOperator {
     }
 }
 
-fn runtime_is_absent(err: &VmRuntimeOperatorError) -> bool {
+pub(super) fn runtime_is_absent(err: &VmRuntimeOperatorError) -> bool {
     match err {
         VmRuntimeOperatorError::CommandFailed(_, stdout, stderr) => {
             let combined = format!("{stdout}\n{stderr}");

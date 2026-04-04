@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -36,6 +37,7 @@ const DEFAULT_FLANNEL_SUBNET_FILE: &str = "/run/flannel/subnet.env";
 const DEFAULT_FLANNEL_DATA_DIR: &str = "/run/flannel";
 const REQUIRED_CNI_PLUGINS: [&str; 2] = ["bridge", "loopback"];
 const OPTIONAL_CNI_PLUGINS: [&str; 2] = ["flannel", "portmap"];
+pub(crate) const NODE_ARCH_LABEL: &str = "tugboat.cloud/arch";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum NodeRegistrationError {
@@ -98,6 +100,7 @@ pub(crate) async fn publish_node_status(
         return Err(NodeRegistrationError::NodeMissing(node_name.to_string()));
     };
 
+    ensure_node_architecture_label(&api, node_name, &mut node).await?;
     node.status = Some(build_node_status(cni)?);
     api.replace_status(node_name, node).await?;
     debug!("Published CNI status for node '{node_name}'");
@@ -132,6 +135,10 @@ fn build_node(node_name: String, capacity: NodeCapacity) -> Node {
         type_meta: None,
         object_meta: Some(ObjectMeta {
             name: Some(node_name),
+            labels: HashMap::from([(
+                NODE_ARCH_LABEL.to_string(),
+                normalized_host_architecture().to_string(),
+            )]),
             ..Default::default()
         }),
         spec: Some(NodeSpec {
@@ -145,8 +152,50 @@ fn build_node(node_name: String, capacity: NodeCapacity) -> Node {
                 memory: capacity.memory,
             }),
             taints: Vec::new(),
+            unschedulable: Some(false),
         }),
         status: None,
+    }
+}
+
+async fn ensure_node_architecture_label(
+    api: &Api<Node>,
+    node_name: &str,
+    node: &mut Node,
+) -> Result<(), NodeRegistrationError> {
+    let current = node
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.labels.get(NODE_ARCH_LABEL))
+        .map(String::as_str);
+    let desired = normalized_host_architecture();
+
+    if current == Some(desired) {
+        return Ok(());
+    }
+
+    let patch = serde_json::json!({
+        "metadata": {
+            "labels": {
+                NODE_ARCH_LABEL: desired,
+            }
+        }
+    });
+    api.patch(node_name, patch).await?;
+
+    if let Some(meta) = node.object_meta.as_mut() {
+        meta.labels
+            .insert(NODE_ARCH_LABEL.to_string(), desired.to_string());
+    }
+
+    Ok(())
+}
+
+pub(crate) fn normalized_host_architecture() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" | "amd64" => "amd64",
+        "aarch64" | "arm64" => "arm64",
+        other => other,
     }
 }
 
@@ -448,11 +497,16 @@ mod tests {
         let spec = node.spec.expect("spec should exist");
         let overcommit = spec.overcommit.expect("overcommit should exist");
         let resource = spec.resource.expect("resource should exist");
+        let labels = node.object_meta.expect("metadata should exist").labels;
 
         assert_eq!(overcommit.cpu_ratio, "1");
         assert_eq!(overcommit.memory_ratio, "1");
         assert_eq!(resource.cpu, 4);
         assert_eq!(resource.memory, 8_589_934_592);
+        assert_eq!(
+            labels.get(NODE_ARCH_LABEL).map(String::as_str),
+            Some(normalized_host_architecture())
+        );
         assert!(node.status.is_none());
     }
 

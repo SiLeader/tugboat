@@ -50,6 +50,7 @@ mod storage_class;
         namespace::handle_namespace_read,
         node::handle_node_create,
         node::handle_node_delete,
+        node::handle_node_drain,
         node::handle_node_list,
         node::handle_node_patch,
         node::handle_node_read,
@@ -95,6 +96,7 @@ mod storage_class;
         ship::handle_ship_delete,
         ship::handle_ship_list,
         ship::handle_ship_list_all,
+        ship::handle_ship_migration_abort,
         ship::handle_ship_patch,
         ship::handle_ship_read,
         ship::handle_ship_replace,
@@ -117,6 +119,8 @@ mod storage_class;
         tugboat_resources::manifests::core::v1::ShipClass,
         tugboat_resources::manifests::core::v1::NetworkClass,
         tugboat_resources::manifests::core::v1::ClusterNetworkClass,
+        node::NodeDrainResponse,
+        node::NodeDrainWarning,
         tugboat_resources::manifests::meta::v1::ObjectMeta,
         tugboat_resources::manifests::meta::v1::TypeMeta,
         tugboat_resources::manifests::meta::v1::Time,
@@ -162,6 +166,7 @@ pub(super) fn register_node(service: &mut ServiceConfig) {
     service
         .service(node::handle_node_create)
         .service(node::handle_node_delete)
+        .service(node::handle_node_drain)
         .service(node::handle_node_list)
         .service(node::handle_node_patch)
         .service(node::handle_node_read)
@@ -231,6 +236,7 @@ pub(super) fn register_ship(service: &mut ServiceConfig) {
         .service(ship::handle_ship_delete)
         .service(ship::handle_ship_list)
         .service(ship::handle_ship_list_all)
+        .service(ship::handle_ship_migration_abort)
         .service(ship::handle_ship_patch)
         .service(ship::handle_ship_read)
         .service(ship::handle_ship_replace)

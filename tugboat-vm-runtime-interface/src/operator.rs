@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::migrate::{VmMigrateRequest, VmMigrationStatusResponse};
+use crate::migrate::{VmMigrateCancelRequest, VmMigrateRequest, VmMigrationStatusResponse};
 use crate::run::VmRunRequest;
 use crate::status::VmStatusResponse;
 use crate::stop::VmStopRequest;
@@ -120,6 +120,15 @@ impl VmRuntimeOperator {
         let child = self.call("migrate", &args).await?;
         handle_command_response(child).await?;
         Ok(())
+    }
+
+    pub async fn migrate_cancel(&self, args: VmMigrateCancelRequest) -> Result<(), Error> {
+        let output = self
+            .run_command()
+            .args(["migrate-cancel", &args.id])
+            .output()
+            .await?;
+        handle_output(output)
     }
 
     pub async fn migration_status(&self, id: &str) -> Result<VmMigrationStatusResponse, Error> {

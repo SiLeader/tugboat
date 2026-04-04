@@ -61,6 +61,18 @@ pub async fn status(config: QemuVmConfig, args: MigrationStatusArgs) -> crate::R
             .error_desc
             .or_else(|| migration.status.map(|status| format!("{status:?}")))
             .unwrap_or_else(|| "Migration is not active.".to_string()),
+        bytes_transferred: migration
+            .ram
+            .as_ref()
+            .and_then(|ram| u64::try_from(ram.transferred).ok()),
+        bytes_remaining: migration
+            .ram
+            .as_ref()
+            .and_then(|ram| u64::try_from(ram.remaining).ok()),
+        ram_dirty_rate_mbps: migration
+            .ram
+            .as_ref()
+            .map(|ram| ram.dirty_pages_rate as f64),
     };
 
     serde_json::to_writer(std::io::stdout(), &response)

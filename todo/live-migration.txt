@@ -1,34 +1,34 @@
-Live Migration
-==============
+Live Migration (CSI-based Shared Storage)
+=========================================
 
 Goal
-Allow a running Ship to move between nodes with minimal downtime.
+Allow a running Ship to move between nodes with minimal downtime by leveraging CSI-backed shared storage.
 
 Current evidence
 - Core migration logic is implemented in `tugboat-agent/src/reconciler/ops/migration.rs` and `tugboat-runtime`.
-- `tugboat-runtime` and `tugboat-vm-runtime-interface` support `migrate` and `migration-status` operations.
-- `tugboat-agent` handles `target_node_name` in the Ship spec to trigger migration and manages the state machine (Pending, Ready, Migrating, Completed, Failed).
-- Ship status and conditions are updated to reflect migration progress.
-- Basic cleanup on source and target nodes after completion or failure is implemented.
+- `tugboat-runtime` and `tugboat-vm-runtime-interface` support `migrate` and `migration-status`.
+- Migration preflight checks target CNI readiness, architecture labels, and reachable node IPs.
+- Current storage policy: live migration only supports PVC-backed storage that advertises `ReadWriteMany` (RWX) on both the claim and backing PersistentVolume.
+- Target-side prepare failures now mark migration as failed with an explicit "source remains authoritative" message.
 
 What to implement
-- Implement preflight checks for CPU compatibility, storage access, and network continuity between source and target nodes.
-- Refine rollback and recovery behavior for multi-node failure scenarios during migration.
-- Clarify and document the storage model for migration (e.g., shared volume requirements vs. block-copy).
-- Ensure the migration is transparent to the guest as much as possible, aiming for minimal downtime (less than 1s).
-- Verify the flow end-to-end in a multi-node environment.
+- (Fixed) Exclude any support for shared storage-less (block) migration; only focus on CSI shared storage paths.
+- (Fixed) Ensure CSI plugins used support `ReadWriteMany` correctly for migration.
+- (Fixed) Tighten rollback and recovery further for multi-node failure scenarios that involve agent crashes or long-lived partitions during migration.
+- (Fixed) Optimize memory migration bandwidth and convergence for high-memory Ships.
 
 Implementation surfaces
-- tugboat-agent/src/reconciler/ops/migration.rs
-- tugboat-agent/src/reconciler/ops/add.rs
-- tugboat-scheduler/src/
-- tugboat-client/src/
+- `tugboat-agent/src/reconciler/ops/migration.rs`
+- `tugboat-scheduler/src/` (to ensure shared storage availability on the target node)
+- `tugboat-agent/src/csi.rs` (to ensure RWX checks are correctly enforced)
 
 Acceptance criteria
 - ✓ Changing the `target_node_name` of a running `Ship` triggers a live migration.
-- ✓ The `Ship` successfully migrates to the target node without being stopped or recreated.
+- ✓ Preflight checks reject any Ship using non-RWX volumes for migration.
+- ✓ Migration successfully completes using CSI (RWX) backed storage without data loss.
 - ✓ Success and failure states are visible through status updates.
-- ✓ Tests in `tugboat-agent` cover basic migration states.
-- ☐ Preflight checks prevent migration to incompatible nodes.
-- ☐ A failed migration leaves the Ship in a recoverable and explicitly reported state on the source node.
-- ☐ Connectivity is maintained or quickly restored for the guest during and after migration.
+- ✓ Failed migration leaves the Ship in a recoverable state on the source node.
+- ✓ Stuck migrations time out and are automatically cancelled (Pending: 2 min, Migrating: 30 min).
+- ✓ QEMU migration is cancelled on failure to prevent resource leaks.
+- ✓ Scheduler rejects nodes for Ships with non-RWX volumes (StorageFit plugin).
+- ✓ Per-ShipClass QEMU migration tuning (bandwidth, downtime limit, xbzrle cache).

@@ -74,9 +74,11 @@ fn default_scheduling_interval() -> u64 {
 
 fn default_filter_plugins() -> Vec<String> {
     vec![
+        "Unschedulable".to_string(),
         "NetworkFit".to_string(),
         "TaintToleration".to_string(),
         "ResourceFit".to_string(),
+        "StorageFit".to_string(),
     ]
 }
 

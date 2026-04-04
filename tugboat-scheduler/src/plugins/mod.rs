@@ -15,15 +15,19 @@
 mod least_allocated;
 mod network_fit;
 mod resource_fit;
+mod storage_fit;
 mod taint_toleration;
+mod unschedulable;
 
 use crate::framework::{FilterPlugin, ScorePlugin};
 
 pub fn create_filter_plugin(name: &str) -> Option<Box<dyn FilterPlugin>> {
     match name {
+        "Unschedulable" => Some(Box::new(unschedulable::UnschedulableFilter)),
         "NetworkFit" => Some(Box::new(network_fit::NetworkFitFilter)),
         "TaintToleration" => Some(Box::new(taint_toleration::TaintTolerationFilter)),
         "ResourceFit" => Some(Box::new(resource_fit::ResourceFitFilter)),
+        "StorageFit" => Some(Box::new(storage_fit::StorageFitFilter)),
         _ => None,
     }
 }
