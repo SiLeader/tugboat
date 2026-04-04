@@ -31,6 +31,7 @@ fn main() {
         ".tugboat.core.v1",
         ".tugboat.coordination.v1",
         ".tugboat.meta.v1.ObjectMeta",
+        ".tugboat.meta.v1.OwnerReference",
         ".tugboat.meta.v1.TypeMeta",
     ];
 
@@ -58,6 +59,7 @@ fn main() {
                 "proto/apps/v1/workload.proto",
                 "proto/apps/v1/replica_set.proto",
                 "proto/apps/v1/deployment.proto",
+                "proto/apps/v1/fleet.proto",
                 // core/v1
                 "proto/core/v1/config_map.proto",
                 "proto/core/v1/namespace.proto",

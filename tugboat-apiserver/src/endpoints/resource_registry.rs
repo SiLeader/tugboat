@@ -16,7 +16,7 @@ use crate::endpoints::v1_apps;
 use crate::endpoints::v1_coordination;
 use crate::endpoints::v1_core;
 use tugboat_resources::StaticResource;
-use tugboat_resources::manifests::apps::v1::{Deployment, ReplicaSet};
+use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
@@ -217,6 +217,7 @@ const WORKLOAD_OPS: ResourceOperations = ResourceOperations {
 pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
     vec![
         ResourceApiDescriptor::new::<Deployment>(WORKLOAD_OPS, v1_apps::register_deployment),
+        ResourceApiDescriptor::new::<Fleet>(WORKLOAD_OPS, v1_apps::register_fleet),
         ResourceApiDescriptor::new::<ClusterNetworkClass>(
             CLUSTER_STATUS_OPS,
             v1_core::register_clusternetworkclass,

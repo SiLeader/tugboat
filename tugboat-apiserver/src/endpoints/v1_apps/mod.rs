@@ -17,6 +17,7 @@ use utoipa::OpenApi;
 use utoipa_actix_web::service_config::ServiceConfig;
 
 mod deployment;
+mod fleet;
 mod replicaset;
 
 #[derive(OpenApi)]
@@ -29,6 +30,13 @@ mod replicaset;
         deployment::handle_deployment_patch,
         deployment::handle_deployment_read,
         deployment::handle_deployment_replace,
+        fleet::handle_fleet_create,
+        fleet::handle_fleet_delete,
+        fleet::handle_fleet_list,
+        fleet::handle_fleet_list_all,
+        fleet::handle_fleet_patch,
+        fleet::handle_fleet_read,
+        fleet::handle_fleet_replace,
         replicaset::handle_replicaset_create,
         replicaset::handle_replicaset_delete,
         replicaset::handle_replicaset_list,
@@ -42,6 +50,10 @@ mod replicaset;
         tugboat_resources::manifests::apps::v1::DeploymentSpec,
         tugboat_resources::manifests::apps::v1::DeploymentStatus,
         tugboat_resources::manifests::apps::v1::DeploymentStrategy,
+        tugboat_resources::manifests::apps::v1::Fleet,
+        tugboat_resources::manifests::apps::v1::FleetComponent,
+        tugboat_resources::manifests::apps::v1::FleetSpec,
+        tugboat_resources::manifests::apps::v1::FleetStatus,
         tugboat_resources::manifests::apps::v1::ReplicaSet,
         tugboat_resources::manifests::apps::v1::ReplicaSetSpec,
         tugboat_resources::manifests::apps::v1::ReplicaSetStatus,
@@ -69,6 +81,17 @@ pub(super) fn register_deployment(service: &mut ServiceConfig) {
         .service(deployment::handle_deployment_patch)
         .service(deployment::handle_deployment_read)
         .service(deployment::handle_deployment_replace);
+}
+
+pub(super) fn register_fleet(service: &mut ServiceConfig) {
+    service
+        .service(fleet::handle_fleet_create)
+        .service(fleet::handle_fleet_delete)
+        .service(fleet::handle_fleet_list)
+        .service(fleet::handle_fleet_list_all)
+        .service(fleet::handle_fleet_patch)
+        .service(fleet::handle_fleet_read)
+        .service(fleet::handle_fleet_replace);
 }
 
 pub(super) fn register_replicaset(service: &mut ServiceConfig) {
