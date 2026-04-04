@@ -20,11 +20,11 @@ use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
+use tugboat_resources::ShipMigrationExt;
 use tugboat_resources::manifests::core::v1::{
     Ship, ShipCondition, ShipMigrationStatus, ShipStatus,
 };
 use tugboat_resources::manifests::meta::v1::Time;
-use tugboat_resources::ShipMigrationExt;
 use utoipa::ToSchema;
 
 const PHASE_FAILED: &str = "Failed";

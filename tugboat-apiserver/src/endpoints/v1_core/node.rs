@@ -19,11 +19,11 @@ use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Serialize;
+use tugboat_resources::ShipMigrationExt;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, NetworkClass, Node, NodeSpec, PersistentVolume, PersistentVolumeClaim,
     Ship, ShipClass,
 };
-use tugboat_resources::ShipMigrationExt;
 use tugboat_scheduler::framework::{Framework, SchedulingContext};
 use tugboat_scheduler::plugins::{create_filter_plugin, create_score_plugin};
 use utoipa::ToSchema;

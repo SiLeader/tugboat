@@ -203,9 +203,9 @@ macro_rules! apply_resource {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ObjectMetaResource, ShipMigrationExt};
     use crate::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
     use crate::manifests::meta::v1::{ObjectMeta, Time};
+    use crate::{ObjectMetaResource, ShipMigrationExt};
     use serde_json::json;
 
     #[test]
