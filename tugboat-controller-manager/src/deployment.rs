@@ -948,7 +948,6 @@ mod tests {
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
-            ..Default::default()
         };
         let template_b = ShipTemplateSpec {
             metadata: Some(ObjectMeta {
@@ -971,7 +970,6 @@ mod tests {
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
-            ..Default::default()
         };
 
         assert_eq!(template_hash(&template_a), template_hash(&template_b));

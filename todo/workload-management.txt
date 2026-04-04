@@ -11,12 +11,22 @@ Current evidence
 - `tugboat-apiserver` handles CRUD for these resources.
 - `tugboat-controller-manager` is currently missing the controllers for these resources.
 
+Design policy
+- ReplicaSet, Deployment, and Fleet controllers must avoid VM recreation whenever possible.
+- **Hot-plug**: resource changes that the runtime supports hot-plug (e.g. adding CPU cores, attaching a volume) are applied in-place to a running Ship without recreating it.
+- **Live migration**: when a Ship must move to a different node (e.g. rolling update, node eviction), live migration is used instead of stop-and-recreate.
+- Recreation is only used as a last resort when neither hot-plug nor live migration can satisfy the change (e.g. boot disk replacement, firmware change, or explicit `Recreate` strategy).
+
 What to implement
 - Implement `ReplicaSet` controller in `tugboat-controller-manager` to maintain the desired number of Ships.
+  - On spec diff, classify the change: hot-pluggable → apply in-place; node move required → live migrate; otherwise → recreate.
 - Implement `Deployment` controller to manage `ReplicaSets` and support rollout strategies (RollingUpdate, Recreate).
+  - `RollingUpdate`: prefer live migration over stop/start when advancing to the new ReplicaSet.
+  - `Recreate`: explicitly allowed to skip migration/hot-plug and recreate all Ships.
 - Implement `Fleet` resource and controller to manage multi-component Ship groups sharing a network.
-- Controllers should support live migration: when moving a Ship between nodes, trigger migration instead of recreation if possible.
+  - Apply the same hot-plug / live-migration-first policy to each Ship group in the Fleet.
 - Ensure `shipTemplate` in these resources correctly maps to `ShipSpec`.
+- Implement a spec-change classifier (shared utility) that determines for a given old→new ShipSpec diff whether the change is: hot-pluggable, requires migration, or requires recreation.
 
 Implementation surfaces
 - `tugboat-controller-manager/src/`
@@ -27,5 +37,7 @@ Acceptance criteria
 - ✓ `ReplicaSet` and `Deployment` resources are defined and accessible via API.
 - ☐ Creating a `Deployment` manages `ReplicaSets` and eventually `Ships`.
 - ☐ A `Fleet` successfully launches multiple types of VMs sharing the same `NetworkClass`.
-- ☐ When a `Deployment` or `ReplicaSet` requires a `Ship` to move to another node, it uses live migration.
-- ☐ Rolling updates proceed with minimal downtime by coordinating with migration logic.
+- ☐ Hot-pluggable spec changes (e.g. CPU core count increase) are applied in-place without restarting or recreating the VM.
+- ☐ When a `Deployment` or `ReplicaSet` requires a `Ship` to move to another node, it uses live migration instead of recreation.
+- ☐ Rolling updates proceed with minimal downtime by preferring live migration over stop/start.
+- ☐ Recreation is only triggered when the change is classified as requiring it (or strategy is `Recreate`).

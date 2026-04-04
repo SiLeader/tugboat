@@ -1,5 +1,6 @@
 use crate::config::ControllerManagerConfig;
 use crate::deployment::DeploymentController;
+use crate::fleet::FleetController;
 use crate::manager::TugboatControllerManager;
 use crate::network_class_status::NetworkClassStatusController;
 use crate::pv_cleanup::PersistentVolumeCleanupController;
@@ -15,6 +16,7 @@ mod change_classifier;
 mod config;
 mod deployment;
 mod error;
+mod fleet;
 mod manager;
 mod network_class_status;
 mod provisioning;
@@ -52,6 +54,7 @@ async fn main() {
         csi_operator.clone(),
         config.clone(),
     ));
+    tcm.add_controller(FleetController::new(client.clone()));
     tcm.add_controller(DeploymentController::new(client.clone()));
     tcm.add_controller(ReplicaSetController::new(client.clone()));
     tcm.add_controller(PersistentVolumeCleanupController::new(

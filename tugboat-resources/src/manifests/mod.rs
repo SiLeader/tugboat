@@ -157,9 +157,11 @@ pub mod apps {
             "replicaset",
             namespaced
         );
+        apply_resource!(Fleet, "apps", "v1", "fleets", "fleet", namespaced);
 
         apply_validators!(Deployment, validators NameValidator);
         apply_validators!(ReplicaSet, validators NameValidator);
+        apply_validators!(Fleet, validators NameValidator);
     }
 }
 

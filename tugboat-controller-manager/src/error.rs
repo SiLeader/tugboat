@@ -10,6 +10,8 @@ pub(crate) enum ControllerError {
     MissingName(&'static str),
     #[error("{0} metadata.namespace is missing")]
     MissingNamespace(&'static str),
+    #[error("Fleet '{namespace}/{name}' is missing spec")]
+    MissingFleetSpec { namespace: String, name: String },
     #[error("Deployment '{namespace}/{name}' is missing spec")]
     MissingDeploymentSpec { namespace: String, name: String },
     #[error("ReplicaSet '{namespace}/{name}' is missing spec")]
