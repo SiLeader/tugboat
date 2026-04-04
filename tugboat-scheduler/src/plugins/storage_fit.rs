@@ -202,7 +202,6 @@ mod tests {
             name: "data".to_string(),
             persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
                 claim_name: "pvc-1".to_string(),
-                ..Default::default()
             }),
             ..Default::default()
         };
@@ -222,7 +221,6 @@ mod tests {
             name: "data".to_string(),
             persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
                 claim_name: "pvc-1".to_string(),
-                ..Default::default()
             }),
             ..Default::default()
         };
@@ -242,7 +240,6 @@ mod tests {
             name: "data".to_string(),
             persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
                 claim_name: "pvc-1".to_string(),
-                ..Default::default()
             }),
             ..Default::default()
         };

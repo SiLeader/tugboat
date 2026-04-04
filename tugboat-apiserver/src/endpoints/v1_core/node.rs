@@ -818,7 +818,6 @@ mod tests {
                     name: "data".to_string(),
                     persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
                         claim_name: "data".to_string(),
-                        ..Default::default()
                     }),
                     ..Default::default()
                 }],

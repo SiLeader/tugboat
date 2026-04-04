@@ -25,7 +25,7 @@ use tracing::{error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    Node, NodeCniPluginStatus, Ship, ShipClass, ShipMigrationStatus,
+    Node, NodeCniPluginStatus, Ship, ShipClass, ShipCondition, ShipMigrationStatus,
 };
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::migrate::{
@@ -53,6 +53,17 @@ fn is_migration_timed_out(timestamp: &Option<Time>, timeout_secs: i64) -> bool {
     };
     let now = Time::now();
     now.seconds.saturating_sub(ts.seconds) > timeout_secs
+}
+
+fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
+    if let Some(existing) = conditions
+        .iter_mut()
+        .find(|existing| existing.status == condition.status)
+    {
+        *existing = condition;
+    } else {
+        conditions.push(condition);
+    }
 }
 
 #[async_trait]
@@ -170,16 +181,24 @@ impl MigrationContext for ShipReconciler {
         condition_message: String,
     ) -> Result<(), ReconcileError> {
         let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
+        let mut conditions = api
+            .get(name)
+            .await?
+            .and_then(|ship| ship.status)
+            .map(|status| status.conditions)
+            .unwrap_or_default();
+        upsert_ship_condition(
+            &mut conditions,
+            ShipCondition {
+                status: condition_status.to_string(),
+                message: condition_message,
+                timestamp: Some(Time::now()),
+            },
+        );
         let patch = serde_json::json!({
             "status": {
                 "migration": migration,
-                "conditions": [
-                    {
-                        "status": condition_status,
-                        "message": condition_message,
-                        "timestamp": Time::now(),
-                    }
-                ]
+                "conditions": conditions
             }
         });
         api.patch_status(name, patch).await?;
@@ -1914,5 +1933,39 @@ mod tests {
         assert!(reason.contains("insufficient CPU"));
         assert!(reason.contains("requested=2"));
         assert!(reason.contains("available=1"));
+    }
+
+    #[test]
+    fn upsert_ship_condition_preserves_unrelated_conditions() {
+        let timestamp = Time::now();
+        let mut conditions = vec![
+            ShipCondition {
+                status: "Running".to_string(),
+                message: "VM is running".to_string(),
+                timestamp: Some(timestamp),
+            },
+            ShipCondition {
+                status: "VmMigrationPending".to_string(),
+                message: "old migration state".to_string(),
+                timestamp: Some(timestamp),
+            },
+        ];
+
+        upsert_ship_condition(
+            &mut conditions,
+            ShipCondition {
+                status: "VmMigrationPending".to_string(),
+                message: "new migration state".to_string(),
+                timestamp: Some(Time::now()),
+            },
+        );
+
+        assert_eq!(conditions.len(), 2);
+        assert!(conditions.iter().any(|condition| {
+            condition.status == "Running" && condition.message == "VM is running"
+        }));
+        assert!(conditions.iter().any(|condition| {
+            condition.status == "VmMigrationPending" && condition.message == "new migration state"
+        }));
     }
 }

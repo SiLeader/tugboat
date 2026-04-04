@@ -152,6 +152,7 @@ fn build_node(node_name: String, capacity: NodeCapacity) -> Node {
                 memory: capacity.memory,
             }),
             taints: Vec::new(),
+            unschedulable: Some(false),
         }),
         status: None,
     }

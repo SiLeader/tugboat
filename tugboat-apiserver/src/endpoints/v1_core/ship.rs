@@ -21,9 +21,7 @@ use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
 use tugboat_resources::ShipMigrationExt;
-use tugboat_resources::manifests::core::v1::{
-    Ship, ShipCondition, ShipMigrationStatus, ShipStatus,
-};
+use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
 use tugboat_resources::manifests::meta::v1::Time;
 use utoipa::ToSchema;
 
@@ -376,10 +374,7 @@ fn abort_ship_migration(mut ship: Ship) -> Result<Ship, Box<StatusResponse>> {
     }
 
     let status = ship.status.get_or_insert_with(ShipStatus::default);
-    let mut migration = status
-        .migration
-        .take()
-        .unwrap_or_else(ShipMigrationStatus::default);
+    let mut migration = status.migration.take().unwrap_or_default();
     migration.phase = PHASE_FAILED.to_string();
     migration
         .target_node_name
