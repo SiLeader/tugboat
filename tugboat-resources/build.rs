@@ -31,6 +31,7 @@ fn main() {
         ".tugboat.core.v1",
         ".tugboat.coordination.v1",
         ".tugboat.meta.v1.ObjectMeta",
+        ".tugboat.meta.v1.OwnerReference",
         ".tugboat.meta.v1.TypeMeta",
     ];
 

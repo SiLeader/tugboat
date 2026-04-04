@@ -3337,6 +3337,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "clap",
+ "rand 0.10.0",
  "serde",
  "thiserror 2.0.18",
  "tokio",

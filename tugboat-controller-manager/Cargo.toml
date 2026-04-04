@@ -11,6 +11,7 @@ clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
+rand.workspace = true
 
 thiserror.workspace = true
 tracing.workspace = true

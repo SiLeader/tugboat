@@ -3,6 +3,7 @@ use crate::manager::TugboatControllerManager;
 use crate::network_class_status::NetworkClassStatusController;
 use crate::pv_cleanup::PersistentVolumeCleanupController;
 use crate::pvc_provisioner::PvcProvisionerController;
+use crate::replicaset::ReplicaSetController;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use tugboat_client::TugboatClient;
@@ -16,6 +17,7 @@ mod network_class_status;
 mod provisioning;
 mod pv_cleanup;
 mod pvc_provisioner;
+mod replicaset;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -47,6 +49,7 @@ async fn main() {
         csi_operator.clone(),
         config.clone(),
     ));
+    tcm.add_controller(ReplicaSetController::new(client.clone()));
     tcm.add_controller(PersistentVolumeCleanupController::new(
         client,
         csi_operator,

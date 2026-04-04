@@ -29,5 +29,14 @@ message ObjectMeta {
   optional Time deletion_timestamp = 9;
   map<string, string> labels = 11;
   map<string, string> annotations = 12;
+  repeated OwnerReference owner_references = 13;
   repeated string finalizers = 14;
+}
+
+message OwnerReference {
+  string api_version = 1;
+  string kind = 2;
+  string name = 3;
+  string uid = 4;
+  optional bool controller = 5;
 }
