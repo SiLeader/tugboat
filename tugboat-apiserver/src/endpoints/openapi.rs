@@ -107,6 +107,10 @@ mod tests {
         let schema: Value = serde_json::from_slice(&body).unwrap();
         assert!(schema["paths"]["/api/v1/configmaps"].is_object());
         assert!(schema["paths"]["/api/v1/namespaces/{namespace}/configmaps"].is_object());
+        assert!(
+            schema["paths"]["/api/v1/namespaces/{namespace}/ships/{name}/migrate/abort"]
+                .is_object()
+        );
 
         // Test Coordination V1 Schema
         let req = test::TestRequest::get()

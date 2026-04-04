@@ -20,8 +20,15 @@ use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
-use tugboat_resources::manifests::core::v1::Ship;
+use tugboat_resources::manifests::core::v1::{
+    Ship, ShipCondition, ShipMigrationStatus, ShipStatus,
+};
+use tugboat_resources::manifests::meta::v1::Time;
 use utoipa::ToSchema;
+
+const PHASE_FAILED: &str = "Failed";
+const CONDITION_VM_MIGRATION_ABORTED: &str = "VmMigrationAborted";
+const MIGRATION_ABORT_MESSAGE: &str = "Live migration aborted via API request";
 
 #[utoipa::path(
         responses(
@@ -213,6 +220,49 @@ pub(super) async fn handle_ship_patch(
     .await
 }
 
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Ship migration aborted", body = Ship),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 409, description = "Ship is not migrating", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        )
+    )]
+#[post("/api/v1/namespaces/{namespace}/ships/{name}/migrate/abort")]
+pub(super) async fn handle_ship_migration_abort(
+    path: Path<ShipReadPathParams>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    let current = operator
+        .store
+        .get::<Ship>(Some(path.namespace.clone()), &path.name)
+        .await
+        .map_err(Box::<StatusResponse>::from)?;
+    let Some(current) = current else {
+        return Err(Box::new(StatusResponse::not_found(
+            "Ship not found",
+            Some(serde_json::json!({
+                "namespace": path.namespace,
+                "name": path.name,
+            })),
+        )));
+    };
+
+    let aborted = abort_ship_migration(current.apply_revision())?;
+    let aborted = operator
+        .store
+        .put(aborted)
+        .await
+        .map_err(Box::<StatusResponse>::from)?
+        .apply_revision();
+    Ok(ModifyResponse::Updated(aborted))
+}
+
 #[derive(Deserialize, ToSchema)]
 pub(super) struct ShipPatchPathParams {
     namespace: String,
@@ -273,4 +323,147 @@ pub(super) async fn handle_ship_status_replace(
         replacement.into_inner(),
     )
     .await
+}
+
+fn abort_ship_migration(mut ship: Ship) -> Result<Ship, Box<StatusResponse>> {
+    let target_node_name = ship
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.target_node_name.clone())
+        .ok_or_else(|| {
+            Box::new(StatusResponse::conflict(
+                "Ship does not have a pending migration target",
+                None,
+            ))
+        })?;
+
+    if let Some(spec) = ship.spec.as_mut() {
+        spec.target_node_name = None;
+    }
+
+    let status = ship.status.get_or_insert_with(ShipStatus::default);
+    let mut migration = status
+        .migration
+        .take()
+        .unwrap_or_else(ShipMigrationStatus::default);
+    migration.phase = PHASE_FAILED.to_string();
+    migration
+        .target_node_name
+        .get_or_insert(target_node_name.clone());
+    migration.message = MIGRATION_ABORT_MESSAGE.to_string();
+    migration.timestamp = Some(Time::now());
+    status.migration = Some(migration);
+    status.conditions.push(ShipCondition {
+        status: CONDITION_VM_MIGRATION_ABORTED.to_string(),
+        message: format!(
+            "Live migration to node '{}' was aborted by API request",
+            target_node_name
+        ),
+        timestamp: Some(Time::now()),
+    });
+
+    Ok(ship)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CONDITION_VM_MIGRATION_ABORTED, MIGRATION_ABORT_MESSAGE, PHASE_FAILED, abort_ship_migration,
+    };
+    use actix_web::ResponseError;
+    use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
+
+    fn ship_with_target(target: &str) -> Ship {
+        Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some(target.to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn abort_ship_migration_clears_target_and_marks_failed() {
+        let ship = Ship {
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-b".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: "Completed".to_string(),
+                    source_node_name: Some("node-a".to_string()),
+                    target_node_name: Some("node-b".to_string()),
+                    message: "done".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let updated = abort_ship_migration(ship).expect("abort should succeed");
+
+        assert_eq!(
+            updated
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.target_node_name.as_deref()),
+            None
+        );
+        assert_eq!(
+            updated
+                .status
+                .as_ref()
+                .and_then(|status| status.migration.as_ref())
+                .map(|migration| migration.phase.as_str()),
+            Some(PHASE_FAILED)
+        );
+        assert_eq!(
+            updated
+                .status
+                .as_ref()
+                .and_then(|status| status.migration.as_ref())
+                .map(|migration| migration.message.as_str()),
+            Some(MIGRATION_ABORT_MESSAGE)
+        );
+        assert_eq!(
+            updated
+                .status
+                .as_ref()
+                .and_then(|status| status.conditions.last())
+                .map(|condition| condition.status.as_str()),
+            Some(CONDITION_VM_MIGRATION_ABORTED)
+        );
+    }
+
+    #[test]
+    fn abort_ship_migration_creates_status_when_missing() {
+        let updated = abort_ship_migration(ship_with_target("node-b")).expect("abort should work");
+
+        assert!(updated.status.is_some());
+        assert_eq!(
+            updated
+                .status
+                .as_ref()
+                .and_then(|status| status.migration.as_ref())
+                .and_then(|migration| migration.target_node_name.as_deref()),
+            Some("node-b")
+        );
+        assert_eq!(
+            updated
+                .status
+                .as_ref()
+                .map(|status| status.conditions.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn abort_ship_migration_rejects_ship_without_target() {
+        let err = abort_ship_migration(Ship::default()).expect_err("abort should fail");
+
+        assert_eq!(err.status_code().as_u16(), 409);
+    }
 }

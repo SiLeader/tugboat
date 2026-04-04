@@ -95,6 +95,7 @@ mod storage_class;
         ship::handle_ship_delete,
         ship::handle_ship_list,
         ship::handle_ship_list_all,
+        ship::handle_ship_migration_abort,
         ship::handle_ship_patch,
         ship::handle_ship_read,
         ship::handle_ship_replace,
@@ -231,6 +232,7 @@ pub(super) fn register_ship(service: &mut ServiceConfig) {
         .service(ship::handle_ship_delete)
         .service(ship::handle_ship_list)
         .service(ship::handle_ship_list_all)
+        .service(ship::handle_ship_migration_abort)
         .service(ship::handle_ship_patch)
         .service(ship::handle_ship_read)
         .service(ship::handle_ship_replace)
