@@ -28,6 +28,13 @@ message ShipClass {
 message ShipClassSpec {
   CpuSpec cpu = 1;
   MemorySpec memory = 2;
+  optional MigrationSpec migration = 3;
+}
+
+message MigrationSpec {
+  optional uint64 max_bandwidth_bytes_per_sec = 1;
+  optional uint64 downtime_limit_ms = 2;
+  optional uint64 xbzrle_cache_size_bytes = 3;
 }
 
 message CpuSpec {

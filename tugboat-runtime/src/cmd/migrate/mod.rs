@@ -63,9 +63,15 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
     .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     qmp.execute(migrate_set_parameters(MigrateSetParameters {
-        max_bandwidth: Some(MAX_MIGRATION_BANDWIDTH_BYTES_PER_SEC),
-        downtime_limit: Some(MIGRATION_DOWNTIME_LIMIT_MS),
-        xbzrle_cache_size: Some(XBZRLE_CACHE_SIZE_BYTES),
+        max_bandwidth: Some(
+            req.max_bandwidth_bytes_per_sec
+                .unwrap_or(MAX_MIGRATION_BANDWIDTH_BYTES_PER_SEC),
+        ),
+        downtime_limit: Some(req.downtime_limit_ms.unwrap_or(MIGRATION_DOWNTIME_LIMIT_MS)),
+        xbzrle_cache_size: Some(
+            req.xbzrle_cache_size_bytes
+                .unwrap_or(XBZRLE_CACHE_SIZE_BYTES),
+        ),
         zero_page_detection: Some(ZeroPageDetection::legacy),
         ..Default::default()
     }))

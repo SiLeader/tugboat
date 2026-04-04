@@ -232,6 +232,8 @@ mod tests {
             all_network_classes: network_classes,
             all_ships: Vec::new(),
             all_ship_classes: Vec::new(),
+            all_persistent_volume_claims: Vec::new(),
+            all_persistent_volumes: Vec::new(),
         }
     }
 

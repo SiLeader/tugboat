@@ -28,10 +28,30 @@ use tugboat_resources::manifests::core::v1::{
     Node, NodeCniPluginStatus, Ship, ShipClass, ShipMigrationStatus,
 };
 use tugboat_resources::manifests::meta::v1::Time;
-use tugboat_vm_runtime_interface::migrate::VmMigrationPhase;
+use tugboat_vm_runtime_interface::migrate::{VmMigrationParams, VmMigrationPhase};
 use tugboat_vm_runtime_interface::status::VmStatus;
 
 use super::{PHASE_COMPLETED, PHASE_FAILED, PHASE_MIGRATING, PHASE_PENDING, PHASE_READY};
+
+/// Maximum time (seconds) the source waits for the target to publish its
+/// migration receiver before giving up.
+const MIGRATION_PENDING_TIMEOUT_SECS: i64 = 120;
+
+/// Maximum time (seconds) an in-progress QEMU memory transfer may run before
+/// the source declares the migration failed and cancels it.
+const MIGRATION_ACTIVE_TIMEOUT_SECS: i64 = 1800;
+
+/// Returns `true` when the given timestamp is older than `timeout_secs` ago.
+/// A missing timestamp is treated as not timed out so that very old status
+/// records written before this feature was deployed are not immediately
+/// cancelled.
+fn is_migration_timed_out(timestamp: &Option<Time>, timeout_secs: i64) -> bool {
+    let Some(ts) = timestamp else {
+        return false;
+    };
+    let now = Time::now();
+    now.seconds.saturating_sub(ts.seconds) > timeout_secs
+}
 
 #[async_trait]
 pub trait MigrationContext: Send + Sync {
@@ -48,10 +68,14 @@ pub trait MigrationContext: Send + Sync {
         ship_id: &str,
         target_address: String,
         target_port: u16,
+        params: VmMigrationParams,
     ) -> Result<(), RuntimeError>;
     async fn check_migration_status(&self, ship_id: &str)
     -> Result<VmMigrationPhase, RuntimeError>;
     async fn finish_source_migration(&self, ship_id: &str) -> Result<(), RuntimeError>;
+    async fn cancel_migration(&self, ship_id: &str) -> Result<(), RuntimeError>;
+    /// Resolve migration tuning parameters for the given Ship from its ShipClass.
+    async fn resolve_migration_params(&self, ship: &Ship) -> VmMigrationParams;
     async fn local_runtime_status(&self, ship_id: &str) -> Result<Option<VmStatus>, RuntimeError>;
 
     async fn update_migration_status(
@@ -94,9 +118,10 @@ impl MigrationContext for ShipReconciler {
         ship_id: &str,
         target_address: String,
         target_port: u16,
+        params: VmMigrationParams,
     ) -> Result<(), RuntimeError> {
         self.runtime_operator
-            .migrate(ship_id, target_address, target_port)
+            .migrate(ship_id, target_address, target_port, params)
             .await
     }
     async fn check_migration_status(
@@ -107,6 +132,26 @@ impl MigrationContext for ShipReconciler {
     }
     async fn finish_source_migration(&self, ship_id: &str) -> Result<(), RuntimeError> {
         self.runtime_operator.finish_source_migration(ship_id).await
+    }
+    async fn cancel_migration(&self, ship_id: &str) -> Result<(), RuntimeError> {
+        self.runtime_operator.cancel_migration(ship_id).await
+    }
+    async fn resolve_migration_params(&self, ship: &Ship) -> VmMigrationParams {
+        let Some(ship_class_name) = ship.spec.as_ref().map(|s| s.ship_class.as_str()) else {
+            return VmMigrationParams::default();
+        };
+        let Ok(Some(ship_class)) = self.ship_class_api.get(ship_class_name).await else {
+            return VmMigrationParams::default();
+        };
+        let Some(migration_spec) = ship_class.spec.as_ref().and_then(|s| s.migration.as_ref())
+        else {
+            return VmMigrationParams::default();
+        };
+        VmMigrationParams {
+            max_bandwidth_bytes_per_sec: migration_spec.max_bandwidth_bytes_per_sec,
+            downtime_limit_ms: migration_spec.downtime_limit_ms,
+            xbzrle_cache_size_bytes: migration_spec.xbzrle_cache_size_bytes,
+        }
     }
     async fn local_runtime_status(&self, ship_id: &str) -> Result<Option<VmStatus>, RuntimeError> {
         self.runtime_operator.status(ship_id).await
@@ -190,6 +235,18 @@ impl<'a> MigrationStateMachine<'a> {
                 message,
             )
             .await
+    }
+
+    /// Attempt to cancel any in-progress QEMU migration on the source VM.
+    /// Errors are logged but not propagated — the migration is already being
+    /// marked failed, and a cancel failure must not mask that status update.
+    async fn best_effort_cancel(&self, ship_id: &str) {
+        if let Err(err) = self.context.cancel_migration(ship_id).await {
+            warn!(
+                "Failed to cancel QEMU migration for ship '{}' (best-effort): {}",
+                ship_id, err
+            );
+        }
     }
 
     async fn finalize_completed_source_migration(
@@ -412,7 +469,29 @@ impl<'a> MigrationStateMachine<'a> {
         };
 
         match migration_status.phase.as_str() {
-            PHASE_PENDING => Ok(true),
+            PHASE_PENDING => {
+                if is_migration_timed_out(
+                    &migration_status.timestamp,
+                    MIGRATION_PENDING_TIMEOUT_SECS,
+                ) {
+                    let message = format!(
+                        "Target node '{target_node_name}' did not become ready within {} seconds. \
+                         Source VM remains authoritative.",
+                        MIGRATION_PENDING_TIMEOUT_SECS
+                    );
+                    self.best_effort_cancel(ship_id).await;
+                    self.mark_source_migration_failed(
+                        namespace,
+                        name,
+                        target_node_name,
+                        None,
+                        None,
+                        message,
+                    )
+                    .await?;
+                }
+                Ok(true)
+            }
             PHASE_READY => {
                 let Some(target_address) = migration_status.target_address.clone() else {
                     return Ok(true);
@@ -423,12 +502,40 @@ impl<'a> MigrationStateMachine<'a> {
 
                 match self.context.check_migration_status(ship_id).await {
                     Ok(VmMigrationPhase::None) => {
+                        if is_migration_timed_out(
+                            &migration_status.timestamp,
+                            MIGRATION_PENDING_TIMEOUT_SECS,
+                        ) {
+                            let message = format!(
+                                "Migration receiver on target node '{target_node_name}' became \
+                                 ready but source timed out before starting transfer. \
+                                 Source VM remains authoritative."
+                            );
+                            self.best_effort_cancel(ship_id).await;
+                            self.mark_source_migration_failed(
+                                namespace,
+                                name,
+                                target_node_name,
+                                Some(target_address),
+                                Some(target_port),
+                                message,
+                            )
+                            .await?;
+                            return Ok(true);
+                        }
+                        let migration_params = self.context.resolve_migration_params(ship).await;
                         if let Err(err) = self
                             .context
-                            .migrate(ship_id, target_address.clone(), target_port as u16)
+                            .migrate(
+                                ship_id,
+                                target_address.clone(),
+                                target_port as u16,
+                                migration_params,
+                            )
                             .await
                         {
                             let message = format!("Failed to start live migration: {err}");
+                            self.best_effort_cancel(ship_id).await;
                             self.mark_source_migration_failed(
                                 namespace,
                                 name,
@@ -496,6 +603,7 @@ impl<'a> MigrationStateMachine<'a> {
                         let message = format!(
                             "Live migration did not complete (phase: {phase:?}). Source VM remains authoritative; clean up the target and retry when ready."
                         );
+                        self.best_effort_cancel(ship_id).await;
                         self.mark_source_migration_failed(
                             namespace,
                             name,
@@ -558,6 +666,7 @@ impl<'a> MigrationStateMachine<'a> {
                         let message = format!(
                             "Live migration did not complete (phase: {phase:?}). Source VM remains authoritative; clean up the target and retry when ready."
                         );
+                        self.best_effort_cancel(ship_id).await;
                         self.mark_source_migration_failed(
                             namespace,
                             name,
@@ -572,7 +681,30 @@ impl<'a> MigrationStateMachine<'a> {
                         )))
                     }
                     _ => {
-                        // Still active (Setup, Active, None); wait for next event.
+                        // Still active (Setup, Active, None); check for timeout.
+                        if is_migration_timed_out(
+                            &migration_status.timestamp,
+                            MIGRATION_ACTIVE_TIMEOUT_SECS,
+                        ) {
+                            let message = format!(
+                                "Live migration exceeded the maximum allowed time ({} seconds). \
+                                 Cancelling and leaving source VM authoritative.",
+                                MIGRATION_ACTIVE_TIMEOUT_SECS
+                            );
+                            self.best_effort_cancel(ship_id).await;
+                            self.mark_source_migration_failed(
+                                namespace,
+                                name,
+                                target_node_name,
+                                Some(target_address),
+                                Some(target_port),
+                                message.clone(),
+                            )
+                            .await?;
+                            return Err(ReconcileError::Runtime(RuntimeError::MigrationFailed(
+                                message,
+                            )));
+                        }
                         Ok(true)
                     }
                 }
@@ -872,6 +1004,7 @@ mod tests {
         updates: Mutex<Vec<StatusUpdate>>,
         migrate_calls: Mutex<Vec<(String, u16)>>,
         finish_calls: Mutex<usize>,
+        cancel_calls: Mutex<usize>,
         ship_patches: Mutex<Vec<serde_json::Value>>,
     }
 
@@ -898,9 +1031,13 @@ mod tests {
             _ship_id: &str,
             addr: String,
             port: u16,
+            _params: VmMigrationParams,
         ) -> Result<(), RuntimeError> {
             self.migrate_calls.lock().unwrap().push((addr, port));
             Ok(())
+        }
+        async fn resolve_migration_params(&self, _ship: &Ship) -> VmMigrationParams {
+            VmMigrationParams::default()
         }
         async fn check_migration_status(
             &self,
@@ -910,6 +1047,10 @@ mod tests {
         }
         async fn finish_source_migration(&self, _ship_id: &str) -> Result<(), RuntimeError> {
             *self.finish_calls.lock().unwrap() += 1;
+            Ok(())
+        }
+        async fn cancel_migration(&self, _ship_id: &str) -> Result<(), RuntimeError> {
+            *self.cancel_calls.lock().unwrap() += 1;
             Ok(())
         }
         async fn local_runtime_status(
@@ -956,7 +1097,16 @@ mod tests {
             updates: Mutex::new(Vec::new()),
             migrate_calls: Mutex::new(Vec::new()),
             finish_calls: Mutex::new(0),
+            cancel_calls: Mutex::new(0),
             ship_patches: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn stale_timestamp(age_secs: i64) -> Time {
+        let now = Time::now();
+        Time {
+            seconds: now.seconds - age_secs,
+            nanos: now.nanos,
         }
     }
 
@@ -1255,6 +1405,160 @@ mod tests {
                 .map(|update| update.migration.phase.as_str()),
             Some(PHASE_COMPLETED)
         );
+    }
+
+    #[tokio::test]
+    async fn test_pending_timeout_marks_failed_and_cancels() {
+        let context = fake_context("node-1", VmMigrationPhase::None);
+        let sm = MigrationStateMachine::new(&context);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("node-1".to_string()),
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_PENDING.to_string(),
+                    timestamp: Some(stale_timestamp(MIGRATION_PENDING_TIMEOUT_SECS + 10)),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
+        assert!(result);
+        assert_eq!(*context.cancel_calls.lock().unwrap(), 1);
+        let updates = context.updates.lock().unwrap();
+        assert_eq!(
+            updates.last().map(|u| u.migration.phase.as_str()),
+            Some(PHASE_FAILED)
+        );
+        assert!(
+            updates
+                .last()
+                .unwrap()
+                .condition_message
+                .contains("did not become ready")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_timeout_when_pending_timestamp_is_recent() {
+        let context = fake_context("node-1", VmMigrationPhase::None);
+        let sm = MigrationStateMachine::new(&context);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("node-1".to_string()),
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_PENDING.to_string(),
+                    timestamp: Some(Time::now()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
+        assert!(result);
+        assert_eq!(*context.cancel_calls.lock().unwrap(), 0);
+        assert!(context.updates.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_migrating_timeout_marks_failed_and_cancels() {
+        let context = fake_context("node-1", VmMigrationPhase::Active);
+        let sm = MigrationStateMachine::new(&context);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("node-1".to_string()),
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_MIGRATING.to_string(),
+                    target_address: Some("1.2.3.4".to_string()),
+                    target_port: Some(1234),
+                    timestamp: Some(stale_timestamp(MIGRATION_ACTIVE_TIMEOUT_SECS + 10)),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await;
+        // Timeout returns an Err (MigrationFailed)
+        assert!(result.is_err());
+        assert_eq!(*context.cancel_calls.lock().unwrap(), 1);
+        let updates = context.updates.lock().unwrap();
+        assert_eq!(
+            updates.last().map(|u| u.migration.phase.as_str()),
+            Some(PHASE_FAILED)
+        );
+        assert!(
+            updates
+                .last()
+                .unwrap()
+                .condition_message
+                .contains("exceeded the maximum allowed time")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cancel_called_when_qemu_reports_failed_during_migrating() {
+        let context = fake_context("node-1", VmMigrationPhase::Failed);
+        let sm = MigrationStateMachine::new(&context);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("node-1".to_string()),
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_MIGRATING.to_string(),
+                    target_address: Some("1.2.3.4".to_string()),
+                    target_port: Some(1234),
+                    timestamp: Some(Time::now()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await;
+        assert!(result.is_err());
+        assert_eq!(*context.cancel_calls.lock().unwrap(), 1);
     }
 
     #[test]

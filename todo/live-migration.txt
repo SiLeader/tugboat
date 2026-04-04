@@ -13,9 +13,9 @@ Current evidence
 
 What to implement
 - (Fixed) Exclude any support for shared storage-less (block) migration; only focus on CSI shared storage paths.
-- Ensure CSI plugins used support `ReadWriteMany` correctly for migration.
-- Tighten rollback and recovery further for multi-node failure scenarios that involve agent crashes or long-lived partitions during migration.
-- Optimize memory migration bandwidth and convergence for high-memory Ships.
+- (Fixed) Ensure CSI plugins used support `ReadWriteMany` correctly for migration.
+- (Fixed) Tighten rollback and recovery further for multi-node failure scenarios that involve agent crashes or long-lived partitions during migration.
+- (Fixed) Optimize memory migration bandwidth and convergence for high-memory Ships.
 
 Implementation surfaces
 - `tugboat-agent/src/reconciler/ops/migration.rs`
@@ -28,3 +28,7 @@ Acceptance criteria
 - ✓ Migration successfully completes using CSI (RWX) backed storage without data loss.
 - ✓ Success and failure states are visible through status updates.
 - ✓ Failed migration leaves the Ship in a recoverable state on the source node.
+- ✓ Stuck migrations time out and are automatically cancelled (Pending: 2 min, Migrating: 30 min).
+- ✓ QEMU migration is cancelled on failure to prevent resource leaks.
+- ✓ Scheduler rejects nodes for Ships with non-RWX volumes (StorageFit plugin).
+- ✓ Per-ShipClass QEMU migration tuning (bandwidth, downtime limit, xbzrle cache).

@@ -20,6 +20,28 @@ pub struct VmMigrateRequest {
     pub id: String,
     pub destination_address: String,
     pub destination_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bandwidth_bytes_per_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub downtime_limit_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xbzrle_cache_size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VmMigrateCancelRequest {
+    pub id: String,
+}
+
+/// Optional QEMU migration tuning parameters sourced from the ShipClass
+/// `spec.migration` field. All fields are optional; absent values fall back to
+/// the runtime's built-in defaults.
+#[derive(Debug, Clone, Default)]
+pub struct VmMigrationParams {
+    pub max_bandwidth_bytes_per_sec: Option<u64>,
+    pub downtime_limit_ms: Option<u64>,
+    pub xbzrle_cache_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

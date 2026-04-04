@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tugboat_resources::manifests::core::v1::{ClusterNetworkClass, NetworkClass, Ship, ShipClass};
+use tugboat_resources::manifests::core::v1::{
+    ClusterNetworkClass, NetworkClass, PersistentVolume, PersistentVolumeClaim, Ship, ShipClass,
+};
 
 /// Context shared across plugin invocations for a single scheduling cycle.
 pub struct SchedulingContext {
@@ -28,6 +30,10 @@ pub struct SchedulingContext {
     pub all_ships: Vec<Ship>,
     /// All ShipClasses (for resolving resource requirements of scheduled ships).
     pub all_ship_classes: Vec<ShipClass>,
+    /// All PersistentVolumeClaims in the cluster (for storage-fit checks).
+    pub all_persistent_volume_claims: Vec<PersistentVolumeClaim>,
+    /// All PersistentVolumes in the cluster (for storage-fit checks).
+    pub all_persistent_volumes: Vec<PersistentVolume>,
 }
 
 impl SchedulingContext {
@@ -67,6 +73,46 @@ impl SchedulingContext {
         self.all_ship_classes
             .iter()
             .find(|sc| sc.object_meta.as_ref().and_then(|m| m.name.as_deref()) == Some(name))
+    }
+
+    /// Return PVs bound to PVCs referenced by the Ship being scheduled.
+    /// Only PVC-backed volumes are included; ConfigMap/Secret volumes are skipped.
+    pub fn ship_bound_persistent_volumes(&self) -> Vec<&PersistentVolume> {
+        let namespace = self.ship_namespace();
+        let Some(spec) = self.ship.spec.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut result = Vec::new();
+        for volume in &spec.volumes {
+            let Some(pvc_source) = volume.persistent_volume_claim.as_ref() else {
+                continue;
+            };
+            let claim_name = &pvc_source.claim_name;
+            let Some(pvc) = self.all_persistent_volume_claims.iter().find(|pvc| {
+                let meta = pvc.object_meta.as_ref();
+                meta.and_then(|m| m.name.as_deref()) == Some(claim_name.as_str())
+                    && meta.and_then(|m| m.namespace.as_deref()) == Some(namespace)
+            }) else {
+                continue;
+            };
+            let pv_name = pvc
+                .spec
+                .as_ref()
+                .and_then(|s| s.volume_name.as_deref())
+                .unwrap_or("");
+            if pv_name.is_empty() {
+                continue;
+            }
+            if let Some(pv) = self
+                .all_persistent_volumes
+                .iter()
+                .find(|pv| pv.object_meta.as_ref().and_then(|m| m.name.as_deref()) == Some(pv_name))
+            {
+                result.push(pv);
+            }
+        }
+        result
     }
 
     pub fn ship_namespace(&self) -> &str {
