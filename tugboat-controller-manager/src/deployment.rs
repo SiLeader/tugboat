@@ -16,6 +16,7 @@ use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta};
 
 const REPLICASET_UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.dev/update-strategy";
 const REPLICASET_UPDATE_STRATEGY_ALL: &str = "all";
+const TEMPLATE_HASH_BYTES: usize = 8;
 
 #[derive(Clone)]
 struct DeploymentReconciler {
@@ -96,7 +97,10 @@ fn active_replicaset<'a>(replicasets: &'a [&ReplicaSet]) -> Option<&'a ReplicaSe
 fn template_hash(template: &ShipTemplateSpec) -> String {
     let json = canonical_json_string(template);
     let hash = Sha256::digest(json.as_bytes());
-    hash[..4].iter().map(|byte| format!("{byte:02x}")).collect()
+    hash[..TEMPLATE_HASH_BYTES]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn canonicalize_json_value(value: Value) -> Value {
@@ -244,6 +248,14 @@ fn stale_replicasets_for_cleanup<'a>(
     let keep = revision_history_limit.min(zeroed.len());
     let delete_count = zeroed.len() - keep;
     zeroed.into_iter().take(delete_count).collect()
+}
+
+fn revision_history_limit(dep: &Deployment) -> usize {
+    dep.spec
+        .as_ref()
+        .and_then(|spec| spec.revision_history_limit)
+        .unwrap_or(0)
+        .max(0) as usize
 }
 
 fn update_replicaset_replicas(active_rs: &ReplicaSet, replicas: Option<i32>) -> Option<ReplicaSet> {
@@ -456,7 +468,7 @@ impl DeploymentReconciler {
         updated.status = Some(new_status);
         let dep_api: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
         dep_api
-            .replace(dep.name().unwrap_or_default(), updated)
+            .replace_status(dep.name().unwrap_or_default(), updated)
             .await?;
         Ok(())
     }
@@ -750,7 +762,8 @@ impl DeploymentReconciler {
         let managed = managed_replicasets(&replicasets, &dep);
         let active_rs = active_replicaset(&managed);
         let old_replicasets = old_replicasets(&managed, active_rs.and_then(|rs| rs.name()));
-        let stale_replicasets = stale_replicasets_for_cleanup(&old_replicasets, 0);
+        let stale_replicasets =
+            stale_replicasets_for_cleanup(&old_replicasets, revision_history_limit(&dep));
 
         let change_kind = active_rs
             .map(|active_rs| {
@@ -818,9 +831,9 @@ mod tests {
         build_deployment_status, build_replicaset, has_old_running_replicas,
         is_owned_by_deployment, managed_replicasets, next_rolling_update_rotation_targets,
         old_replicasets, owner_reference_for_deployment, replicaset_has_template_hash,
-        replicaset_ready_replicas, rolling_update_limits, set_in_place_update_strategy,
-        stale_replicasets_for_cleanup, template_hash, update_replicaset_for_in_place,
-        update_replicaset_replicas,
+        replicaset_ready_replicas, revision_history_limit, rolling_update_limits,
+        set_in_place_update_strategy, stale_replicasets_for_cleanup, template_hash,
+        update_replicaset_for_in_place, update_replicaset_replicas,
     };
     use tugboat_resources::ObjectMetaResource;
     use tugboat_resources::manifests::apps::v1::{
@@ -970,6 +983,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(template_hash(template), template_hash(template));
+        assert_eq!(template_hash(template).len(), 16);
     }
 
     #[test]
@@ -1159,7 +1173,8 @@ mod tests {
             ready_replicas: 0,
         });
 
-        let stale = stale_replicasets_for_cleanup(&[&zeroed, &still_running], 0);
+        let replicasets = [&zeroed, &still_running];
+        let stale = stale_replicasets_for_cleanup(&replicasets, 0);
 
         assert_eq!(stale.len(), 1);
         assert_eq!(stale[0].name(), Some("demo-rs-old"));
@@ -1180,10 +1195,26 @@ mod tests {
             ready_replicas: 0,
         });
 
-        let stale = stale_replicasets_for_cleanup(&[&newer, &oldest], 1);
+        let replicasets = [&newer, &oldest];
+        let stale = stale_replicasets_for_cleanup(&replicasets, 1);
 
         assert_eq!(stale.len(), 1);
         assert_eq!(stale[0].name(), Some("demo-rs-1"));
+    }
+
+    #[test]
+    fn deployment_revision_history_limit_defaults_to_zero() {
+        let dep = deployment();
+
+        assert_eq!(revision_history_limit(&dep), 0);
+    }
+
+    #[test]
+    fn deployment_revision_history_limit_uses_spec_value() {
+        let mut dep = deployment();
+        dep.spec.as_mut().unwrap().revision_history_limit = Some(2);
+
+        assert_eq!(revision_history_limit(&dep), 2);
     }
 
     #[test]

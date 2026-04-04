@@ -32,6 +32,7 @@ message DeploymentSpec {
   map<string, string> selector = 2;
   ShipTemplateSpec ship_template = 3;
   optional DeploymentStrategy strategy = 4;
+  optional int32 revision_history_limit = 5;
 }
 
 message DeploymentStatus {

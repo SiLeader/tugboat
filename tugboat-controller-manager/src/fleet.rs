@@ -248,13 +248,13 @@ impl FleetReconciler {
             .get(&fleet_spec.network_class_name)
             .await?
         else {
-            tracing::warn!(
+            tracing::debug!(
                 "ClusterNetworkClass '{}' referenced by Fleet '{}/{}' is not available yet",
                 fleet_spec.network_class_name,
                 namespace,
                 fleet.name().unwrap_or_default()
             );
-            return Ok(Action::requeue(Duration::from_secs(10)));
+            return Ok(Action::requeue(Duration::from_secs(30)));
         };
 
         let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), namespace);

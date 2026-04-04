@@ -281,6 +281,7 @@ impl ReplicaSetReconciler {
             }
         }
 
+        let mut updated_any = false;
         for ship in matching_ships {
             let Some(ship_spec) = ship.spec.as_ref() else {
                 continue;
@@ -294,6 +295,10 @@ impl ReplicaSetReconciler {
             let mut updated = ship.clone();
             apply_template_spec(&mut updated, &template_spec);
             ship_api.replace(name, updated).await?;
+            updated_any = true;
+        }
+
+        if updated_any {
             return Ok(Action::requeue(Duration::from_secs(5)));
         }
 
@@ -306,7 +311,7 @@ impl ReplicaSetReconciler {
             updated.status = Some(new_status);
             let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), namespace);
             rs_api
-                .replace(rs.name().unwrap_or_default(), updated)
+                .replace_status(rs.name().unwrap_or_default(), updated)
                 .await?;
         }
 
