@@ -16,7 +16,15 @@ use crate::config::load_config_or_panic;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use qapi::futures::QmpStreamTokio;
+use qapi::qmp::{
+    MigrateSetParameters, MigrationCapability, MigrationCapabilityStatus, ZeroPageDetection,
+    migrate_set_capabilities, migrate_set_parameters,
+};
 use tugboat_vm_runtime_interface::migrate::VmMigrateRequest;
+
+const MAX_MIGRATION_BANDWIDTH_BYTES_PER_SEC: u64 = 1 << 30;
+const MIGRATION_DOWNTIME_LIMIT_MS: u64 = 300;
+const XBZRLE_CACHE_SIZE_BYTES: u64 = 64 << 20;
 
 #[derive(Debug, Parser)]
 pub struct MigrateArgs {
@@ -34,6 +42,35 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
         .await
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
+
+    qmp.execute(migrate_set_capabilities {
+        capabilities: vec![
+            MigrationCapabilityStatus {
+                capability: MigrationCapability::events,
+                state: true,
+            },
+            MigrationCapabilityStatus {
+                capability: MigrationCapability::auto_converge,
+                state: true,
+            },
+            MigrationCapabilityStatus {
+                capability: MigrationCapability::xbzrle,
+                state: true,
+            },
+        ],
+    })
+    .await
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+
+    qmp.execute(migrate_set_parameters(MigrateSetParameters {
+        max_bandwidth: Some(MAX_MIGRATION_BANDWIDTH_BYTES_PER_SEC),
+        downtime_limit: Some(MIGRATION_DOWNTIME_LIMIT_MS),
+        xbzrle_cache_size: Some(XBZRLE_CACHE_SIZE_BYTES),
+        zero_page_detection: Some(ZeroPageDetection::legacy),
+        ..Default::default()
+    }))
+    .await
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     qmp.execute(qapi::qmp::migrate {
         uri: Some(format!(

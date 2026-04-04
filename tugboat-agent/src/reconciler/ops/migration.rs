@@ -29,6 +29,7 @@ use tugboat_resources::manifests::core::v1::{
 };
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::migrate::VmMigrationPhase;
+use tugboat_vm_runtime_interface::status::VmStatus;
 
 use super::{PHASE_COMPLETED, PHASE_FAILED, PHASE_MIGRATING, PHASE_PENDING, PHASE_READY};
 
@@ -51,6 +52,7 @@ pub trait MigrationContext: Send + Sync {
     async fn check_migration_status(&self, ship_id: &str)
     -> Result<VmMigrationPhase, RuntimeError>;
     async fn finish_source_migration(&self, ship_id: &str) -> Result<(), RuntimeError>;
+    async fn local_runtime_status(&self, ship_id: &str) -> Result<Option<VmStatus>, RuntimeError>;
 
     async fn update_migration_status(
         &self,
@@ -105,6 +107,9 @@ impl MigrationContext for ShipReconciler {
     }
     async fn finish_source_migration(&self, ship_id: &str) -> Result<(), RuntimeError> {
         self.runtime_operator.finish_source_migration(ship_id).await
+    }
+    async fn local_runtime_status(&self, ship_id: &str) -> Result<Option<VmStatus>, RuntimeError> {
+        self.runtime_operator.status(ship_id).await
     }
 
     async fn update_migration_status(
@@ -232,6 +237,46 @@ impl<'a> MigrationStateMachine<'a> {
         Ok(())
     }
 
+    async fn finalize_completed_target_migration(
+        &self,
+        namespace: &str,
+        name: &str,
+        source_node_name: Option<String>,
+        target_address: Option<String>,
+        target_port: Option<u32>,
+    ) -> Result<(), ReconcileError> {
+        let target_node_name = self.context.node_name().to_string();
+        self.context
+            .update_migration_status(
+                namespace,
+                name,
+                ShipMigrationStatus {
+                    phase: PHASE_COMPLETED.to_string(),
+                    source_node_name,
+                    target_node_name: Some(target_node_name.clone()),
+                    target_address,
+                    target_port,
+                    message: "Target node recovered a completed live migration and finalized cutover"
+                        .to_string(),
+                    timestamp: Some(Time::now()),
+                },
+                "VmMigrated",
+                format!(
+                    "Recovered completed live migration on target node '{target_node_name}' after the source stopped reporting progress"
+                ),
+            )
+            .await?;
+
+        let spec_patch = serde_json::json!({
+            "spec": {
+                "nodeName": target_node_name,
+                "targetNodeName": null,
+            }
+        });
+        self.context.patch_ship(namespace, name, spec_patch).await?;
+        Ok(())
+    }
+
     pub async fn try_reconcile(&self, ship: &Ship, ship_id: &str) -> Result<bool, ReconcileError> {
         let Some(ship_spec) = &ship.spec else {
             return Err(ReconcileError::FieldMissing(
@@ -244,11 +289,12 @@ impl<'a> MigrationStateMachine<'a> {
         };
 
         if target_node_name == self.context.node_name() {
+            let has_local_runtime = self.context.has_ship(ship_id).await;
             if let Some(status) = &ship.status
                 && let Some(migration) = &status.migration
                 && migration.phase == PHASE_FAILED
             {
-                if self.context.has_ship(ship_id).await {
+                if has_local_runtime {
                     info!(
                         "Migration failed for ship '{}', cleaning up incoming VM on target node",
                         ship_id
@@ -262,7 +308,39 @@ impl<'a> MigrationStateMachine<'a> {
                 }
                 return Ok(true);
             }
-            return Ok(self.context.has_ship(ship_id).await);
+
+            if has_local_runtime
+                && let Some(status) = &ship.status
+                && let Some(migration) = &status.migration
+                && matches!(
+                    migration.phase.as_str(),
+                    PHASE_READY | PHASE_MIGRATING | PHASE_COMPLETED
+                )
+                && let Some(VmStatus::Running) = self.context.local_runtime_status(ship_id).await?
+            {
+                info!(
+                    "Recovered active migration target for ship '{}', finalizing cutover on target node",
+                    ship_id
+                );
+                self.finalize_completed_target_migration(
+                    ship.namespace().unwrap_or("default"),
+                    ship.name().ok_or_else(|| {
+                        ReconcileError::FieldMissing(
+                            "v1.Ship".to_string(),
+                            "metadata.name".to_string(),
+                        )
+                    })?,
+                    migration
+                        .source_node_name
+                        .clone()
+                        .or_else(|| ship_spec.node_name.clone()),
+                    migration.target_address.clone(),
+                    migration.target_port,
+                )
+                .await?;
+            }
+
+            return Ok(has_local_runtime);
         }
 
         if ship_spec.node_name.as_deref() != Some(self.context.node_name()) {
@@ -789,6 +867,7 @@ mod tests {
         node_name: String,
         has_ship: bool,
         migration_phase: VmMigrationPhase,
+        runtime_status: Option<VmStatus>,
         preflight: MigrationPreflight,
         updates: Mutex<Vec<StatusUpdate>>,
         migrate_calls: Mutex<Vec<(String, u16)>>,
@@ -833,6 +912,12 @@ mod tests {
             *self.finish_calls.lock().unwrap() += 1;
             Ok(())
         }
+        async fn local_runtime_status(
+            &self,
+            _ship_id: &str,
+        ) -> Result<Option<VmStatus>, RuntimeError> {
+            Ok(self.runtime_status)
+        }
 
         async fn update_migration_status(
             &self,
@@ -866,6 +951,7 @@ mod tests {
             node_name: node_name.to_string(),
             has_ship: true,
             migration_phase,
+            runtime_status: Some(VmStatus::Paused),
             preflight: MigrationPreflight::Ready,
             updates: Mutex::new(Vec::new()),
             migrate_calls: Mutex::new(Vec::new()),
@@ -1121,6 +1207,54 @@ mod tests {
         assert!(result);
         assert_eq!(*context.finish_calls.lock().unwrap(), 0);
         assert_eq!(context.ship_patches.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_running_target_runtime_finalizes_cutover_after_source_loss() {
+        let context = FakeContext {
+            node_name: "target-node".to_string(),
+            runtime_status: Some(VmStatus::Running),
+            ..fake_context("target-node", VmMigrationPhase::None)
+        };
+        let sm = MigrationStateMachine::new(&context);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("source-node".to_string()),
+                target_node_name: Some("target-node".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_MIGRATING.to_string(),
+                    source_node_name: Some("source-node".to_string()),
+                    target_node_name: Some("target-node".to_string()),
+                    target_address: Some("1.2.3.4".to_string()),
+                    target_port: Some(1234),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
+        assert!(result);
+        assert_eq!(*context.finish_calls.lock().unwrap(), 0);
+        assert_eq!(context.ship_patches.lock().unwrap().len(), 1);
+        assert_eq!(
+            context
+                .updates
+                .lock()
+                .unwrap()
+                .last()
+                .map(|update| update.migration.phase.as_str()),
+            Some(PHASE_COMPLETED)
+        );
     }
 
     #[test]

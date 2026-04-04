@@ -45,6 +45,23 @@ impl ShipReconciler {
 
         if !self.runtime_operator.has_ship(ship_id).await {
             if let Some(spec) = &ship.spec
+                && spec.target_node_name.is_some()
+                && let Some(status) = &ship.status
+                && let Some(migration) = &status.migration
+                && matches!(
+                    migration.phase.as_str(),
+                    super::PHASE_PENDING
+                        | super::PHASE_READY
+                        | super::PHASE_MIGRATING
+                        | PHASE_COMPLETED
+                )
+            {
+                let migration_sm = MigrationStateMachine::new(self);
+                if migration_sm.try_reconcile(&ship, ship_id).await? {
+                    return Ok(());
+                }
+            }
+            if let Some(spec) = &ship.spec
                 && spec.node_name.as_deref() == Some(self.node_name.as_str())
                 && spec.target_node_name.is_some()
                 && let Some(status) = &ship.status
