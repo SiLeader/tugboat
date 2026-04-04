@@ -222,6 +222,30 @@ fn old_replicasets<'a>(
         .collect()
 }
 
+fn stale_replicasets_for_cleanup<'a>(
+    old_replicasets: &'a [&ReplicaSet],
+    revision_history_limit: usize,
+) -> Vec<&'a ReplicaSet> {
+    let mut zeroed: Vec<&ReplicaSet> = old_replicasets
+        .iter()
+        .copied()
+        .filter(|rs| {
+            let has_no_ships = rs
+                .status
+                .as_ref()
+                .map(|status| status.replicas == 0)
+                .unwrap_or(true);
+            let is_scaled_to_zero = rs.spec.as_ref().and_then(|spec| spec.replicas) == Some(0);
+            is_scaled_to_zero && has_no_ships
+        })
+        .collect();
+
+    zeroed.sort_by_key(|rs| replicaset_creation_sort_key(rs));
+    let keep = revision_history_limit.min(zeroed.len());
+    let delete_count = zeroed.len() - keep;
+    zeroed.into_iter().take(delete_count).collect()
+}
+
 fn update_replicaset_replicas(active_rs: &ReplicaSet, replicas: Option<i32>) -> Option<ReplicaSet> {
     let rs_spec = active_rs.spec.as_ref()?;
     if rs_spec.replicas == replicas {
@@ -366,6 +390,22 @@ impl TugboatController for DeploymentController {
 }
 
 impl DeploymentReconciler {
+    async fn reconcile_deleted(&self, dep: Deployment) -> Result<Action, ControllerError> {
+        let namespace = dep.namespace().unwrap_or_default().to_string();
+        let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), &namespace);
+        let replicasets = rs_api.list().await?;
+
+        for rs in replicasets
+            .into_iter()
+            .filter(|rs| is_owned_by_deployment(rs, &dep))
+        {
+            let name = rs.name().unwrap_or_default().to_string();
+            rs_api.delete(&name).await?;
+        }
+
+        Ok(Action::await_change())
+    }
+
     async fn ensure_rotation_replicaset(
         &self,
         dep: &Deployment,
@@ -710,6 +750,7 @@ impl DeploymentReconciler {
         let managed = managed_replicasets(&replicasets, &dep);
         let active_rs = active_replicaset(&managed);
         let old_replicasets = old_replicasets(&managed, active_rs.and_then(|rs| rs.name()));
+        let stale_replicasets = stale_replicasets_for_cleanup(&old_replicasets, 0);
 
         let change_kind = active_rs
             .map(|active_rs| {
@@ -747,6 +788,11 @@ impl DeploymentReconciler {
             }
         }?;
 
+        for rs in stale_replicasets {
+            let name = rs.name().unwrap_or_default().to_string();
+            rs_api.delete(&name).await?;
+        }
+
         self.sync_deployment_status(namespace, &dep).await?;
 
         Ok(action)
@@ -760,7 +806,7 @@ impl Reconciler<Deployment> for DeploymentReconciler {
     async fn reconcile(&self, event: ReconcileEvent<Deployment>) -> Result<Action, Self::Error> {
         match event {
             ReconcileEvent::Applied(deployment) => self.reconcile_applied(deployment).await,
-            ReconcileEvent::Deleted(_deployment) => Ok(Action::await_change()),
+            ReconcileEvent::Deleted(deployment) => self.reconcile_deleted(deployment).await,
         }
     }
 }
@@ -773,7 +819,8 @@ mod tests {
         is_owned_by_deployment, managed_replicasets, next_rolling_update_rotation_targets,
         old_replicasets, owner_reference_for_deployment, replicaset_has_template_hash,
         replicaset_ready_replicas, rolling_update_limits, set_in_place_update_strategy,
-        template_hash, update_replicaset_for_in_place, update_replicaset_replicas,
+        stale_replicasets_for_cleanup, template_hash, update_replicaset_for_in_place,
+        update_replicaset_replicas,
     };
     use tugboat_resources::ObjectMetaResource;
     use tugboat_resources::manifests::apps::v1::{
@@ -1095,6 +1142,48 @@ mod tests {
 
         assert!(has_old_running_replicas(&[&with_status]));
         assert!(!has_old_running_replicas(&[&with_zero_spec]));
+    }
+
+    #[test]
+    fn stale_replicasets_cleanup_selects_zeroed_sets() {
+        let mut zeroed = owned_replicaset("demo-rs-old", 1);
+        zeroed.spec.as_mut().unwrap().replicas = Some(0);
+        zeroed.status = Some(ReplicaSetStatus {
+            replicas: 0,
+            ready_replicas: 0,
+        });
+        let mut still_running = owned_replicaset("demo-rs-running", 2);
+        still_running.spec.as_mut().unwrap().replicas = Some(0);
+        still_running.status = Some(ReplicaSetStatus {
+            replicas: 1,
+            ready_replicas: 0,
+        });
+
+        let stale = stale_replicasets_for_cleanup(&[&zeroed, &still_running], 0);
+
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].name(), Some("demo-rs-old"));
+    }
+
+    #[test]
+    fn stale_replicasets_cleanup_keeps_newest_revision_history_limit() {
+        let mut oldest = owned_replicaset("demo-rs-1", 1);
+        oldest.spec.as_mut().unwrap().replicas = Some(0);
+        oldest.status = Some(ReplicaSetStatus {
+            replicas: 0,
+            ready_replicas: 0,
+        });
+        let mut newer = owned_replicaset("demo-rs-2", 2);
+        newer.spec.as_mut().unwrap().replicas = Some(0);
+        newer.status = Some(ReplicaSetStatus {
+            replicas: 0,
+            ready_replicas: 0,
+        });
+
+        let stale = stale_replicasets_for_cleanup(&[&newer, &oldest], 1);
+
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].name(), Some("demo-rs-1"));
     }
 
     #[test]
