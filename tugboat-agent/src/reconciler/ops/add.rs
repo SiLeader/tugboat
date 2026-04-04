@@ -79,6 +79,17 @@ enum RecoveredRuntimeAction {
     CleanupFailedTarget,
 }
 
+fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
+    if let Some(existing) = conditions
+        .iter_mut()
+        .find(|existing| existing.status == condition.status)
+    {
+        *existing = condition;
+    } else {
+        conditions.push(condition);
+    }
+}
+
 fn recovered_runtime_action(ship: &Ship, local_node_name: &str) -> RecoveredRuntimeAction {
     let Some(spec) = ship.spec.as_ref() else {
         return RecoveredRuntimeAction::Register;
@@ -379,6 +390,22 @@ impl ShipReconciler {
         let namespace = ship.namespace().unwrap_or("default");
         let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
         let target_address = self.local_node_address().await?;
+        let mut conditions = api
+            .get(name)
+            .await?
+            .and_then(|ship| ship.status)
+            .map(|status| status.conditions)
+            .unwrap_or_default();
+        upsert_ship_condition(
+            &mut conditions,
+            ShipCondition {
+                status: "VmMigrationTargetReady".to_string(),
+                message: format!(
+                    "VM is listening for incoming migration on {target_address}:{port} with deterministic NIC names and MAC addresses"
+                ),
+                timestamp: Some(Time::now()),
+            },
+        );
 
         let patch = serde_json::json!({
             "status": {
@@ -391,13 +418,7 @@ impl ShipReconciler {
                     "message": "Target VM is ready to accept incoming migration with the same guest NIC identity",
                     "timestamp": Time::now(),
                 },
-                "conditions": [
-                    {
-                        "status": "VmMigrationTargetReady",
-                        "message": format!("VM is listening for incoming migration on {target_address}:{port} with deterministic NIC names and MAC addresses"),
-                        "timestamp": Time::now(),
-                    }
-                ]
+                "conditions": conditions
             }
         });
 
@@ -419,6 +440,20 @@ impl ShipReconciler {
         let namespace = ship.namespace().unwrap_or("default");
         let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
         let condition_message = message.clone();
+        let mut conditions = api
+            .get(name)
+            .await?
+            .and_then(|ship| ship.status)
+            .map(|status| status.conditions)
+            .unwrap_or_default();
+        upsert_ship_condition(
+            &mut conditions,
+            ShipCondition {
+                status: "VmMigrationFailed".to_string(),
+                message: condition_message.clone(),
+                timestamp: Some(Time::now()),
+            },
+        );
 
         let patch = serde_json::json!({
             "status": {
@@ -429,13 +464,7 @@ impl ShipReconciler {
                     "message": message,
                     "timestamp": Time::now(),
                 },
-                "conditions": [
-                    {
-                        "status": "VmMigrationFailed",
-                        "message": condition_message,
-                        "timestamp": Time::now(),
-                    }
-                ]
+                "conditions": conditions
             }
         });
 

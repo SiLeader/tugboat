@@ -22,7 +22,7 @@ use crate::runtime::error::RuntimeError;
 use async_trait::async_trait;
 use std::collections::BTreeSet;
 use tracing::{error, info, warn};
-use tugboat_client::Api;
+use tugboat_client::{Api, WatchParams};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
     Node, NodeCniPluginStatus, Ship, ShipClass, ShipCondition, ShipMigrationStatus,
@@ -761,7 +761,7 @@ impl<'a> MigrationStateMachine<'a> {
                                         target_address: Some(target_address.clone()),
                                         target_port: Some(target_port),
                                         message: runtime_status.message.clone(),
-                                        timestamp: Some(Time::now()),
+                                        timestamp: migration_status.timestamp.clone(),
                                         bytes_transferred: None,
                                         bytes_remaining: None,
                                     },
@@ -882,8 +882,15 @@ impl ShipReconciler {
             return Ok(MigrationPreflight::Reject(reason));
         }
 
-        let ships = self.ship_all_api.list().await?;
-        let ship_classes = self.ship_class_api.list().await?;
+        let ships = self
+            .ship_all_api
+            .list_with_params(
+                &WatchParams::default().fields(format!("spec.nodeName={target_node_name}")),
+            )
+            .await?;
+        let ship_classes = self
+            .get_ship_classes_for_capacity_check(&ships, &ship_spec.ship_class)
+            .await?;
         if let Some(reason) =
             validate_target_resource_capacity(&target_node, &ships, &ship_classes, &ship_class)
         {
@@ -891,6 +898,28 @@ impl ShipReconciler {
         }
 
         Ok(MigrationPreflight::Ready)
+    }
+
+    async fn get_ship_classes_for_capacity_check(
+        &self,
+        ships: &[Ship],
+        requested_ship_class_name: &str,
+    ) -> Result<Vec<ShipClass>, ReconcileError> {
+        let mut class_names = BTreeSet::from([requested_ship_class_name.to_string()]);
+        for ship in ships {
+            if let Some(spec) = ship.spec.as_ref() {
+                class_names.insert(spec.ship_class.clone());
+            }
+        }
+
+        let mut ship_classes = Vec::with_capacity(class_names.len());
+        for class_name in class_names {
+            if let Some(ship_class) = self.ship_class_api.get(&class_name).await? {
+                ship_classes.push(ship_class);
+            }
+        }
+
+        Ok(ship_classes)
     }
 }
 
@@ -1452,6 +1481,15 @@ mod tests {
                 .map(|update| update.migration.phase.as_str()),
             Some(PHASE_MIGRATING)
         );
+        assert!(
+            context
+                .updates
+                .lock()
+                .unwrap()
+                .last()
+                .and_then(|update| update.migration.timestamp.as_ref())
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -1790,6 +1828,44 @@ mod tests {
                 .condition_message
                 .contains("exceeded the maximum allowed time")
         );
+    }
+
+    #[tokio::test]
+    async fn test_migrating_status_update_preserves_existing_timestamp() {
+        let context = fake_context("node-1", VmMigrationPhase::Active);
+        let sm = MigrationStateMachine::new(&context);
+        let timestamp = stale_timestamp(120);
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("ship-1".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                node_name: Some("node-1".to_string()),
+                target_node_name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: PHASE_MIGRATING.to_string(),
+                    target_address: Some("1.2.3.4".to_string()),
+                    target_port: Some(1234),
+                    timestamp: Some(timestamp),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = sm.try_reconcile(&ship, "ship-1").await.unwrap();
+        assert!(result);
+
+        let updates = context.updates.lock().unwrap();
+        let update = updates.last().expect("expected migration status update");
+        assert_eq!(update.migration.phase, PHASE_MIGRATING);
+        assert_eq!(update.migration.timestamp, Some(timestamp));
     }
 
     #[tokio::test]

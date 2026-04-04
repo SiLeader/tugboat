@@ -18,9 +18,10 @@ use tugboat_resources::manifests::core::v1::Node;
 const READ_WRITE_MANY: &str = "ReadWriteMany";
 
 /// Rejects nodes when any PVC used by the Ship is backed by a PersistentVolume
-/// that does not support `ReadWriteMany` access. Ships with RWO-only volumes
-/// cannot be live-migrated, so scheduling them to a node would prevent future
-/// migration and is therefore rejected here to surface the issue early.
+/// that does not support `ReadWriteMany` access, but only for ShipClasses that
+/// explicitly opt into live-migration settings. This keeps non-migratable
+/// workloads free to use local RWO storage while still surfacing shared-storage
+/// requirements early for workloads that intend to migrate.
 ///
 /// If a Ship has no PVC-backed volumes, every node is accepted.
 pub struct StorageFitFilter;
@@ -31,6 +32,10 @@ impl FilterPlugin for StorageFitFilter {
     }
 
     fn filter(&self, ctx: &SchedulingContext, _node: &Node) -> FilterResult {
+        if !ship_requires_shared_storage(ctx) {
+            return FilterResult::Accept;
+        }
+
         for (pvc, pv) in bound_pvc_pv_pairs(ctx) {
             let pvc_has_rwx = pvc
                 .spec
@@ -71,6 +76,14 @@ impl FilterPlugin for StorageFitFilter {
 
         FilterResult::Accept
     }
+}
+
+fn ship_requires_shared_storage(ctx: &SchedulingContext) -> bool {
+    ctx.ship_class
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.migration.as_ref())
+        .is_some()
 }
 
 fn bound_pvc_pv_pairs(
@@ -124,8 +137,8 @@ mod tests {
     use super::*;
     use crate::framework::SchedulingContext;
     use tugboat_resources::manifests::core::v1::{
-        PersistentVolume, PersistentVolumeClaimSpec, PersistentVolumeSpec, Ship, ShipClass,
-        ShipSpec, ShipVolume,
+        MigrationSpec, PersistentVolume, PersistentVolumeClaimSpec, PersistentVolumeSpec, Ship,
+        ShipClass, ShipClassSpec, ShipSpec, ShipVolume,
     };
     use tugboat_resources::manifests::core::v1::{
         PersistentVolumeClaim, PersistentVolumeClaimVolumeSource,
@@ -171,6 +184,7 @@ mod tests {
         pvcs: Vec<PersistentVolumeClaim>,
         pvs: Vec<PersistentVolume>,
         volumes: Vec<ShipVolume>,
+        migration_enabled: bool,
     ) -> SchedulingContext {
         SchedulingContext {
             ship: Ship {
@@ -184,7 +198,13 @@ mod tests {
                 }),
                 ..Default::default()
             },
-            ship_class: ShipClass::default(),
+            ship_class: ShipClass {
+                spec: Some(ShipClassSpec {
+                    migration: migration_enabled.then(MigrationSpec::default),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
             all_cluster_network_classes: Vec::new(),
             all_network_classes: Vec::new(),
             all_ships: Vec::new(),
@@ -205,7 +225,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let ctx = make_ctx(vec![pvc], vec![pv], vec![volume]);
+        let ctx = make_ctx(vec![pvc], vec![pv], vec![volume], true);
         let filter = StorageFitFilter;
         assert!(matches!(
             filter.filter(&ctx, &Node::default()),
@@ -224,7 +244,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let ctx = make_ctx(vec![pvc], vec![pv], vec![volume]);
+        let ctx = make_ctx(vec![pvc], vec![pv], vec![volume], true);
         let filter = StorageFitFilter;
         assert!(matches!(
             filter.filter(&ctx, &Node::default()),
@@ -243,7 +263,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let ctx = make_ctx(vec![pvc], vec![pv], vec![volume]);
+        let ctx = make_ctx(vec![pvc], vec![pv], vec![volume], true);
         let filter = StorageFitFilter;
         assert!(matches!(
             filter.filter(&ctx, &Node::default()),
@@ -253,7 +273,26 @@ mod tests {
 
     #[test]
     fn accepts_ship_with_no_volumes() {
-        let ctx = make_ctx(Vec::new(), Vec::new(), Vec::new());
+        let ctx = make_ctx(Vec::new(), Vec::new(), Vec::new(), true);
+        let filter = StorageFitFilter;
+        assert!(matches!(
+            filter.filter(&ctx, &Node::default()),
+            FilterResult::Accept
+        ));
+    }
+
+    #[test]
+    fn accepts_rwo_volume_when_migration_is_not_configured() {
+        let pv = make_pv("pv-1", vec!["ReadWriteOnce"]);
+        let pvc = make_pvc("pvc-1", "default", "pv-1", vec!["ReadWriteOnce"]);
+        let volume = ShipVolume {
+            name: "data".to_string(),
+            persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                claim_name: "pvc-1".to_string(),
+            }),
+            ..Default::default()
+        };
+        let ctx = make_ctx(vec![pvc], vec![pv], vec![volume], false);
         let filter = StorageFitFilter;
         assert!(matches!(
             filter.filter(&ctx, &Node::default()),
