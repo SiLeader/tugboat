@@ -792,6 +792,14 @@ impl ShipReconciler {
             return Ok(MigrationPreflight::Reject(reason));
         }
 
+        let ships = self.ship_all_api.list().await?;
+        let ship_classes = self.ship_class_api.list().await?;
+        if let Some(reason) =
+            validate_target_resource_capacity(&target_node, &ships, &ship_classes, &ship_class)
+        {
+            return Ok(MigrationPreflight::Reject(reason));
+        }
+
         Ok(MigrationPreflight::Ready)
     }
 }
@@ -945,6 +953,166 @@ fn validate_storage_eligibility(volumes: &[VolumeInfo]) -> Option<String> {
     None
 }
 
+fn validate_target_resource_capacity(
+    target_node: &Node,
+    ships: &[Ship],
+    ship_classes: &[ShipClass],
+    requested_ship_class: &ShipClass,
+) -> Option<String> {
+    let node_name = target_node
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.name.as_deref())
+        .unwrap_or("<unknown>");
+
+    let (alloc_cpu, alloc_memory) = node_allocatable(target_node);
+    let (used_cpu, used_memory) = node_resource_usage(ships, ship_classes, node_name);
+    let (req_cpu, req_memory) = ship_class_requested_resources(requested_ship_class);
+
+    let avail_cpu = alloc_cpu.saturating_sub(used_cpu);
+    if req_cpu > avail_cpu {
+        return Some(format!(
+            "target node '{node_name}' has insufficient CPU for live migration: requested={req_cpu}, available={avail_cpu}"
+        ));
+    }
+
+    let avail_memory = alloc_memory.saturating_sub(used_memory);
+    if req_memory > avail_memory {
+        return Some(format!(
+            "target node '{node_name}' has insufficient memory for live migration: requested={req_memory}, available={avail_memory}"
+        ));
+    }
+
+    None
+}
+
+fn node_allocatable(node: &Node) -> (u64, u64) {
+    let spec = node.spec.as_ref();
+    let resource = spec.and_then(|s| s.resource.as_ref());
+    let overcommit = spec.and_then(|s| s.overcommit.as_ref());
+
+    let base_cpu = resource.map(|r| r.cpu).unwrap_or(0);
+    let base_memory = resource.map(|r| r.memory).unwrap_or(0);
+
+    let cpu_ratio: f64 = overcommit
+        .and_then(|o| o.cpu_ratio.parse().ok())
+        .unwrap_or(1.0);
+    let memory_ratio: f64 = overcommit
+        .and_then(|o| o.memory_ratio.parse().ok())
+        .unwrap_or(1.0);
+
+    let alloc_cpu = (base_cpu as f64 * cpu_ratio) as u64;
+    let alloc_memory = (base_memory as f64 * memory_ratio) as u64;
+
+    (alloc_cpu, alloc_memory)
+}
+
+fn node_resource_usage(ships: &[Ship], ship_classes: &[ShipClass], node_name: &str) -> (u64, u64) {
+    let mut cpu_used: u64 = 0;
+    let mut memory_used: u64 = 0;
+
+    for ship in ships {
+        let assigned_node = ship
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.node_name.as_deref());
+        if assigned_node != Some(node_name) {
+            continue;
+        }
+
+        let class_name = ship
+            .spec
+            .as_ref()
+            .map(|spec| spec.ship_class.as_str())
+            .unwrap_or("");
+        let Some(ship_class) = find_ship_class(ship_classes, class_name) else {
+            continue;
+        };
+        let (cpu, memory) = ship_class_requested_resources(ship_class);
+        cpu_used = cpu_used.saturating_add(cpu);
+        memory_used = memory_used.saturating_add(memory);
+    }
+
+    (cpu_used, memory_used)
+}
+
+fn find_ship_class<'a>(ship_classes: &'a [ShipClass], name: &str) -> Option<&'a ShipClass> {
+    ship_classes.iter().find(|ship_class| {
+        ship_class
+            .object_meta
+            .as_ref()
+            .and_then(|m| m.name.as_deref())
+            == Some(name)
+    })
+}
+
+fn ship_class_requested_resources(ship_class: &ShipClass) -> (u64, u64) {
+    let spec = ship_class.spec.as_ref();
+    let cpu = spec
+        .and_then(|spec| spec.cpu.as_ref())
+        .map(|cpu| cpu.cores)
+        .unwrap_or(0);
+    let memory = spec
+        .and_then(|spec| spec.memory.as_ref())
+        .map(|memory| parse_memory_size(&memory.size))
+        .unwrap_or(0);
+    (cpu, memory)
+}
+
+fn parse_memory_size(s: &str) -> u64 {
+    let s = s.trim();
+    if s.is_empty() {
+        return 0;
+    }
+
+    if let Ok(bytes) = s.parse::<u64>() {
+        return bytes;
+    }
+
+    let (num_str, suffix) = if let Some(n) = s.strip_suffix("Gi") {
+        (n, "Gi")
+    } else if let Some(n) = s.strip_suffix("Mi") {
+        (n, "Mi")
+    } else if let Some(n) = s.strip_suffix("Ki") {
+        (n, "Ki")
+    } else if let Some(n) = s.strip_suffix("Ti") {
+        (n, "Ti")
+    } else if let Some(n) = s.strip_suffix('G') {
+        (n, "G")
+    } else if let Some(n) = s.strip_suffix('M') {
+        (n, "M")
+    } else if let Some(n) = s.strip_suffix('K') {
+        (n, "K")
+    } else if let Some(n) = s.strip_suffix('T') {
+        (n, "T")
+    } else {
+        return 0;
+    };
+
+    let Ok(num) = num_str.parse::<f64>() else {
+        return 0;
+    };
+
+    let multiplier: u64 = match suffix {
+        "Ki" => 1024,
+        "Mi" => 1024 * 1024,
+        "Gi" => 1024 * 1024 * 1024,
+        "Ti" => 1024 * 1024 * 1024 * 1024,
+        "K" => 1000,
+        "M" => 1000 * 1000,
+        "G" => 1000 * 1000 * 1000,
+        "T" => 1000 * 1000 * 1000 * 1000,
+        _ => return 0,
+    };
+
+    let result = num * multiplier as f64;
+    if result >= u64::MAX as f64 {
+        return u64::MAX;
+    }
+
+    result as u64
+}
+
 fn normalize_architecture(arch: &str) -> String {
     match arch.trim().to_ascii_lowercase().as_str() {
         "x86_64" | "amd64" => "amd64".to_string(),
@@ -983,8 +1151,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
     use tugboat_resources::manifests::core::v1::{
-        CsiPersistentVolumeSource, PersistentVolumeClaimSpec, PersistentVolumeSpec, ShipSpec,
-        ShipStatus,
+        CpuSpec, CsiPersistentVolumeSource, MemorySpec, NodeOvercommitSpec, NodeResource, NodeSpec,
+        PersistentVolumeClaimSpec, PersistentVolumeSpec, ShipClassSpec, ShipSpec, ShipStatus,
     };
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
@@ -1593,5 +1761,81 @@ mod tests {
         let reason =
             validate_storage_eligibility(&[volume]).expect("non-shared storage should be rejected");
         assert!(reason.contains(READ_WRITE_MANY));
+    }
+
+    #[test]
+    fn rejects_target_node_without_enough_cpu_capacity_for_live_migration() {
+        let target_node = Node {
+            object_meta: Some(ObjectMeta {
+                name: Some("node-2".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(NodeSpec {
+                overcommit: Some(NodeOvercommitSpec {
+                    cpu_ratio: "1".to_string(),
+                    memory_ratio: "1".to_string(),
+                }),
+                resource: Some(NodeResource {
+                    cpu: 4,
+                    memory: 8 * 1024 * 1024 * 1024,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let incumbent_class = ShipClass {
+            object_meta: Some(ObjectMeta {
+                name: Some("incumbent".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipClassSpec {
+                cpu: Some(CpuSpec {
+                    architecture: "amd64".to_string(),
+                    cores: 3,
+                }),
+                memory: Some(MemorySpec {
+                    size: "2Gi".to_string(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let migrating_class = ShipClass {
+            object_meta: Some(ObjectMeta {
+                name: Some("migrating".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(ShipClassSpec {
+                cpu: Some(CpuSpec {
+                    architecture: "amd64".to_string(),
+                    cores: 2,
+                }),
+                memory: Some(MemorySpec {
+                    size: "1Gi".to_string(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let resident_ship = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-2".to_string()),
+                ship_class: "incumbent".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let reason = validate_target_resource_capacity(
+            &target_node,
+            &[resident_ship],
+            &[incumbent_class, migrating_class.clone()],
+            &migrating_class,
+        )
+        .expect("insufficient CPU capacity should be rejected");
+
+        assert!(reason.contains("insufficient CPU"));
+        assert!(reason.contains("requested=2"));
+        assert!(reason.contains("available=1"));
     }
 }

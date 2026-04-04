@@ -31,7 +31,25 @@ impl FilterPlugin for StorageFitFilter {
     }
 
     fn filter(&self, ctx: &SchedulingContext, _node: &Node) -> FilterResult {
-        for pv in ctx.ship_bound_persistent_volumes() {
+        for (pvc, pv) in bound_pvc_pv_pairs(ctx) {
+            let pvc_has_rwx = pvc
+                .spec
+                .as_ref()
+                .map(|spec| spec.access_modes.iter().any(|mode| mode == READ_WRITE_MANY))
+                .unwrap_or(false);
+
+            if !pvc_has_rwx {
+                let pvc_name = pvc
+                    .object_meta
+                    .as_ref()
+                    .and_then(|m| m.name.as_deref())
+                    .unwrap_or("<unknown>");
+                return FilterResult::Reject(format!(
+                    "PersistentVolumeClaim '{pvc_name}' does not support '{READ_WRITE_MANY}'; \
+                     live migration requires shared storage on all volumes"
+                ));
+            }
+
             let Some(spec) = pv.spec.as_ref() else {
                 continue;
             };
@@ -53,6 +71,52 @@ impl FilterPlugin for StorageFitFilter {
 
         FilterResult::Accept
     }
+}
+
+fn bound_pvc_pv_pairs(
+    ctx: &SchedulingContext,
+) -> Vec<(
+    &tugboat_resources::manifests::core::v1::PersistentVolumeClaim,
+    &tugboat_resources::manifests::core::v1::PersistentVolume,
+)> {
+    let namespace = ctx.ship_namespace();
+    let Some(spec) = ctx.ship.spec.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for volume in &spec.volumes {
+        let Some(pvc_source) = volume.persistent_volume_claim.as_ref() else {
+            continue;
+        };
+        let claim_name = pvc_source.claim_name.as_str();
+        let Some(pvc) = ctx.all_persistent_volume_claims.iter().find(|pvc| {
+            let meta = pvc.object_meta.as_ref();
+            meta.and_then(|m| m.name.as_deref()) == Some(claim_name)
+                && meta.and_then(|m| m.namespace.as_deref()) == Some(namespace)
+        }) else {
+            continue;
+        };
+
+        let pv_name = pvc
+            .spec
+            .as_ref()
+            .and_then(|s| s.volume_name.as_deref())
+            .unwrap_or("");
+        if pv_name.is_empty() {
+            continue;
+        }
+
+        if let Some(pv) = ctx
+            .all_persistent_volumes
+            .iter()
+            .find(|pv| pv.object_meta.as_ref().and_then(|m| m.name.as_deref()) == Some(pv_name))
+        {
+            result.push((pvc, pv));
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -82,7 +146,12 @@ mod tests {
         }
     }
 
-    fn make_pvc(name: &str, namespace: &str, pv_name: &str) -> PersistentVolumeClaim {
+    fn make_pvc(
+        name: &str,
+        namespace: &str,
+        pv_name: &str,
+        access_modes: Vec<&str>,
+    ) -> PersistentVolumeClaim {
         PersistentVolumeClaim {
             object_meta: Some(ObjectMeta {
                 name: Some(name.to_string()),
@@ -91,6 +160,7 @@ mod tests {
             }),
             spec: Some(PersistentVolumeClaimSpec {
                 volume_name: Some(pv_name.to_string()),
+                access_modes: access_modes.into_iter().map(|s| s.to_string()).collect(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -127,7 +197,7 @@ mod tests {
     #[test]
     fn accepts_ship_with_rwx_volume() {
         let pv = make_pv("pv-1", vec![READ_WRITE_MANY]);
-        let pvc = make_pvc("pvc-1", "default", "pv-1");
+        let pvc = make_pvc("pvc-1", "default", "pv-1", vec![READ_WRITE_MANY]);
         let volume = ShipVolume {
             name: "data".to_string(),
             persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
@@ -147,7 +217,27 @@ mod tests {
     #[test]
     fn rejects_ship_with_rwo_only_volume() {
         let pv = make_pv("pv-1", vec!["ReadWriteOnce"]);
-        let pvc = make_pvc("pvc-1", "default", "pv-1");
+        let pvc = make_pvc("pvc-1", "default", "pv-1", vec![READ_WRITE_MANY]);
+        let volume = ShipVolume {
+            name: "data".to_string(),
+            persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                claim_name: "pvc-1".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let ctx = make_ctx(vec![pvc], vec![pv], vec![volume]);
+        let filter = StorageFitFilter;
+        assert!(matches!(
+            filter.filter(&ctx, &Node::default()),
+            FilterResult::Reject(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_ship_with_pvc_missing_rwx() {
+        let pv = make_pv("pv-1", vec![READ_WRITE_MANY]);
+        let pvc = make_pvc("pvc-1", "default", "pv-1", vec!["ReadWriteOnce"]);
         let volume = ShipVolume {
             name: "data".to_string(),
             persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {

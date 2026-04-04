@@ -96,6 +96,6 @@ pub async fn run() {
         SubCommand::Stop(stop_args) => stop::stop(config.qemu, stop_args).await,
     } {
         error!("Runtime error: {e}");
-        todo!();
+        std::process::exit(1);
     }
 }
