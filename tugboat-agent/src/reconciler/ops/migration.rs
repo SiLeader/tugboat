@@ -155,8 +155,40 @@ impl MigrationContext for ShipReconciler {
         let Some(ship_class_name) = ship.spec.as_ref().map(|s| s.ship_class.as_str()) else {
             return VmMigrationParams::default();
         };
-        let Ok(Some(ship_class)) = self.ship_class_api.get(ship_class_name).await else {
-            return VmMigrationParams::default();
+        let ship_class = match self.ship_class_api.get(ship_class_name).await {
+            Ok(Some(ship_class)) => ship_class,
+            Ok(None) => {
+                let ship_name = ship
+                    .object_meta
+                    .as_ref()
+                    .and_then(|meta| meta.name.as_deref())
+                    .unwrap_or("<unknown>");
+                let ship_namespace = ship
+                    .object_meta
+                    .as_ref()
+                    .and_then(|meta| meta.namespace.as_deref())
+                    .unwrap_or("<unknown>");
+                warn!(
+                    "Falling back to default migration parameters for ship {ship_namespace}/{ship_name}: ShipClass '{ship_class_name}' was not found"
+                );
+                return VmMigrationParams::default();
+            }
+            Err(err) => {
+                let ship_name = ship
+                    .object_meta
+                    .as_ref()
+                    .and_then(|meta| meta.name.as_deref())
+                    .unwrap_or("<unknown>");
+                let ship_namespace = ship
+                    .object_meta
+                    .as_ref()
+                    .and_then(|meta| meta.namespace.as_deref())
+                    .unwrap_or("<unknown>");
+                warn!(
+                    "Falling back to default migration parameters for ship {ship_namespace}/{ship_name}: failed to fetch ShipClass '{ship_class_name}': {err}"
+                );
+                return VmMigrationParams::default();
+            }
         };
         let Some(migration_spec) = ship_class.spec.as_ref().and_then(|s| s.migration.as_ref())
         else {

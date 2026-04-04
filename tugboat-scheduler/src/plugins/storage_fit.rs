@@ -51,7 +51,7 @@ impl FilterPlugin for StorageFitFilter {
                     .unwrap_or("<unknown>");
                 return FilterResult::Reject(format!(
                     "PersistentVolumeClaim '{pvc_name}' does not support '{READ_WRITE_MANY}'; \
-                     live migration requires shared storage on all volumes"
+                     shared storage is required on all volumes because the ShipClass has migration enabled"
                 ));
             }
 
@@ -69,7 +69,7 @@ impl FilterPlugin for StorageFitFilter {
                     .unwrap_or("<unknown>");
                 return FilterResult::Reject(format!(
                     "PersistentVolume '{pv_name}' does not support '{READ_WRITE_MANY}'; \
-                     live migration requires shared storage on all volumes"
+                     shared storage is required on all volumes because the ShipClass has migration enabled"
                 ));
             }
         }
