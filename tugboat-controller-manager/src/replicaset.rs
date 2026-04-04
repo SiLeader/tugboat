@@ -11,6 +11,9 @@ use tugboat_resources::manifests::core::v1::{Ship, ShipSpec};
 use tugboat_resources::manifests::meta::v1::OwnerReference;
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta};
 
+const UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.dev/update-strategy";
+const UPDATE_STRATEGY_ALL: &str = "all";
+
 #[derive(Clone)]
 struct ReplicaSetReconciler {
     client: TugboatClient,
@@ -142,6 +145,13 @@ fn apply_template_spec(ship: &mut Ship, template_spec: &ShipSpec) {
     ship_spec.volumes = template_spec.volumes.clone();
 }
 
+fn update_strategy(rs: &ReplicaSet) -> Option<&str> {
+    rs.object_meta()
+        .as_ref()
+        .and_then(|meta| meta.annotations.get(UPDATE_STRATEGY_ANNOTATION))
+        .map(String::as_str)
+}
+
 async fn delete_ship_ignore_not_found(
     ship_api: &Api<Ship>,
     name: &str,
@@ -249,6 +259,28 @@ impl ReplicaSetReconciler {
             return Ok(Action::requeue(Duration::from_secs(5)));
         }
 
+        if update_strategy(&rs) == Some(UPDATE_STRATEGY_ALL) {
+            let mut updated_any = false;
+            for ship in &matching_ships {
+                let Some(ship_spec) = ship.spec.as_ref() else {
+                    continue;
+                };
+                if !needs_spec_update(&template_spec, ship_spec) {
+                    continue;
+                }
+                let Some(name) = ship.name() else {
+                    continue;
+                };
+                let mut updated = (*ship).clone();
+                apply_template_spec(&mut updated, &template_spec);
+                ship_api.replace(name, updated).await?;
+                updated_any = true;
+            }
+            if updated_any {
+                return Ok(Action::requeue(Duration::from_secs(5)));
+            }
+        }
+
         for ship in matching_ships {
             let Some(ship_spec) = ship.spec.as_ref() else {
                 continue;
@@ -311,9 +343,10 @@ impl Reconciler<ReplicaSet> for ReplicaSetReconciler {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_template_spec, build_replicaset_status, build_ship, excess_ships_to_delete,
-        generate_suffix, is_owned_by, matches_selector, needs_spec_update, owned_ships,
-        owner_reference_for_replicaset, ship_creation_sort_key, ship_is_ready,
+        UPDATE_STRATEGY_ALL, UPDATE_STRATEGY_ANNOTATION, apply_template_spec,
+        build_replicaset_status, build_ship, excess_ships_to_delete, generate_suffix, is_owned_by,
+        matches_selector, needs_spec_update, owned_ships, owner_reference_for_replicaset,
+        ship_creation_sort_key, ship_is_ready, update_strategy,
     };
     use std::collections::HashMap;
     use tugboat_resources::manifests::apps::v1::{
@@ -695,5 +728,21 @@ mod tests {
                 ready_replicas: 1,
             }
         );
+    }
+
+    #[test]
+    fn update_strategy_reads_annotation() {
+        let rs = ReplicaSet {
+            object_meta: Some(ObjectMeta {
+                annotations: HashMap::from([(
+                    UPDATE_STRATEGY_ANNOTATION.to_string(),
+                    UPDATE_STRATEGY_ALL.to_string(),
+                )]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(update_strategy(&rs), Some(UPDATE_STRATEGY_ALL));
     }
 }
