@@ -347,7 +347,7 @@ impl ReplicaSetReconciler {
                 .await?;
         }
 
-        Ok(Action::requeue(Duration::from_secs(5)))
+        Ok(Action::await_change())
     }
 
     async fn reconcile_deleted(&self, rs: ReplicaSet) -> Result<Action, ControllerError> {

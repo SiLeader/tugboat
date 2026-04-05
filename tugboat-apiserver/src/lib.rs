@@ -21,6 +21,7 @@ use actix_web::web::{Data, JsonConfig};
 use actix_web::{App, HttpResponse, HttpServer, get};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use openssl::x509::X509;
+use std::net::TcpListener;
 use utoipa_actix_web::AppExt;
 
 pub mod config;
@@ -88,6 +89,26 @@ impl ApiServer {
                 .await
                 .expect("Failed to run server");
         }
+    }
+
+    pub async fn run_with_listener(self, listener: TcpListener) {
+        let data = Data::new(self.operator);
+        HttpServer::new(move || {
+            App::new()
+                .wrap(Logger::default().exclude("/healthz"))
+                .app_data(data.clone())
+                .app_data(json_config())
+                .service(health_check)
+                .configure(endpoints::register_openapi_endpoints)
+                .into_utoipa_app()
+                .configure(endpoints::register_endpoints)
+                .into_app()
+        })
+        .listen(listener)
+        .expect("Failed to listen on provided socket")
+        .run()
+        .await
+        .expect("Failed to run server");
     }
 }
 

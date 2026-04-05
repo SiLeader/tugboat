@@ -17,9 +17,11 @@ use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use qapi::futures::QmpStreamTokio;
 use qapi::qmp::{
-    MigrateSetParameters, MigrationCapability, MigrationCapabilityStatus, ZeroPageDetection,
-    migrate_set_capabilities, migrate_set_parameters,
+    MigrateSetParameters, MigrationCapability, MigrationCapabilityStatus, MigrationStatus,
+    ZeroPageDetection, migrate_set_capabilities, migrate_set_parameters, migrate_start_postcopy,
+    query_migrate,
 };
+use tokio::time::{Duration, sleep};
 use tugboat_vm_runtime_interface::migrate::VmMigrateRequest;
 
 const MAX_MIGRATION_BANDWIDTH_BYTES_PER_SEC: u64 = 1 << 30;
@@ -95,6 +97,28 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
     })
     .await
     .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+
+    if req.postcopy_enabled {
+        loop {
+            let info = qmp
+                .execute(query_migrate {})
+                .await
+                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+            match info.status {
+                Some(MigrationStatus::active) => break,
+                Some(
+                    MigrationStatus::completed
+                    | MigrationStatus::failed
+                    | MigrationStatus::cancelled
+                    | MigrationStatus::cancelling,
+                ) => return Ok(()),
+                _ => sleep(Duration::from_millis(100)).await,
+            }
+        }
+        qmp.execute(migrate_start_postcopy {})
+            .await
+            .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    }
 
     Ok(())
 }

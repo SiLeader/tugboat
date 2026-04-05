@@ -68,11 +68,15 @@ impl TestContext {
             },
         };
 
-        let listen = format!("127.0.0.1:{}", pick_unused_port()?);
-        let base_url = format!("http://{listen}");
-        let server =
-            ApiServer::from_config(ApiServerConfig::new(listen, vec![etcd.0.clone()])).await?;
-        let apiserver = tokio::spawn(server.run());
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        let base_url = format!("http://127.0.0.1:{port}");
+        let server = ApiServer::from_config(ApiServerConfig::new(
+            format!("127.0.0.1:{port}"),
+            vec![etcd.0.clone()],
+        ))
+        .await?;
+        let apiserver = tokio::spawn(server.run_with_listener(listener));
         if let Err(err) = wait_for_healthz(&base_url).await {
             apiserver.abort();
             let _ = apiserver.await;
@@ -182,11 +186,6 @@ impl Drop for TestGuard {
             }
         }
     }
-}
-
-fn pick_unused_port() -> Result<u16, DynError> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    Ok(listener.local_addr()?.port())
 }
 
 async fn wait_for_healthz(base_url: &str) -> Result<(), DynError> {

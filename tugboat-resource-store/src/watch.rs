@@ -76,10 +76,11 @@ impl WatchMuxAggregator {
             .map(|revision| revision.saturating_add(1));
         tokio::spawn(async move {
             let mut client = client;
+            let mut current_revision = start_revision;
             loop {
                 let mut options = WatchOptions::default().with_prefix().with_prev_key();
-                if let Some(start_revision) = start_revision {
-                    options = options.with_start_revision(start_revision);
+                if let Some(rev) = current_revision {
+                    options = options.with_start_revision(rev);
                 }
                 let Ok(mut stream) = client.watch(key.as_str(), Some(options)).await else {
                     sleep(Duration::from_millis(500)).await;
@@ -89,6 +90,9 @@ impl WatchMuxAggregator {
                     match event {
                         Ok(event) => {
                             debug!("Watch event: key: {key}: {event:?}");
+                            if let Some(header) = event.header() {
+                                current_revision = Some(header.revision() + 1);
+                            }
                             let events = event
                                 .events()
                                 .iter()
