@@ -340,7 +340,7 @@ impl ReplicaSetReconciler {
 
         if rs.status.as_ref() != Some(&new_status) {
             let mut updated = rs.clone();
-            updated.status = Some(new_status.clone());
+            updated.status = Some(new_status);
             let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), namespace);
             rs_api
                 .replace_status(rs.name().unwrap_or_default(), updated)
