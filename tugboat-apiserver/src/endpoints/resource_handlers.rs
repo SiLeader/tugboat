@@ -551,18 +551,18 @@ fn validate_resource_name<T>(resource: &T, expected_name: &str) -> Result<(), Bo
 where
     T: StaticResource + ObjectMetaResource,
 {
-    if let Some(actual_name) = resource.name() {
-        if actual_name != expected_name {
-            return Err(Box::new(StatusResponse::bad_request(
-                format!(
-                    "metadata.name must match resource name in URL: expected \"{expected_name}\", got \"{actual_name}\""
-                ),
-                Some(serde_json::json!({
-                    "name": expected_name,
-                    "providedName": actual_name,
-                })),
-            )));
-        }
+    if let Some(actual_name) = resource.name()
+        && actual_name != expected_name
+    {
+        return Err(Box::new(StatusResponse::bad_request(
+            format!(
+                "metadata.name must match resource name in URL: expected \"{expected_name}\", got \"{actual_name}\""
+            ),
+            Some(serde_json::json!({
+                "name": expected_name,
+                "providedName": actual_name,
+            })),
+        )));
     }
 
     Ok(())
@@ -577,20 +577,19 @@ fn validate_patch_name(
         .and_then(|metadata| metadata.get("name"))
         .and_then(|name| name.as_str());
 
-    if let Some(actual_name) = actual_name {
-        if actual_name != expected_name {
-            return Err(Box::new(StatusResponse::bad_request(
-                format!(
-                    "metadata.name must match resource name in URL: expected \"{expected_name}\", got \"{actual_name}\""
-                ),
-                Some(serde_json::json!({
-                    "name": expected_name,
-                    "providedName": actual_name,
-                })),
-            )));
-        }
+    if let Some(actual_name) = actual_name
+        && actual_name != expected_name
+    {
+        return Err(Box::new(StatusResponse::bad_request(
+            format!(
+                "metadata.name must match resource name in URL: expected \"{expected_name}\", got \"{actual_name}\""
+            ),
+            Some(serde_json::json!({
+                "name": expected_name,
+                "providedName": actual_name,
+            })),
+        )));
     }
-
     Ok(())
 }
 
