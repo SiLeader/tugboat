@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-tugboat-apiserver = { path = "../../tugboat-apiserver" }
+tugboat-apiserver.workspace = true
 tugboat-client.workspace = true
-tugboat-controller-manager = { path = "../../tugboat-controller-manager" }
+tugboat-controller-manager.workspace = true
 tugboat-resources.workspace = true
 tugboat-scheduler.workspace = true
 
