@@ -340,11 +340,16 @@ impl ReplicaSetReconciler {
 
         if rs.status.as_ref() != Some(&new_status) {
             let mut updated = rs.clone();
-            updated.status = Some(new_status);
+            updated.status = Some(new_status.clone());
             let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), namespace);
             rs_api
                 .replace_status(rs.name().unwrap_or_default(), updated)
                 .await?;
+        }
+
+        // Requeue while not all replicas are ready so ship status changes are picked up.
+        if new_status.ready_replicas < desired as i32 {
+            return Ok(Action::requeue(Duration::from_secs(5)));
         }
 
         Ok(Action::await_change())
