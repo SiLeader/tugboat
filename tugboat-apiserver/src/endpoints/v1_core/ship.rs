@@ -14,7 +14,9 @@
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
-use crate::endpoints::resource_handlers::{ReplaceOptions, ResourceUpdater, validate_resource_name};
+use crate::endpoints::resource_handlers::{
+    ReplaceOptions, ResourceUpdater, validate_resource_name,
+};
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};

@@ -547,7 +547,10 @@ where
     }
 }
 
-pub(crate) fn validate_resource_name<T>(resource: &T, expected_name: &str) -> Result<(), Box<StatusResponse>>
+pub(crate) fn validate_resource_name<T>(
+    resource: &T,
+    expected_name: &str,
+) -> Result<(), Box<StatusResponse>>
 where
     T: StaticResource + ObjectMetaResource,
 {
@@ -607,9 +610,7 @@ fn rfc7396_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value
                     target_map.remove(key);
                 } else {
                     rfc7396_merge_patch(
-                        target_map
-                            .entry(key)
-                            .or_insert(serde_json::Value::Null),
+                        target_map.entry(key).or_insert(serde_json::Value::Null),
                         value,
                     );
                 }
