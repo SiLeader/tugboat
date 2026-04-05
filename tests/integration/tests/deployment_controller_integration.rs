@@ -31,7 +31,7 @@ async fn deployment_controller_creates_owned_replicaset() -> Result<(), DynError
             "demo-deployment",
             "demo-create",
             2,
-            "ghcr.io/example/demo:v1",
+            "example.com/images/demo:v1",
         ),
     )
     .await?;
@@ -51,7 +51,7 @@ async fn deployment_controller_creates_owned_replicaset() -> Result<(), DynError
     assert_eq!(replicaset["spec"]["replicas"], 2);
     assert_eq!(
         replicaset["spec"]["shipTemplate"]["spec"]["image"],
-        "ghcr.io/example/demo:v1"
+        "example.com/images/demo:v1"
     );
     assert!(
         replicaset["metadata"]["ownerReferences"]
@@ -87,7 +87,7 @@ async fn deployment_controller_scales_managed_replicaset() -> Result<(), DynErro
             "scale-deployment",
             "demo-scale",
             2,
-            "ghcr.io/example/demo:v1",
+            "example.com/images/demo:v1",
         ),
     )
     .await?;
@@ -130,7 +130,7 @@ async fn deployment_controller_scales_managed_replicaset() -> Result<(), DynErro
 
     assert_eq!(
         scaled["spec"]["shipTemplate"]["spec"]["image"],
-        "ghcr.io/example/demo:v1"
+        "example.com/images/demo:v1"
     );
 
     Ok(())
@@ -156,7 +156,7 @@ async fn deployment_controller_performs_rolling_update() -> Result<(), DynError>
             "rollout-deployment",
             "demo-rollout",
             2,
-            "ghcr.io/example/demo:v1",
+            "example.com/images/demo:v1",
         ),
     )
     .await?;
@@ -209,7 +209,7 @@ async fn deployment_controller_performs_rolling_update() -> Result<(), DynError>
                         }
                     },
                     "spec": {
-                        "image": "ghcr.io/example/demo:v2",
+                        "image": "example.com/images/demo:v2",
                         "shipClass": "standard"
                     }
                 }
@@ -229,14 +229,14 @@ async fn deployment_controller_performs_rolling_update() -> Result<(), DynError>
             .iter()
             .find(|rs| {
                 rs["metadata"]["name"] == initial_rs_name
-                    && rs["spec"]["shipTemplate"]["spec"]["image"] == "ghcr.io/example/demo:v1"
+                    && rs["spec"]["shipTemplate"]["spec"]["image"] == "example.com/images/demo:v1"
             })
             .cloned();
         let new_rs = replicasets
             .iter()
             .find(|rs| {
                 rs["metadata"]["name"] != initial_rs_name
-                    && rs["spec"]["shipTemplate"]["spec"]["image"] == "ghcr.io/example/demo:v2"
+                    && rs["spec"]["shipTemplate"]["spec"]["image"] == "example.com/images/demo:v2"
             })
             .cloned();
 
@@ -268,7 +268,7 @@ async fn deployment_controller_performs_rolling_update() -> Result<(), DynError>
     assert_eq!(new_rs["spec"]["replicas"], 2);
     assert_eq!(
         new_rs["spec"]["shipTemplate"]["spec"]["image"],
-        "ghcr.io/example/demo:v2"
+        "example.com/images/demo:v2"
     );
 
     Ok(())
@@ -294,7 +294,7 @@ async fn deployment_controller_deletes_managed_replicasets_on_deletion() -> Resu
             "delete-deployment",
             "demo-delete",
             2,
-            "ghcr.io/example/demo:v1",
+            "example.com/images/demo:v1",
         ),
     )
     .await?;

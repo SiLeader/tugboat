@@ -26,7 +26,7 @@ async fn replicaset_controller_creates_ships_for_desired_replicas() -> Result<()
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/test-ns/replicasets",
-        &replicaset_manifest("test-ns", "demo-rs", 3, "ghcr.io/example/demo:v1"),
+        &replicaset_manifest("test-ns", "demo-rs", 3, "example.com/images/demo:v1"),
     )
     .await?;
     let rs_uid = created["metadata"]["uid"]
@@ -45,7 +45,7 @@ async fn replicaset_controller_creates_ships_for_desired_replicas() -> Result<()
 
     for ship in ships {
         assert_eq!(ship["metadata"]["namespace"], "test-ns");
-        assert_eq!(ship["spec"]["image"], "ghcr.io/example/demo:v1");
+        assert_eq!(ship["spec"]["image"], "example.com/images/demo:v1");
         assert_eq!(ship["spec"]["shipClass"], "standard");
         assert_eq!(ship["metadata"]["labels"]["app"], "demo");
         assert_eq!(ship["metadata"]["labels"]["tier"], "backend");
@@ -79,7 +79,7 @@ async fn replicaset_controller_scales_up_and_down() -> Result<(), DynError> {
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/test-ns/replicasets",
-        &replicaset_manifest("test-ns", "scale-rs", 2, "ghcr.io/example/demo:v1"),
+        &replicaset_manifest("test-ns", "scale-rs", 2, "example.com/images/demo:v1"),
     )
     .await?;
 
@@ -119,7 +119,7 @@ async fn replicaset_controller_scales_up_and_down() -> Result<(), DynError> {
     )
     .await?;
     for ship in &ships {
-        assert_eq!(ship["spec"]["image"], "ghcr.io/example/demo:v1");
+        assert_eq!(ship["spec"]["image"], "example.com/images/demo:v1");
         assert_eq!(ship["metadata"]["labels"]["app"], "demo");
     }
 
@@ -167,7 +167,7 @@ async fn replicaset_controller_recreates_deleted_ship() -> Result<(), DynError> 
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/test-ns/replicasets",
-        &replicaset_manifest("test-ns", "heal-rs", 2, "ghcr.io/example/demo:v1"),
+        &replicaset_manifest("test-ns", "heal-rs", 2, "example.com/images/demo:v1"),
     )
     .await?;
 
@@ -233,7 +233,7 @@ async fn replicaset_controller_deletes_owned_ships_when_replicaset_is_deleted()
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/test-ns/replicasets",
-        &replicaset_manifest("test-ns", "delete-rs", 2, "ghcr.io/example/demo:v1"),
+        &replicaset_manifest("test-ns", "delete-rs", 2, "example.com/images/demo:v1"),
     )
     .await?;
 

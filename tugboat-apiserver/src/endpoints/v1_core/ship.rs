@@ -14,7 +14,7 @@
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
-use crate::endpoints::resource_handlers::{ReplaceOptions, ResourceUpdater};
+use crate::endpoints::resource_handlers::{ReplaceOptions, ResourceUpdater, validate_resource_name};
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
@@ -180,6 +180,7 @@ pub(super) async fn handle_ship_replace(
     let name = path.name;
     let current = get_current_ship(&operator, namespace.clone(), name.clone()).await?;
     let replacement = replacement.into_inner();
+    validate_resource_name(&replacement, &name)?;
     let replaced = ResourceUpdater::new(
         &current,
         ReplaceOptions {

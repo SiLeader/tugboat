@@ -397,7 +397,7 @@ mod tests {
 
     fn base_ship_spec() -> ShipSpec {
         ShipSpec {
-            image: "ghcr.io/example/demo:latest".to_string(),
+            image: "example.com/images/demo:latest".to_string(),
             ship_class: "standard".to_string(),
             ..Default::default()
         }
@@ -438,7 +438,7 @@ mod tests {
                     ..Default::default()
                 }),
                 spec: Some(ShipSpec {
-                    image: "ghcr.io/example/demo:latest".to_string(),
+                    image: "example.com/images/demo:latest".to_string(),
                     ship_class: "standard".to_string(),
                     ..Default::default()
                 }),
@@ -461,7 +461,7 @@ mod tests {
         );
         assert_eq!(
             ship.spec.as_ref().map(|spec| spec.image.as_str()),
-            Some("ghcr.io/example/demo:latest")
+            Some("example.com/images/demo:latest")
         );
     }
 
@@ -754,7 +754,7 @@ mod tests {
     fn runtime_significant_fields_require_update() {
         let template_spec = base_ship_spec();
         let mut ship_spec = template_spec.clone();
-        ship_spec.image = "ghcr.io/example/demo:v2".to_string();
+        ship_spec.image = "example.com/images/demo:v2".to_string();
 
         assert!(needs_spec_update(&template_spec, &ship_spec));
     }
@@ -762,13 +762,13 @@ mod tests {
     #[test]
     fn applying_template_spec_preserves_scheduling_fields() {
         let template_spec = ShipSpec {
-            image: "ghcr.io/example/demo:v2".to_string(),
+            image: "example.com/images/demo:v2".to_string(),
             ship_class: "large".to_string(),
             ..Default::default()
         };
         let mut ship = Ship {
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:latest".to_string(),
+                image: "example.com/images/demo:latest".to_string(),
                 ship_class: "small".to_string(),
                 node_name: Some("node-a".to_string()),
                 scheduler_name: Some("scheduler".to_string()),
@@ -781,7 +781,7 @@ mod tests {
         apply_template_spec(&mut ship, &template_spec);
         let updated = ship.spec.as_ref().unwrap();
 
-        assert_eq!(updated.image, "ghcr.io/example/demo:v2");
+        assert_eq!(updated.image, "example.com/images/demo:v2");
         assert_eq!(updated.ship_class, "large");
         assert_eq!(updated.node_name.as_deref(), Some("node-a"));
         assert_eq!(updated.scheduler_name.as_deref(), Some("scheduler"));

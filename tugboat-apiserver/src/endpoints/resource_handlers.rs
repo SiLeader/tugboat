@@ -19,7 +19,7 @@ use crate::endpoints::watch_utils::watch;
 use crate::operator::ApiOperator;
 use actix_web::HttpResponse;
 use actix_web::web::Data;
-use json_value_merge::Merge;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tugboat_resource_store::serializer::StaticSerializable;
@@ -203,7 +203,7 @@ where
         let patch_metadata = patch.get("metadata").cloned();
 
         let mut merged_value = serde_json::Value::Object(current_obj.clone());
-        merged_value.merge(&serde_json::Value::Object(patch));
+        rfc7396_merge_patch(&mut merged_value, &serde_json::Value::Object(patch));
         let mut merged_obj = to_object(merged_value, "patched resource")?;
 
         // Restore fields that must be preserved from current
@@ -547,7 +547,7 @@ where
     }
 }
 
-fn validate_resource_name<T>(resource: &T, expected_name: &str) -> Result<(), Box<StatusResponse>>
+pub(crate) fn validate_resource_name<T>(resource: &T, expected_name: &str) -> Result<(), Box<StatusResponse>>
 where
     T: StaticResource + ObjectMetaResource,
 {
@@ -591,6 +591,34 @@ fn validate_patch_name(
         )));
     }
     Ok(())
+}
+
+/// Applies a JSON merge patch (RFC 7396) to `target` in place.
+/// Objects are merged recursively; all other types (including arrays) are replaced.
+fn rfc7396_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    match patch {
+        serde_json::Value::Object(patch_map) => {
+            if !target.is_object() {
+                *target = serde_json::Value::Object(serde_json::Map::new());
+            }
+            let target_map = target.as_object_mut().expect("checked above");
+            for (key, value) in patch_map {
+                if value.is_null() {
+                    target_map.remove(key);
+                } else {
+                    rfc7396_merge_patch(
+                        target_map
+                            .entry(key)
+                            .or_insert(serde_json::Value::Null),
+                        value,
+                    );
+                }
+            }
+        }
+        _ => {
+            *target = patch.clone();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -716,5 +744,58 @@ mod tests {
                 .and_then(|meta| meta.resource_version.as_deref()),
             Some("rv-9")
         );
+    }
+
+    #[test]
+    fn rfc7396_merge_patch_replaces_arrays() {
+        use super::rfc7396_merge_patch;
+        use serde_json::json;
+
+        let mut target = json!({
+            "spec": {
+                "components": [
+                    { "name": "frontend", "replicas": 2 }
+                ]
+            }
+        });
+        let patch = json!({
+            "spec": {
+                "components": [
+                    { "name": "frontend", "replicas": 3 },
+                    { "name": "worker", "replicas": 1 }
+                ]
+            }
+        });
+
+        rfc7396_merge_patch(&mut target, &patch);
+
+        let components = target["spec"]["components"].as_array().unwrap();
+        assert_eq!(components.len(), 2);
+        assert_eq!(components[0]["replicas"], 3);
+        assert_eq!(components[1]["name"], "worker");
+    }
+
+    #[test]
+    fn rfc7396_merge_patch_removes_null_fields() {
+        use super::rfc7396_merge_patch;
+        use serde_json::json;
+
+        let mut target = json!({ "a": 1, "b": 2 });
+        rfc7396_merge_patch(&mut target, &json!({ "b": null }));
+
+        assert_eq!(target["a"], 1);
+        assert!(target.get("b").is_none() || target["b"].is_null());
+    }
+
+    #[test]
+    fn rfc7396_merge_patch_merges_nested_objects() {
+        use super::rfc7396_merge_patch;
+        use serde_json::json;
+
+        let mut target = json!({ "spec": { "image": "v1", "class": "small" } });
+        rfc7396_merge_patch(&mut target, &json!({ "spec": { "image": "v2" } }));
+
+        assert_eq!(target["spec"]["image"], "v2");
+        assert_eq!(target["spec"]["class"], "small");
     }
 }

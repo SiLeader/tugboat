@@ -22,7 +22,7 @@ async fn replicaset_supports_crud_operations() -> Result<(), DynError> {
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/test-ns/replicasets",
-        &replicaset_manifest("test-ns", "demo-rs", 2, "ghcr.io/example/demo:v1"),
+        &replicaset_manifest("test-ns", "demo-rs", 2, "example.com/images/demo:v1"),
     )
     .await?;
     assert_eq!(created["kind"], "ReplicaSet");
@@ -31,7 +31,7 @@ async fn replicaset_supports_crud_operations() -> Result<(), DynError> {
     assert_eq!(created["spec"]["selector"]["app"], "demo");
     assert_eq!(
         created["spec"]["shipTemplate"]["spec"]["image"],
-        "ghcr.io/example/demo:v1"
+        "example.com/images/demo:v1"
     );
 
     let fetched = get_json(
@@ -100,7 +100,12 @@ async fn deployment_supports_crud_operations() -> Result<(), DynError> {
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/test-ns/deployments",
-        &deployment_manifest("test-ns", "demo-deployment", 3, "ghcr.io/example/demo:v1"),
+        &deployment_manifest(
+            "test-ns",
+            "demo-deployment",
+            3,
+            "example.com/images/demo:v1",
+        ),
     )
     .await?;
     assert_eq!(created["kind"], "Deployment");
@@ -117,7 +122,7 @@ async fn deployment_supports_crud_operations() -> Result<(), DynError> {
     assert_eq!(fetched["spec"]["selector"]["app"], "demo");
     assert_eq!(
         fetched["spec"]["shipTemplate"]["spec"]["image"],
-        "ghcr.io/example/demo:v1"
+        "example.com/images/demo:v1"
     );
 
     let patched = request_json(
@@ -149,14 +154,14 @@ async fn deployment_supports_crud_operations() -> Result<(), DynError> {
             "test-ns",
             "demo-deployment",
             2,
-            "ghcr.io/example/demo:v2",
+            "example.com/images/demo:v2",
         )),
     )
     .await?;
     assert_eq!(replaced["spec"]["replicas"], 2);
     assert_eq!(
         replaced["spec"]["shipTemplate"]["spec"]["image"],
-        "ghcr.io/example/demo:v2"
+        "example.com/images/demo:v2"
     );
 
     let deleted = request_json(
@@ -192,7 +197,7 @@ async fn fleet_supports_crud_operations() -> Result<(), DynError> {
             "test-ns",
             "demo-fleet",
             "tenant-net",
-            &[("frontend", 2, "ghcr.io/example/frontend:v1")],
+            &[("frontend", 2, "example.com/images/frontend:v1")],
         ),
     )
     .await?;
@@ -209,7 +214,7 @@ async fn fleet_supports_crud_operations() -> Result<(), DynError> {
     .await?;
     assert_eq!(
         fetched["spec"]["components"][0]["shipTemplate"]["spec"]["image"],
-        "ghcr.io/example/frontend:v1"
+        "example.com/images/frontend:v1"
     );
 
     let patched = request_json(
@@ -228,7 +233,7 @@ async fn fleet_supports_crud_operations() -> Result<(), DynError> {
                         "replicas": 3,
                         "shipTemplate": {
                             "spec": {
-                                "image": "ghcr.io/example/frontend:v2",
+                                "image": "example.com/images/frontend:v2",
                                 "shipClass": "standard"
                             }
                         }
@@ -238,7 +243,7 @@ async fn fleet_supports_crud_operations() -> Result<(), DynError> {
                         "replicas": 1,
                         "shipTemplate": {
                             "spec": {
-                                "image": "ghcr.io/example/worker:v1",
+                                "image": "example.com/images/worker:v1",
                                 "shipClass": "standard"
                             }
                         }
@@ -282,14 +287,14 @@ async fn apps_list_all_returns_resources_from_multiple_namespaces() -> Result<()
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/ns-a/replicasets",
-        &replicaset_manifest("ns-a", "rs-a", 1, "ghcr.io/example/rs-a:v1"),
+        &replicaset_manifest("ns-a", "rs-a", 1, "example.com/images/rs-a:v1"),
     )
     .await?;
     create_resource(
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/ns-b/replicasets",
-        &replicaset_manifest("ns-b", "rs-b", 1, "ghcr.io/example/rs-b:v1"),
+        &replicaset_manifest("ns-b", "rs-b", 1, "example.com/images/rs-b:v1"),
     )
     .await?;
 
@@ -297,14 +302,14 @@ async fn apps_list_all_returns_resources_from_multiple_namespaces() -> Result<()
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/ns-a/deployments",
-        &deployment_manifest("ns-a", "dep-a", 1, "ghcr.io/example/dep-a:v1"),
+        &deployment_manifest("ns-a", "dep-a", 1, "example.com/images/dep-a:v1"),
     )
     .await?;
     create_resource(
         &client,
         &ctx.base_url,
         "/apis/apps/v1/namespaces/ns-b/deployments",
-        &deployment_manifest("ns-b", "dep-b", 1, "ghcr.io/example/dep-b:v1"),
+        &deployment_manifest("ns-b", "dep-b", 1, "example.com/images/dep-b:v1"),
     )
     .await?;
 
@@ -316,7 +321,7 @@ async fn apps_list_all_returns_resources_from_multiple_namespaces() -> Result<()
             "ns-a",
             "fleet-a",
             "tenant-a",
-            &[("frontend", 1, "ghcr.io/example/a:v1")],
+            &[("frontend", 1, "example.com/images/a:v1")],
         ),
     )
     .await?;
@@ -328,7 +333,7 @@ async fn apps_list_all_returns_resources_from_multiple_namespaces() -> Result<()
             "ns-b",
             "fleet-b",
             "tenant-b",
-            &[("frontend", 1, "ghcr.io/example/b:v1")],
+            &[("frontend", 1, "example.com/images/b:v1")],
         ),
     )
     .await?;

@@ -554,7 +554,7 @@ mod tests {
                 ..Default::default()
             }),
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:v1".to_string(),
+                image: "example.com/images/demo:v1".to_string(),
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
@@ -565,7 +565,7 @@ mod tests {
                 ..Default::default()
             }),
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:v1".to_string(),
+                image: "example.com/images/demo:v1".to_string(),
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
@@ -577,7 +577,7 @@ mod tests {
     fn managed_rs(component_name: &str) -> ReplicaSet {
         let template = ShipTemplateSpec {
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:v1".to_string(),
+                image: "example.com/images/demo:v1".to_string(),
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn build_replicaset_for_component_sets_labels_owner_and_template() {
         let fleet = fleet();
-        let component = component("api", 3, "ghcr.io/example/api:v1");
+        let component = component("api", 3, "example.com/images/api:v1");
 
         let rs = build_replicaset_for_component(&fleet, &component, "overlay");
         let meta = rs.object_meta.as_ref().unwrap();
@@ -730,7 +730,7 @@ mod tests {
                 .map(String::as_str),
             Some(template_hash.as_str())
         );
-        assert_eq!(template_spec.image, "ghcr.io/example/api:v1");
+        assert_eq!(template_spec.image, "example.com/images/api:v1");
         assert_eq!(
             template_spec.network_class_ref,
             vec![ShipNetworkClassReference {
@@ -851,7 +851,7 @@ mod tests {
         let old = managed_rs("api");
         let mut current = build_replicaset_for_component(
             &fleet(),
-            &component("api", 2, "ghcr.io/example/api:v2"),
+            &component("api", 2, "example.com/images/api:v2"),
             "overlay",
         );
         current.object_meta.as_mut().unwrap().creation_timestamp =

@@ -112,7 +112,7 @@ async fn ship_lifecycle_covers_scheduling_status_and_deletion() -> Result<(), Dy
             "test-ns",
             "stateful-ship",
             "stateful",
-            "ghcr.io/example/demo:v1",
+            "example.com/images/demo:v1",
             "data-disk",
         ),
     )
@@ -212,7 +212,7 @@ async fn deployment_lifecycle_covers_rollout_and_cleanup() -> Result<(), DynErro
             "demo-deployment",
             "demo-app",
             2,
-            "ghcr.io/example/demo:v1",
+            "example.com/images/demo:v1",
         ),
     )
     .await?;
@@ -223,7 +223,7 @@ async fn deployment_lifecycle_covers_rollout_and_cleanup() -> Result<(), DynErro
         "test-ns",
         "demo-deployment",
         Duration::from_secs(20),
-        |rs| rs["spec"]["shipTemplate"]["spec"]["image"] == "ghcr.io/example/demo:v1",
+        |rs| rs["spec"]["shipTemplate"]["spec"]["image"] == "example.com/images/demo:v1",
     )
     .await?;
     let initial_rs_name = string_field(&initial_rs, &["metadata", "name"])?;
@@ -259,7 +259,7 @@ async fn deployment_lifecycle_covers_rollout_and_cleanup() -> Result<(), DynErro
                         }
                     },
                     "spec": {
-                        "image": "ghcr.io/example/demo:v2",
+                        "image": "example.com/images/demo:v2",
                         "shipClass": "standard"
                     }
                 }
@@ -283,7 +283,7 @@ async fn deployment_lifecycle_covers_rollout_and_cleanup() -> Result<(), DynErro
             .iter()
             .find(|rs| {
                 rs["metadata"]["name"] != initial_rs_name
-                    && rs["spec"]["shipTemplate"]["spec"]["image"] == "ghcr.io/example/demo:v2"
+                    && rs["spec"]["shipTemplate"]["spec"]["image"] == "example.com/images/demo:v2"
             })
             .cloned();
 
@@ -328,7 +328,7 @@ async fn deployment_lifecycle_covers_rollout_and_cleanup() -> Result<(), DynErro
     assert_eq!(old_rs["spec"]["replicas"], 0);
     for ship in &new_ships {
         assert_eq!(ship["spec"]["nodeName"], "node-a");
-        assert_eq!(ship["spec"]["image"], "ghcr.io/example/demo:v2");
+        assert_eq!(ship["spec"]["image"], "example.com/images/demo:v2");
     }
 
     request_json(
@@ -402,8 +402,8 @@ async fn fleet_lifecycle_covers_managed_ships_and_cleanup() -> Result<(), DynErr
             "demo-fleet",
             "tenant-net",
             &[
-                ("frontend", 2, "ghcr.io/example/frontend:v1"),
-                ("api", 1, "ghcr.io/example/api:v1"),
+                ("frontend", 2, "example.com/images/frontend:v1"),
+                ("api", 1, "example.com/images/api:v1"),
             ],
         ),
     )

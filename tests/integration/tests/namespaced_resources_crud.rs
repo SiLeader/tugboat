@@ -150,10 +150,7 @@ async fn ship_supports_status_patch_and_replace() -> Result<(), DynError> {
                     {
                         "status": "Ready",
                         "message": "running",
-                        "timestamp": {
-                            "seconds": 1_700_000_000,
-                            "nanos": 0
-                        }
+                        "timestamp": "2023-11-14T22:13:20Z"
                     }
                 ],
                 "ips": [
@@ -376,10 +373,7 @@ async fn persistent_volume_claim_supports_crud_and_status_updates() -> Result<()
                     {
                         "status": "True",
                         "message": "bound",
-                        "timestamp": {
-                            "seconds": 1_700_000_200,
-                            "nanos": 0
-                        }
+                        "timestamp": "2023-11-14T22:36:40Z"
                     }
                 ]
             }
@@ -447,10 +441,7 @@ async fn networkclass_supports_crud_and_status_updates() -> Result<(), DynError>
                         "type": "Ready",
                         "status": "True",
                         "message": "configured",
-                        "timestamp": {
-                            "seconds": 1_700_000_300,
-                            "nanos": 0
-                        }
+                        "timestamp": "2023-11-14T22:40:00Z"
                     }
                 ],
                 "readyNodes": ["node-a"]

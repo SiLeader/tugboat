@@ -32,8 +32,8 @@ async fn fleet_controller_creates_replicasets_and_ships_for_components() -> Resu
             "demo-fleet",
             "tenant-net",
             &[
-                ("frontend", 2, "ghcr.io/example/frontend:v1"),
-                ("api", 1, "ghcr.io/example/api:v1"),
+                ("frontend", 2, "example.com/images/frontend:v1"),
+                ("api", 1, "example.com/images/api:v1"),
             ],
         ),
     )
@@ -75,7 +75,7 @@ async fn fleet_controller_creates_replicasets_and_ships_for_components() -> Resu
     )
     .await?;
     for ship in frontend_ships {
-        assert_eq!(ship["spec"]["image"], "ghcr.io/example/frontend:v1");
+        assert_eq!(ship["spec"]["image"], "example.com/images/frontend:v1");
         assert_eq!(ship["metadata"]["labels"]["component"], "frontend");
         assert_eq!(ship["metadata"]["labels"]["fleet-name"], "demo-fleet");
         assert_eq!(ship["metadata"]["labels"]["fleet-component"], "frontend");
@@ -91,7 +91,7 @@ async fn fleet_controller_creates_replicasets_and_ships_for_components() -> Resu
         Duration::from_secs(20),
     )
     .await?;
-    assert_eq!(api_ships[0]["spec"]["image"], "ghcr.io/example/api:v1");
+    assert_eq!(api_ships[0]["spec"]["image"], "example.com/images/api:v1");
     assert_eq!(api_ships[0]["metadata"]["labels"]["component"], "api");
     assert_eq!(
         api_ships[0]["metadata"]["labels"]["fleet-name"],
@@ -123,8 +123,8 @@ async fn fleet_controller_injects_shared_network_and_reports_status() -> Result<
             "network-fleet",
             "tenant-net",
             &[
-                ("frontend", 2, "ghcr.io/example/frontend:v1"),
-                ("api", 1, "ghcr.io/example/api:v1"),
+                ("frontend", 2, "example.com/images/frontend:v1"),
+                ("api", 1, "example.com/images/api:v1"),
             ],
         ),
     )
@@ -198,8 +198,8 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
             "rollout-fleet",
             "tenant-net",
             &[
-                ("frontend", 2, "ghcr.io/example/frontend:v1"),
-                ("api", 1, "ghcr.io/example/api:v1"),
+                ("frontend", 2, "example.com/images/frontend:v1"),
+                ("api", 1, "example.com/images/api:v1"),
             ],
         ),
     )
@@ -212,7 +212,7 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
         "rollout-fleet",
         "frontend",
         Duration::from_secs(20),
-        |rs| rs["spec"]["shipTemplate"]["spec"]["image"] == "ghcr.io/example/frontend:v1",
+        |rs| rs["spec"]["shipTemplate"]["spec"]["image"] == "example.com/images/frontend:v1",
     )
     .await?;
     let initial_frontend_rs_name = string_field(&initial_frontend_rs, &["metadata", "name"])?;
@@ -249,7 +249,7 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
                                 }
                             },
                             "spec": {
-                                "image": "ghcr.io/example/frontend:v2",
+                                "image": "example.com/images/frontend:v2",
                                 "shipClass": "standard"
                             }
                         }
@@ -264,7 +264,7 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
                                 }
                             },
                             "spec": {
-                                "image": "ghcr.io/example/api:v1",
+                                "image": "example.com/images/api:v1",
                                 "shipClass": "standard"
                             }
                         }
@@ -286,7 +286,8 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
             .find(|rs| {
                 rs["metadata"]["labels"]["fleet-component"] == "frontend"
                     && rs["metadata"]["name"] != initial_frontend_rs_name
-                    && rs["spec"]["shipTemplate"]["spec"]["image"] == "ghcr.io/example/frontend:v2"
+                    && rs["spec"]["shipTemplate"]["spec"]["image"]
+                        == "example.com/images/frontend:v2"
             })
             .cloned();
 
@@ -311,7 +312,7 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
     assert_eq!(new_rs["spec"]["replicas"], 2);
     assert_eq!(
         new_rs["spec"]["shipTemplate"]["spec"]["image"],
-        "ghcr.io/example/frontend:v2"
+        "example.com/images/frontend:v2"
     );
     let new_rs_name = string_field(&new_rs, &["metadata", "name"])?;
     let new_ships = wait_for_owned_ship_count(
@@ -324,7 +325,7 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
     )
     .await?;
     for ship in new_ships {
-        assert_eq!(ship["spec"]["image"], "ghcr.io/example/frontend:v2");
+        assert_eq!(ship["spec"]["image"], "example.com/images/frontend:v2");
         assert_eq!(ship["metadata"]["labels"]["fleet-name"], "rollout-fleet");
         assert_eq!(ship["metadata"]["labels"]["fleet-component"], "frontend");
     }
@@ -354,8 +355,8 @@ async fn fleet_controller_deletes_managed_replicasets_and_ships_on_deletion() ->
             "delete-fleet",
             "tenant-net",
             &[
-                ("frontend", 2, "ghcr.io/example/frontend:v1"),
-                ("api", 1, "ghcr.io/example/api:v1"),
+                ("frontend", 2, "example.com/images/frontend:v1"),
+                ("api", 1, "example.com/images/api:v1"),
             ],
         ),
     )

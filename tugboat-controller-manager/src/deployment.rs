@@ -915,7 +915,7 @@ mod tests {
                     .collect(),
                 ship_template: Some(ShipTemplateSpec {
                     spec: Some(ShipSpec {
-                        image: "ghcr.io/example/demo:v1".to_string(),
+                        image: "example.com/images/demo:v1".to_string(),
                         ship_class: "standard".to_string(),
                         ..Default::default()
                     }),
@@ -949,7 +949,7 @@ mod tests {
                     .collect(),
                 ship_template: Some(ShipTemplateSpec {
                     spec: Some(ShipSpec {
-                        image: "ghcr.io/example/demo:v1".to_string(),
+                        image: "example.com/images/demo:v1".to_string(),
                         ship_class: "standard".to_string(),
                         ..Default::default()
                     }),
@@ -1062,7 +1062,7 @@ mod tests {
                 ..Default::default()
             }),
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:v1".to_string(),
+                image: "example.com/images/demo:v1".to_string(),
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
@@ -1084,7 +1084,7 @@ mod tests {
                 ..Default::default()
             }),
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:v1".to_string(),
+                image: "example.com/images/demo:v1".to_string(),
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
