@@ -201,3 +201,59 @@ pub(super) async fn handle_deployment_patch(
     )
     .await
 }
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = Deployment),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/apis/apps/v1/namespaces/{namespace}/deployments/{name}/status")]
+pub(super) async fn handle_deployment_status_patch(
+    path: Path<DeploymentPathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Deployment>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::status_patch_resource::<Deployment>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        patch.into_inner(),
+    )
+    .await
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = Deployment),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Deployment
+    )]
+#[put("/apis/apps/v1/namespaces/{namespace}/deployments/{name}/status")]
+pub(super) async fn handle_deployment_status_replace(
+    path: Path<DeploymentPathParams>,
+    replacement: Json<Deployment>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Deployment>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::status_replace_resource::<Deployment>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        replacement.into_inner(),
+    )
+    .await
+}

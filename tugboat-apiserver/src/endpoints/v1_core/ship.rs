@@ -184,7 +184,7 @@ pub(super) async fn handle_ship_replace(
         &current,
         ReplaceOptions {
             preserve_status: true,
-            use_client_resource_version: false,
+            use_client_resource_version: true,
         },
     )
     .apply_replacement(&replacement)?;
@@ -232,7 +232,7 @@ pub(super) async fn handle_ship_patch(
         &current,
         ReplaceOptions {
             preserve_status: true,
-            use_client_resource_version: false,
+            use_client_resource_version: true,
         },
     )
     .apply_patch(patch.into_inner())?;

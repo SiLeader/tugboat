@@ -3368,6 +3368,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tugboat-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "reqwest 0.13.2",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+ "tugboat-apiserver",
+ "tugboat-client",
+ "tugboat-controller-manager",
+ "tugboat-resources",
+ "tugboat-scheduler",
+]
+
+[[package]]
 name = "tugboat-resource-store"
 version = "0.1.0"
 dependencies = [

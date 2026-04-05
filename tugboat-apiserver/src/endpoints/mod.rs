@@ -56,9 +56,10 @@ struct NamespacedPathParams {
 }
 
 #[derive(Deserialize, Copy, Clone)]
-#[serde(rename_all = "camelCase")]
 enum WatchOption {
+    #[serde(rename = "true", alias = "True")]
     True, // default watch mode
+    #[serde(rename = "ndJson", alias = "NdJson")]
     NdJson,
 }
 

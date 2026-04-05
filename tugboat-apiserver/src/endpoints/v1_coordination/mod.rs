@@ -22,6 +22,7 @@ mod lease;
 #[openapi(
     paths(
         lease::handle_lease_create,
+        lease::handle_lease_delete,
         lease::handle_lease_list,
         lease::handle_lease_list_all,
         lease::handle_lease_patch,
@@ -45,6 +46,7 @@ pub(crate) async fn openapi_coordination_v1() -> impl Responder {
 pub(super) fn register_lease(service: &mut ServiceConfig) {
     service
         .service(lease::handle_lease_create)
+        .service(lease::handle_lease_delete)
         .service(lease::handle_lease_list)
         .service(lease::handle_lease_list_all)
         .service(lease::handle_lease_patch)

@@ -43,24 +43,30 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
-    qmp.execute(migrate_set_capabilities {
-        capabilities: vec![
-            MigrationCapabilityStatus {
-                capability: MigrationCapability::events,
-                state: true,
-            },
-            MigrationCapabilityStatus {
-                capability: MigrationCapability::auto_converge,
-                state: true,
-            },
-            MigrationCapabilityStatus {
-                capability: MigrationCapability::xbzrle,
-                state: true,
-            },
-        ],
-    })
-    .await
-    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let mut capabilities = vec![
+        MigrationCapabilityStatus {
+            capability: MigrationCapability::events,
+            state: true,
+        },
+        MigrationCapabilityStatus {
+            capability: MigrationCapability::auto_converge,
+            state: true,
+        },
+        MigrationCapabilityStatus {
+            capability: MigrationCapability::xbzrle,
+            state: true,
+        },
+    ];
+    if req.postcopy_enabled {
+        capabilities.push(MigrationCapabilityStatus {
+            capability: MigrationCapability::postcopy_ram,
+            state: true,
+        });
+    }
+
+    qmp.execute(migrate_set_capabilities { capabilities })
+        .await
+        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     qmp.execute(migrate_set_parameters(MigrateSetParameters {
         max_bandwidth: Some(

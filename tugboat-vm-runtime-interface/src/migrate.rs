@@ -26,6 +26,8 @@ pub struct VmMigrateRequest {
     pub downtime_limit_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub xbzrle_cache_size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub postcopy_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,12 +38,15 @@ pub struct VmMigrateCancelRequest {
 
 /// Optional QEMU migration tuning parameters sourced from the ShipClass
 /// `spec.migration` field. All fields are optional; absent values fall back to
-/// the runtime's built-in defaults.
+/// the runtime's built-in defaults. `postcopy_enabled` should only be enabled
+/// on reliable low-latency networks because page transfer failures during
+/// post-copy can crash the guest.
 #[derive(Debug, Clone, Default)]
 pub struct VmMigrationParams {
     pub max_bandwidth_bytes_per_sec: Option<u64>,
     pub downtime_limit_ms: Option<u64>,
     pub xbzrle_cache_size_bytes: Option<u64>,
+    pub postcopy_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

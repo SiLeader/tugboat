@@ -1,5 +1,6 @@
 use crate::base::TugboatController;
 use crate::error::ControllerError;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -130,12 +131,32 @@ fn active_replicaset<'a>(replicasets: &'a [&ReplicaSet]) -> Option<&'a ReplicaSe
 }
 
 fn template_hash(template: &ShipTemplateSpec) -> String {
-    let json = serde_json::to_vec(template).unwrap_or_default();
+    let json = serde_json::to_value(template)
+        .map(canonicalize_json)
+        .and_then(|value| serde_json::to_vec(&value))
+        .unwrap_or_default();
     let hash = Sha256::digest(json);
     hash[..TEMPLATE_HASH_BYTES]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn canonicalize_json(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.into_iter().map(canonicalize_json).collect()),
+        Value::Object(map) => {
+            let mut entries = map.into_iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, canonicalize_json(value)))
+                    .collect(),
+            )
+        }
+        other => other,
+    }
 }
 
 fn inject_fleet_network(template: &mut ShipTemplateSpec, network_class_name: &str) {
@@ -421,12 +442,21 @@ impl FleetReconciler {
         let latest_managed = managed_replicasets(&latest_replicasets, &fleet);
         let desired_status = fleet_status(&latest_managed, fleet_spec.components.len());
         if fleet.status.as_ref() != Some(&desired_status) {
-            let mut updated_fleet = fleet.clone();
-            updated_fleet.status = Some(desired_status);
-            let updated_fleet_name = updated_fleet.name().unwrap_or_default().to_string();
+            let updated_fleet_name = fleet.name().unwrap_or_default().to_string();
             fleet_api
-                .replace_status(&updated_fleet_name, updated_fleet)
+                .patch_status(
+                    &updated_fleet_name,
+                    serde_json::json!({
+                        "status": desired_status
+                    }),
+                )
                 .await?;
+        }
+
+        if latest_managed.len() != fleet_spec.components.len()
+            || desired_status.ready_components < desired_status.total_components
+        {
+            return Ok(Action::requeue(Duration::from_secs(2)));
         }
 
         Ok(Action::await_change())
@@ -468,6 +498,7 @@ mod tests {
         is_owned_by_fleet, managed_replicasets, owner_reference_for_fleet,
         replicaset_template_hash, template_hash, update_replicaset_replicas,
     };
+    use std::collections::HashMap;
     use tugboat_resources::ObjectMetaResource;
     use tugboat_resources::manifests::apps::v1::{
         Fleet, FleetComponent, FleetSpec, FleetStatus, ReplicaSet, ReplicaSetSpec,
@@ -505,6 +536,42 @@ mod tests {
                 ..Default::default()
             }),
         }
+    }
+
+    #[test]
+    fn template_hash_is_stable_for_equivalent_label_order() {
+        let mut left_labels = HashMap::new();
+        left_labels.insert("app".to_string(), "demo".to_string());
+        left_labels.insert("component".to_string(), "frontend".to_string());
+
+        let mut right_labels = HashMap::new();
+        right_labels.insert("component".to_string(), "frontend".to_string());
+        right_labels.insert("app".to_string(), "demo".to_string());
+
+        let left = ShipTemplateSpec {
+            metadata: Some(ObjectMeta {
+                labels: left_labels,
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                image: "ghcr.io/example/demo:v1".to_string(),
+                ship_class: "standard".to_string(),
+                ..Default::default()
+            }),
+        };
+        let right = ShipTemplateSpec {
+            metadata: Some(ObjectMeta {
+                labels: right_labels,
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                image: "ghcr.io/example/demo:v1".to_string(),
+                ship_class: "standard".to_string(),
+                ..Default::default()
+            }),
+        };
+
+        assert_eq!(template_hash(&left), template_hash(&right));
     }
 
     fn managed_rs(component_name: &str) -> ReplicaSet {

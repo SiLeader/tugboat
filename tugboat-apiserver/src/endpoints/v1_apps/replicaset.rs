@@ -201,3 +201,59 @@ pub(super) async fn handle_replicaset_patch(
     )
     .await
 }
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = ReplicaSet),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}/status")]
+pub(super) async fn handle_replicaset_status_patch(
+    path: Path<ReplicaSetPathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::status_patch_resource::<ReplicaSet>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        patch.into_inner(),
+    )
+    .await
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = ReplicaSet),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = ReplicaSet
+    )]
+#[put("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}/status")]
+pub(super) async fn handle_replicaset_status_replace(
+    path: Path<ReplicaSetPathParams>,
+    replacement: Json<ReplicaSet>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::status_replace_resource::<ReplicaSet>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        replacement.into_inner(),
+    )
+    .await
+}
