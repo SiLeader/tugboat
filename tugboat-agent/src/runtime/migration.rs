@@ -36,6 +36,7 @@ impl RuntimeOperator {
                 max_bandwidth_bytes_per_sec: params.max_bandwidth_bytes_per_sec,
                 downtime_limit_ms: params.downtime_limit_ms,
                 xbzrle_cache_size_bytes: params.xbzrle_cache_size_bytes,
+                postcopy_enabled: params.postcopy_enabled,
             })
             .await?;
         Ok(())

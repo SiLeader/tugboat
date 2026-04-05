@@ -19,11 +19,13 @@ use crate::endpoints::watch_utils::watch;
 use crate::operator::ApiOperator;
 use actix_web::HttpResponse;
 use actix_web::web::Data;
-use json_value_merge::Merge;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tugboat_resource_store::serializer::StaticSerializable;
+use tugboat_resources::manifests::core::v1::Namespace;
 use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_resources::validators::Validatable;
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta, StaticResource};
 
 pub(crate) async fn create_cluster<T>(
@@ -31,10 +33,11 @@ pub(crate) async fn create_cluster<T>(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<T>, Box<StatusResponse>>
 where
-    T: Resource + StaticSerializable + ObjectMetaResource + SetTypeMeta + Clone,
+    T: Resource + StaticSerializable + ObjectMetaResource + SetTypeMeta + Clone + Validatable,
 {
     let object_meta = crate::extract_object_meta!(object);
     crate::check_namespace_absent!(object_meta);
+    validate_resource(&object)?;
 
     crate::create_object!(operator, object_meta, object, T::type_meta())
 }
@@ -45,10 +48,12 @@ pub(crate) async fn create_namespaced<T>(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<T>, Box<StatusResponse>>
 where
-    T: Resource + StaticSerializable + ObjectMetaResource + SetTypeMeta + Clone,
+    T: Resource + StaticSerializable + ObjectMetaResource + SetTypeMeta + Clone + Validatable,
 {
+    ensure_namespace_exists(&operator, &namespace).await?;
     let object_meta = crate::extract_object_meta!(object);
     let object_meta = operator.apply_namespace(object_meta, namespace);
+    validate_resource(&object)?;
 
     crate::create_object!(operator, object_meta, object, T::type_meta())
 }
@@ -198,7 +203,7 @@ where
         let patch_metadata = patch.get("metadata").cloned();
 
         let mut merged_value = serde_json::Value::Object(current_obj.clone());
-        merged_value.merge(&serde_json::Value::Object(patch));
+        rfc7396_merge_patch(&mut merged_value, &serde_json::Value::Object(patch));
         let mut merged_obj = to_object(merged_value, "patched resource")?;
 
         // Restore fields that must be preserved from current
@@ -308,7 +313,8 @@ where
         + StaticResource
         + Serialize
         + DeserializeOwned
-        + PartialEq,
+        + PartialEq
+        + Validatable,
 {
     let current = operator
         .store
@@ -322,7 +328,9 @@ where
         )));
     };
     let current = current.apply_revision();
+    validate_resource_name(&replacement, &name)?;
     let replaced = ResourceUpdater::new(&current, options).apply_replacement(&replacement)?;
+    validate_resource(&replaced)?;
 
     let replaced = if current != replaced {
         operator
@@ -350,8 +358,10 @@ where
         + StaticResource
         + Serialize
         + DeserializeOwned
-        + PartialEq,
+        + PartialEq
+        + Validatable,
 {
+    validate_patch_name(&patch, &name)?;
     let current = operator
         .store
         .get::<T>(namespace.clone(), &name)
@@ -365,6 +375,7 @@ where
     };
     let current = current.apply_revision();
     let patched = ResourceUpdater::new(&current, options).apply_patch(patch)?;
+    validate_resource(&patched)?;
 
     let patched = if current != patched {
         operator
@@ -391,7 +402,8 @@ where
         + StaticResource
         + Serialize
         + DeserializeOwned
-        + PartialEq,
+        + PartialEq
+        + Validatable,
 {
     if !patch.keys().all(|key| key == "status") {
         return Err(Box::new(StatusResponse::bad_request(
@@ -499,6 +511,114 @@ fn resource_identity(namespace: Option<&str>, name: &str) -> serde_json::Value {
         serde_json::json!({ "namespace": namespace, "name": name })
     } else {
         serde_json::json!({ "name": name })
+    }
+}
+
+async fn ensure_namespace_exists(
+    operator: &ApiOperator,
+    namespace: &str,
+) -> Result<(), Box<StatusResponse>> {
+    let found = operator
+        .store
+        .get::<Namespace>(None, namespace)
+        .await
+        .map_err(|e| Box::new(e.into()))?;
+    if found.is_some() {
+        Ok(())
+    } else {
+        Err(Box::new(StatusResponse::not_found(
+            format!("namespaces \"{namespace}\" not found"),
+            Some(serde_json::json!({ "name": namespace })),
+        )))
+    }
+}
+
+fn validate_resource<T>(resource: &T) -> Result<(), Box<StatusResponse>>
+where
+    T: StaticResource + Validatable,
+{
+    if resource.validate() {
+        Ok(())
+    } else {
+        Err(Box::new(StatusResponse::bad_request(
+            format!("Invalid {} resource", T::kind()),
+            None,
+        )))
+    }
+}
+
+pub(crate) fn validate_resource_name<T>(
+    resource: &T,
+    expected_name: &str,
+) -> Result<(), Box<StatusResponse>>
+where
+    T: StaticResource + ObjectMetaResource,
+{
+    if let Some(actual_name) = resource.name()
+        && actual_name != expected_name
+    {
+        return Err(Box::new(StatusResponse::bad_request(
+            format!(
+                "metadata.name must match resource name in URL: expected \"{expected_name}\", got \"{actual_name}\""
+            ),
+            Some(serde_json::json!({
+                "name": expected_name,
+                "providedName": actual_name,
+            })),
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_patch_name(
+    patch: &serde_json::Map<String, serde_json::Value>,
+    expected_name: &str,
+) -> Result<(), Box<StatusResponse>> {
+    let actual_name = patch
+        .get("metadata")
+        .and_then(|metadata| metadata.get("name"))
+        .and_then(|name| name.as_str());
+
+    if let Some(actual_name) = actual_name
+        && actual_name != expected_name
+    {
+        return Err(Box::new(StatusResponse::bad_request(
+            format!(
+                "metadata.name must match resource name in URL: expected \"{expected_name}\", got \"{actual_name}\""
+            ),
+            Some(serde_json::json!({
+                "name": expected_name,
+                "providedName": actual_name,
+            })),
+        )));
+    }
+    Ok(())
+}
+
+/// Applies a JSON merge patch (RFC 7396) to `target` in place.
+/// Objects are merged recursively; all other types (including arrays) are replaced.
+fn rfc7396_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    match patch {
+        serde_json::Value::Object(patch_map) => {
+            if !target.is_object() {
+                *target = serde_json::Value::Object(serde_json::Map::new());
+            }
+            let target_map = target.as_object_mut().expect("checked above");
+            for (key, value) in patch_map {
+                if value.is_null() {
+                    target_map.remove(key);
+                } else {
+                    rfc7396_merge_patch(
+                        target_map.entry(key).or_insert(serde_json::Value::Null),
+                        value,
+                    );
+                }
+            }
+        }
+        _ => {
+            *target = patch.clone();
+        }
     }
 }
 
@@ -625,5 +745,58 @@ mod tests {
                 .and_then(|meta| meta.resource_version.as_deref()),
             Some("rv-9")
         );
+    }
+
+    #[test]
+    fn rfc7396_merge_patch_replaces_arrays() {
+        use super::rfc7396_merge_patch;
+        use serde_json::json;
+
+        let mut target = json!({
+            "spec": {
+                "components": [
+                    { "name": "frontend", "replicas": 2 }
+                ]
+            }
+        });
+        let patch = json!({
+            "spec": {
+                "components": [
+                    { "name": "frontend", "replicas": 3 },
+                    { "name": "worker", "replicas": 1 }
+                ]
+            }
+        });
+
+        rfc7396_merge_patch(&mut target, &patch);
+
+        let components = target["spec"]["components"].as_array().unwrap();
+        assert_eq!(components.len(), 2);
+        assert_eq!(components[0]["replicas"], 3);
+        assert_eq!(components[1]["name"], "worker");
+    }
+
+    #[test]
+    fn rfc7396_merge_patch_removes_null_fields() {
+        use super::rfc7396_merge_patch;
+        use serde_json::json;
+
+        let mut target = json!({ "a": 1, "b": 2 });
+        rfc7396_merge_patch(&mut target, &json!({ "b": null }));
+
+        assert_eq!(target["a"], 1);
+        assert!(target.get("b").is_none() || target["b"].is_null());
+    }
+
+    #[test]
+    fn rfc7396_merge_patch_merges_nested_objects() {
+        use super::rfc7396_merge_patch;
+        use serde_json::json;
+
+        let mut target = json!({ "spec": { "image": "v1", "class": "small" } });
+        rfc7396_merge_patch(&mut target, &json!({ "spec": { "image": "v2" } }));
+
+        assert_eq!(target["spec"]["image"], "v2");
+        assert_eq!(target["spec"]["class"], "small");
     }
 }

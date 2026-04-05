@@ -204,6 +204,7 @@ const SHIP_OPS: ResourceOperations = ResourceOperations {
 const LEASE_OPS: ResourceOperations = ResourceOperations {
     patch: true,
     update: true,
+    delete: true,
     ..NAMESPACED_DEFAULT_OPS
 };
 

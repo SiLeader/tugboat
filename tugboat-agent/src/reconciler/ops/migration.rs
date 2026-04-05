@@ -198,6 +198,7 @@ impl MigrationContext for ShipReconciler {
             max_bandwidth_bytes_per_sec: migration_spec.max_bandwidth_bytes_per_sec,
             downtime_limit_ms: migration_spec.downtime_limit_ms,
             xbzrle_cache_size_bytes: migration_spec.xbzrle_cache_size_bytes,
+            postcopy_enabled: migration_spec.postcopy_enabled.unwrap_or(false),
         }
     }
     async fn local_runtime_status(&self, ship_id: &str) -> Result<Option<VmStatus>, RuntimeError> {

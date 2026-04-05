@@ -25,7 +25,9 @@ members = [
     "tugboat-vm-runtime-interface",
     "tugboat-cni-operator",
     "tugboat-csi-operator",
-    "tugboat-scheduler", "tugboat-controller-manager",
+    "tugboat-scheduler",
+    "tugboat-controller-manager",
+    "tests/integration",
 ]
 resolver = "3"
 
@@ -42,6 +44,9 @@ tugboat-vm-runtime-interface = { path = "tugboat-vm-runtime-interface" }
 tugboat-cni-operator = { path = "tugboat-cni-operator" }
 tugboat-csi-operator = { path = "tugboat-csi-operator" }
 tugboat-scheduler = { path = "tugboat-scheduler" }
+
+tugboat-apiserver = { path = "tugboat-apiserver" }
+tugboat-controller-manager = { path = "tugboat-controller-manager" }
 
 # command line
 clap = "4.5.60"
@@ -86,6 +91,7 @@ utoipa-actix-web = "0.1.2"
 
 # HTTP client
 url = "2.5.8"
+reqwest = "0.13.2"
 
 # store
 etcd-client = "0.18.0"

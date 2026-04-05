@@ -323,6 +323,7 @@ async fn process_requeue<T, R>(
     let Some(name) = event.resource_name().map(ToOwned::to_owned) else {
         return;
     };
+    let namespace = event.resource_namespace().map(ToOwned::to_owned);
 
     loop {
         wait_or_cancel(&cancellation_token, delay).await;
@@ -330,7 +331,10 @@ async fn process_requeue<T, R>(
             return;
         }
 
-        let latest = match api.get(&name).await {
+        let latest = match api
+            .get_with_optional_namespace(namespace.as_deref(), &name)
+            .await
+        {
             Ok(Some(resource)) => resource,
             Ok(None) => return,
             Err(err) => {
@@ -368,6 +372,7 @@ async fn wait_or_cancel(cancellation_token: &CancellationToken, delay: Duration)
 
 trait ReconcileEventExt<T> {
     fn resource_name(&self) -> Option<&str>;
+    fn resource_namespace(&self) -> Option<&str>;
     fn resource_key(&self) -> Option<String>;
 }
 
@@ -379,6 +384,14 @@ where
         match self {
             ReconcileEvent::Applied(resource) | ReconcileEvent::Deleted(resource) => {
                 resource.name()
+            }
+        }
+    }
+
+    fn resource_namespace(&self) -> Option<&str> {
+        match self {
+            ReconcileEvent::Applied(resource) | ReconcileEvent::Deleted(resource) => {
+                resource.namespace()
             }
         }
     }

@@ -53,29 +53,36 @@ impl WatchMuxAggregator {
     pub(crate) async fn get(
         &self,
         key: &str,
-        _resource_version: Option<String>,
+        resource_version: Option<String>,
     ) -> Result<WatchReceiver, crate::Error> {
         debug!("Get watch receiver: key: {key}");
         let mut mux = self.mux.lock().await;
-        if let Some(mux) = mux.get(key).cloned() {
+        if let Some(mux) = mux.get(key).cloned()
+            && resource_version.is_none()
+        {
             return Ok(mux.receiver());
         }
         let m = Arc::new(WatchMux::new());
-        mux.insert(key.to_string(), m.clone());
+        if resource_version.is_none() {
+            mux.insert(key.to_string(), m.clone());
+        }
 
         let client = self.client.watch_client();
         let key = key.to_string();
         let mux = m.clone();
+        let start_revision = resource_version
+            .as_deref()
+            .and_then(|value| value.parse::<i64>().ok())
+            .map(|revision| revision.saturating_add(1));
         tokio::spawn(async move {
             let mut client = client;
+            let mut current_revision = start_revision;
             loop {
-                let Ok(mut stream) = client
-                    .watch(
-                        key.as_str(),
-                        Some(WatchOptions::default().with_prefix().with_prev_key()),
-                    )
-                    .await
-                else {
+                let mut options = WatchOptions::default().with_prefix().with_prev_key();
+                if let Some(rev) = current_revision {
+                    options = options.with_start_revision(rev);
+                }
+                let Ok(mut stream) = client.watch(key.as_str(), Some(options)).await else {
                     sleep(Duration::from_millis(500)).await;
                     continue;
                 };
@@ -83,6 +90,9 @@ impl WatchMuxAggregator {
                     match event {
                         Ok(event) => {
                             debug!("Watch event: key: {key}: {event:?}");
+                            if let Some(header) = event.header() {
+                                current_revision = Some(header.revision() + 1);
+                            }
                             let events = event
                                 .events()
                                 .iter()

@@ -18,7 +18,7 @@ use crate::endpoints::resource_handlers::ReplaceOptions;
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, get, patch, post, put};
+use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Deserialize;
 use tugboat_resources::manifests::coordination::v1::Lease;
 use utoipa::ToSchema;
@@ -41,6 +41,33 @@ pub(super) async fn handle_lease_create(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Lease>, Box<StatusResponse>> {
     resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
+        .await
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct LeaseDeletePathParams {
+    namespace: String,
+    name: String,
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource deleted", body = Lease),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        )
+    )]
+#[delete("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
+pub(super) async fn handle_lease_delete(
+    path: Path<LeaseDeletePathParams>,
+    operator: Data<ApiOperator>,
+) -> Result<ReadResponse<Lease>, Box<StatusResponse>> {
+    let params = path.into_inner();
+    resource_handlers::delete_resource::<Lease>(&operator, Some(params.namespace), params.name)
         .await
 }
 

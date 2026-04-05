@@ -200,3 +200,59 @@ pub(super) async fn handle_fleet_patch(
     )
     .await
 }
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = Fleet),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Object
+    )]
+#[patch("/apis/apps/v1/namespaces/{namespace}/fleets/{name}/status")]
+pub(super) async fn handle_fleet_status_patch(
+    path: Path<FleetPathParams>,
+    patch: Json<serde_json::Map<String, serde_json::Value>>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Fleet>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::status_patch_resource::<Fleet>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        patch.into_inner(),
+    )
+    .await
+}
+
+#[utoipa::path(
+        responses(
+            (status = 200, description = "Resource updated", body = Fleet),
+            (status = 404, description = "Resource not found", body = StatusResponse),
+            (status = 500, description = "Internal server error", body = StatusResponse),
+        ),
+        params(
+            ("namespace" = String, Path, description = "Namespace of the resource"),
+            ("name" = String, Path, description = "Name of the resource"),
+        ),
+        request_body = Fleet
+    )]
+#[put("/apis/apps/v1/namespaces/{namespace}/fleets/{name}/status")]
+pub(super) async fn handle_fleet_status_replace(
+    path: Path<FleetPathParams>,
+    replacement: Json<Fleet>,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Fleet>, Box<StatusResponse>> {
+    let path = path.into_inner();
+    resource_handlers::status_replace_resource::<Fleet>(
+        &operator,
+        Some(path.namespace),
+        path.name,
+        replacement.into_inner(),
+    )
+    .await
+}

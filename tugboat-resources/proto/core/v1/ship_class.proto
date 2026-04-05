@@ -35,6 +35,11 @@ message MigrationSpec {
   optional uint64 max_bandwidth_bytes_per_sec = 1;
   optional uint64 downtime_limit_ms = 2;
   optional uint64 xbzrle_cache_size_bytes = 3;
+  // Enable QEMU post-copy migration for large-memory guests that struggle to
+  // converge under pre-copy alone. This reduces switchover downtime but page
+  // transfer failures during post-copy can crash the guest, so it should only
+  // be enabled on reliable low-latency networks.
+  optional bool postcopy_enabled = 4;
 }
 
 message CpuSpec {

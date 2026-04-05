@@ -50,6 +50,18 @@ impl crate::ApiServer {
 }
 
 impl ApiServerConfig {
+    pub fn new(listen: impl Into<String>, etcd_endpoints: Vec<String>) -> Self {
+        Self {
+            http: HttpConfig {
+                listen: listen.into(),
+                tls: None,
+            },
+            etcd: EtcdConfig {
+                endpoints: etcd_endpoints,
+            },
+        }
+    }
+
     pub fn load_from_file_or_panic(file: impl AsRef<std::path::Path>) -> Self {
         let file = std::fs::read_to_string(file.as_ref())
             .unwrap_or_else(|e| panic!("Failed to read config file: {:?}: {e}", file.as_ref()));

@@ -1,15 +1,15 @@
 use crate::base::TugboatController;
 use crate::error::ControllerError;
-use rand::distr::{Alphanumeric, SampleString};
-use rand::rng;
+use rand::{RngExt, rng};
 use std::collections::HashMap;
 use std::time::Duration;
+use tracing::debug;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::apps::v1::{ReplicaSet, ReplicaSetStatus, ShipTemplateSpec};
 use tugboat_resources::manifests::core::v1::{Ship, ShipSpec};
 use tugboat_resources::manifests::meta::v1::OwnerReference;
-use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta};
+use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta, ShipMigrationExt};
 
 const UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.dev/update-strategy";
 const UPDATE_STRATEGY_ALL: &str = "all";
@@ -98,13 +98,21 @@ fn excess_ships_to_delete<'a>(owned_ships: &[&'a Ship], desired: usize) -> Vec<&
     }
 
     let mut sorted = owned_ships.to_vec();
+    sorted.retain(|ship| !ship.has_active_migration());
     sorted.sort_by_key(|ship| std::cmp::Reverse(ship_creation_sort_key(ship)));
-    sorted.truncate(owned_ships.len() - desired);
+    sorted.truncate((owned_ships.len() - desired).min(sorted.len()));
     sorted
 }
 
 fn generate_suffix() -> String {
-    Alphanumeric.sample_string(&mut rng(), 5)
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rng();
+    (0..5)
+        .map(|_| {
+            let idx = rng.random_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
 }
 
 fn needs_spec_update(template_spec: &ShipSpec, ship_spec: &ShipSpec) -> bool {
@@ -123,6 +131,12 @@ fn ship_is_ready(ship: &Ship) -> bool {
             .iter()
             .any(|condition| condition.status == "Running")
     })
+}
+
+fn ship_needs_update(ship: &Ship, template_spec: &ShipSpec) -> bool {
+    ship.spec
+        .as_ref()
+        .is_some_and(|ship_spec| needs_spec_update(template_spec, ship_spec))
 }
 
 fn build_replicaset_status(owned_ships: &[&Ship]) -> ReplicaSetStatus {
@@ -224,9 +238,20 @@ impl ReplicaSetReconciler {
         let ships = ship_api.list().await?;
         let mut matching_ships = owned_ships(&ships, selector);
         matching_ships.sort_by_key(|ship| ship.name().unwrap_or_default());
+        debug!(
+            rs = rs.name().unwrap_or_default(),
+            desired,
+            matching = matching_ships.len(),
+            "reconciling replicaset"
+        );
 
         for _ in matching_ships.len()..desired {
             let ship = build_ship(&rs, &rs_spec.ship_template.clone().unwrap_or_default());
+            debug!(
+                rs = rs.name().unwrap_or_default(),
+                ship = ship.name().unwrap_or_default(),
+                "creating ship for replicaset"
+            );
             match ship_api.create(ship).await {
                 Ok(_) => {}
                 Err(tugboat_client::Error::Api(status)) if status.code == 409 => {}
@@ -235,12 +260,16 @@ impl ReplicaSetReconciler {
         }
 
         if matching_ships.len() > desired {
-            for ship in excess_ships_to_delete(&matching_ships, desired) {
+            let excess = matching_ships.len() - desired;
+            let to_delete = excess_ships_to_delete(&matching_ships, desired);
+            for ship in &to_delete {
                 if let Some(name) = ship.name() {
                     delete_ship_ignore_not_found(&ship_api, name).await?;
                 }
             }
-            return Ok(Action::requeue(Duration::from_secs(5)));
+            if !to_delete.is_empty() || to_delete.len() < excess {
+                return Ok(Action::requeue(Duration::from_secs(5)));
+            }
         }
 
         let template_spec = rs_spec
@@ -250,10 +279,13 @@ impl ReplicaSetReconciler {
             .cloned()
             .unwrap_or_default();
 
+        let migration_blocks_update = matching_ships
+            .iter()
+            .any(|ship| ship_needs_update(ship, &template_spec) && ship.has_active_migration());
+
         if matching_ships.iter().any(|ship| {
-            ship.spec
-                .as_ref()
-                .is_some_and(|ship_spec| needs_spec_update(&template_spec, ship_spec))
+            ship_needs_update(ship, &template_spec)
+                && !ship.has_active_migration()
                 && !ship_is_ready(ship)
         }) {
             return Ok(Action::requeue(Duration::from_secs(5)));
@@ -262,10 +294,7 @@ impl ReplicaSetReconciler {
         if update_strategy(&rs) == Some(UPDATE_STRATEGY_ALL) {
             let mut updated_any = false;
             for ship in &matching_ships {
-                let Some(ship_spec) = ship.spec.as_ref() else {
-                    continue;
-                };
-                if !needs_spec_update(&template_spec, ship_spec) {
+                if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
                     continue;
                 }
                 let Some(name) = ship.name() else {
@@ -279,14 +308,14 @@ impl ReplicaSetReconciler {
             if updated_any {
                 return Ok(Action::requeue(Duration::from_secs(5)));
             }
+            if migration_blocks_update {
+                return Ok(Action::requeue(Duration::from_secs(5)));
+            }
         }
 
         let mut updated_any = false;
         for ship in &matching_ships {
-            let Some(ship_spec) = ship.spec.as_ref() else {
-                continue;
-            };
-            if !needs_spec_update(&template_spec, ship_spec) {
+            if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
                 continue;
             }
             let Some(name) = ship.name() else {
@@ -303,6 +332,10 @@ impl ReplicaSetReconciler {
             return Ok(Action::requeue(Duration::from_secs(5)));
         }
 
+        if migration_blocks_update {
+            return Ok(Action::requeue(Duration::from_secs(5)));
+        }
+
         let new_status = build_replicaset_status(&matching_ships);
 
         if rs.status.as_ref() != Some(&new_status) {
@@ -312,6 +345,11 @@ impl ReplicaSetReconciler {
             rs_api
                 .replace_status(rs.name().unwrap_or_default(), updated)
                 .await?;
+        }
+
+        // Requeue while not all replicas are ready so ship status changes are picked up.
+        if new_status.ready_replicas < desired as i32 {
+            return Ok(Action::requeue(Duration::from_secs(5)));
         }
 
         Ok(Action::await_change())
@@ -356,13 +394,15 @@ mod tests {
     use tugboat_resources::manifests::apps::v1::{
         ReplicaSet, ReplicaSetSpec, ReplicaSetStatus, ShipTemplateSpec,
     };
-    use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipSpec, ShipStatus};
+    use tugboat_resources::manifests::core::v1::{
+        Ship, ShipCondition, ShipMigrationStatus, ShipSpec, ShipStatus,
+    };
     use tugboat_resources::manifests::meta::v1::{ObjectMeta, OwnerReference};
     use tugboat_resources::{ObjectMetaResource, Resource};
 
     fn base_ship_spec() -> ShipSpec {
         ShipSpec {
-            image: "ghcr.io/example/demo:latest".to_string(),
+            image: "example.com/images/demo:latest".to_string(),
             ship_class: "standard".to_string(),
             ..Default::default()
         }
@@ -373,7 +413,11 @@ mod tests {
         let suffix = generate_suffix();
 
         assert_eq!(suffix.len(), 5);
-        assert!(suffix.chars().all(|ch| ch.is_ascii_alphanumeric()));
+        assert!(
+            suffix
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        );
     }
 
     #[test]
@@ -399,7 +443,7 @@ mod tests {
                     ..Default::default()
                 }),
                 spec: Some(ShipSpec {
-                    image: "ghcr.io/example/demo:latest".to_string(),
+                    image: "example.com/images/demo:latest".to_string(),
                     ship_class: "standard".to_string(),
                     ..Default::default()
                 }),
@@ -422,7 +466,7 @@ mod tests {
         );
         assert_eq!(
             ship.spec.as_ref().map(|spec| spec.image.as_str()),
-            Some("ghcr.io/example/demo:latest")
+            Some("example.com/images/demo:latest")
         );
     }
 
@@ -585,6 +629,90 @@ mod tests {
     }
 
     #[test]
+    fn excess_deletion_prefers_non_migrating_ships() {
+        let stable = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("stable".to_string()),
+                creation_timestamp: Some(tugboat_resources::manifests::meta::v1::Time {
+                    seconds: 10,
+                    nanos: 0,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let migrating = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("migrating".to_string()),
+                creation_timestamp: Some(tugboat_resources::manifests::meta::v1::Time {
+                    seconds: 20,
+                    nanos: 0,
+                }),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: "Migrating".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let owned = vec![&stable, &migrating];
+
+        let to_delete = excess_ships_to_delete(&owned, 1);
+
+        assert_eq!(to_delete.len(), 1);
+        assert_eq!(to_delete[0].name(), Some("stable"));
+    }
+
+    #[test]
+    fn excess_deletion_returns_none_when_only_migrating_ships_are_excess() {
+        let stable = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("stable".to_string()),
+                creation_timestamp: Some(tugboat_resources::manifests::meta::v1::Time {
+                    seconds: 10,
+                    nanos: 0,
+                }),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: "Ready".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let migrating = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("migrating".to_string()),
+                creation_timestamp: Some(tugboat_resources::manifests::meta::v1::Time {
+                    seconds: 20,
+                    nanos: 0,
+                }),
+                ..Default::default()
+            }),
+            status: Some(ShipStatus {
+                migration: Some(ShipMigrationStatus {
+                    phase: "Migrating".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let owned = vec![&stable, &migrating];
+
+        let to_delete = excess_ships_to_delete(&owned, 0);
+
+        assert!(to_delete.is_empty());
+    }
+
+    #[test]
     fn builds_replicaset_owner_reference() {
         let rs = ReplicaSet {
             object_meta: Some(ObjectMeta {
@@ -631,7 +759,7 @@ mod tests {
     fn runtime_significant_fields_require_update() {
         let template_spec = base_ship_spec();
         let mut ship_spec = template_spec.clone();
-        ship_spec.image = "ghcr.io/example/demo:v2".to_string();
+        ship_spec.image = "example.com/images/demo:v2".to_string();
 
         assert!(needs_spec_update(&template_spec, &ship_spec));
     }
@@ -639,13 +767,13 @@ mod tests {
     #[test]
     fn applying_template_spec_preserves_scheduling_fields() {
         let template_spec = ShipSpec {
-            image: "ghcr.io/example/demo:v2".to_string(),
+            image: "example.com/images/demo:v2".to_string(),
             ship_class: "large".to_string(),
             ..Default::default()
         };
         let mut ship = Ship {
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:latest".to_string(),
+                image: "example.com/images/demo:latest".to_string(),
                 ship_class: "small".to_string(),
                 node_name: Some("node-a".to_string()),
                 scheduler_name: Some("scheduler".to_string()),
@@ -658,7 +786,7 @@ mod tests {
         apply_template_spec(&mut ship, &template_spec);
         let updated = ship.spec.as_ref().unwrap();
 
-        assert_eq!(updated.image, "ghcr.io/example/demo:v2");
+        assert_eq!(updated.image, "example.com/images/demo:v2");
         assert_eq!(updated.ship_class, "large");
         assert_eq!(updated.node_name.as_deref(), Some("node-a"));
         assert_eq!(updated.scheduler_name.as_deref(), Some("scheduler"));

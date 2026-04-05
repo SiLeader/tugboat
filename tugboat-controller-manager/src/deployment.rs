@@ -1,7 +1,7 @@
 use crate::base::TugboatController;
 use crate::change_classifier::{TemplateChangeKind, classify_template_change};
 use crate::error::ControllerError;
-use serde_json::{Value, to_string};
+use serde_json::{Value, json, to_string};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -467,7 +467,12 @@ impl DeploymentReconciler {
         updated.status = Some(new_status);
         let dep_api: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
         dep_api
-            .replace_status(dep.name().unwrap_or_default(), updated)
+            .patch_status(
+                dep.name().unwrap_or_default(),
+                json!({
+                    "status": updated.status
+                }),
+            )
             .await?;
         Ok(())
     }
@@ -494,10 +499,41 @@ impl DeploymentReconciler {
             return Ok(false);
         }
 
-        rs_api
-            .replace(current.name().unwrap_or_default(), updated)
-            .await?;
-        Ok(true)
+        match rs_api
+            .replace(current.name().unwrap_or_default(), updated.clone())
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
+                let Some(name) = current.name() else {
+                    return Ok(false);
+                };
+                let Some(mut latest) = rs_api.get(name).await? else {
+                    return Ok(false);
+                };
+
+                if latest.spec == updated.spec
+                    && latest.object_meta.as_ref().map(|meta| &meta.annotations)
+                        == updated.object_meta.as_ref().map(|meta| &meta.annotations)
+                {
+                    return Ok(false);
+                }
+
+                latest.spec = updated.spec;
+                latest.type_meta = updated.type_meta;
+
+                if let Some(updated_meta) = updated.object_meta {
+                    let latest_meta = latest.object_meta.get_or_insert_with(ObjectMeta::default);
+                    latest_meta.labels = updated_meta.labels;
+                    latest_meta.annotations = updated_meta.annotations;
+                    latest_meta.owner_references = updated_meta.owner_references;
+                }
+
+                rs_api.replace(name, latest).await?;
+                Ok(true)
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn reconcile_recreate(
@@ -764,7 +800,7 @@ impl DeploymentReconciler {
         let stale_replicasets =
             stale_replicasets_for_cleanup(&old_replicasets, revision_history_limit(&dep));
 
-        let change_kind = active_rs
+        let mut change_kind = active_rs
             .map(|active_rs| {
                 classify_template_change(
                     &active_rs
@@ -776,6 +812,14 @@ impl DeploymentReconciler {
                 )
             })
             .unwrap_or(TemplateChangeKind::RequiresRotation);
+
+        if change_kind == TemplateChangeKind::NoChange
+            && old_replicasets
+                .iter()
+                .any(|rs| replicaset_spec_replicas(rs) > 0 || replicaset_status_replicas(rs) > 0)
+        {
+            change_kind = TemplateChangeKind::RequiresRotation;
+        }
 
         let strategy_type = dep_spec
             .strategy
@@ -871,7 +915,7 @@ mod tests {
                     .collect(),
                 ship_template: Some(ShipTemplateSpec {
                     spec: Some(ShipSpec {
-                        image: "ghcr.io/example/demo:v1".to_string(),
+                        image: "example.com/images/demo:v1".to_string(),
                         ship_class: "standard".to_string(),
                         ..Default::default()
                     }),
@@ -905,7 +949,7 @@ mod tests {
                     .collect(),
                 ship_template: Some(ShipTemplateSpec {
                     spec: Some(ShipSpec {
-                        image: "ghcr.io/example/demo:v1".to_string(),
+                        image: "example.com/images/demo:v1".to_string(),
                         ship_class: "standard".to_string(),
                         ..Default::default()
                     }),
@@ -1018,7 +1062,7 @@ mod tests {
                 ..Default::default()
             }),
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:v1".to_string(),
+                image: "example.com/images/demo:v1".to_string(),
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
@@ -1040,7 +1084,7 @@ mod tests {
                 ..Default::default()
             }),
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:v1".to_string(),
+                image: "example.com/images/demo:v1".to_string(),
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),

@@ -35,7 +35,21 @@ struct Args {
 pub async fn run() {
     let args = Args::parse();
     let config = config::SchedulerConfig::load_or_panic(args.config);
+    tokio::select! {
+        _ = run_with_loaded_config(config) => {}
+        _ = wait_for_shutdown_signal() => {
+            tracing::info!("Received shutdown signal. Stopping scheduler.");
+        }
+    }
+    tracing::info!("Scheduler stopped.");
+}
 
+pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
+    let config = config::SchedulerConfig::load_or_panic(path);
+    run_with_loaded_config(config).await;
+}
+
+async fn run_with_loaded_config(config: config::SchedulerConfig) {
     let client = TugboatClient::new(&config.apiserver.url);
 
     let mut fw = framework::Framework::new();
@@ -62,13 +76,7 @@ pub async fn run() {
     );
 
     let scheduler = scheduler::Scheduler::new(client, fw, leader_elector, config.scheduler);
-    tokio::select! {
-        _ = scheduler.run() => {}
-        _ = wait_for_shutdown_signal() => {
-            tracing::info!("Received shutdown signal. Stopping scheduler.");
-        }
-    }
-    tracing::info!("Scheduler stopped.");
+    scheduler.run().await;
 }
 
 async fn wait_for_shutdown_signal() {

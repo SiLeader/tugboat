@@ -45,7 +45,7 @@ mod tests {
     fn base_template() -> ShipTemplateSpec {
         ShipTemplateSpec {
             spec: Some(ShipSpec {
-                image: "ghcr.io/example/demo:latest".to_string(),
+                image: "example.com/images/demo:latest".to_string(),
                 ship_class: "standard".to_string(),
                 ..Default::default()
             }),
@@ -69,7 +69,7 @@ mod tests {
     fn image_change_requires_rotation() {
         let old = base_template();
         let mut new = base_template();
-        new.spec.as_mut().unwrap().image = "ghcr.io/example/demo:v2".to_string();
+        new.spec.as_mut().unwrap().image = "example.com/images/demo:v2".to_string();
 
         assert_eq!(
             classify_template_change(&old, &new),
@@ -124,7 +124,7 @@ mod tests {
         let mut new = base_template();
         let spec = new.spec.as_mut().unwrap();
         spec.ship_class = "large".to_string();
-        spec.image = "ghcr.io/example/demo:v2".to_string();
+        spec.image = "example.com/images/demo:v2".to_string();
 
         assert_eq!(
             classify_template_change(&old, &new),

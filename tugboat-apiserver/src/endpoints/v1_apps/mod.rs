@@ -30,6 +30,8 @@ mod replicaset;
         deployment::handle_deployment_patch,
         deployment::handle_deployment_read,
         deployment::handle_deployment_replace,
+        deployment::handle_deployment_status_patch,
+        deployment::handle_deployment_status_replace,
         fleet::handle_fleet_create,
         fleet::handle_fleet_delete,
         fleet::handle_fleet_list,
@@ -37,6 +39,8 @@ mod replicaset;
         fleet::handle_fleet_patch,
         fleet::handle_fleet_read,
         fleet::handle_fleet_replace,
+        fleet::handle_fleet_status_patch,
+        fleet::handle_fleet_status_replace,
         replicaset::handle_replicaset_create,
         replicaset::handle_replicaset_delete,
         replicaset::handle_replicaset_list,
@@ -44,6 +48,8 @@ mod replicaset;
         replicaset::handle_replicaset_patch,
         replicaset::handle_replicaset_read,
         replicaset::handle_replicaset_replace,
+        replicaset::handle_replicaset_status_patch,
+        replicaset::handle_replicaset_status_replace,
     ),
     components(schemas(
         tugboat_resources::manifests::apps::v1::Deployment,
@@ -80,7 +86,9 @@ pub(super) fn register_deployment(service: &mut ServiceConfig) {
         .service(deployment::handle_deployment_list_all)
         .service(deployment::handle_deployment_patch)
         .service(deployment::handle_deployment_read)
-        .service(deployment::handle_deployment_replace);
+        .service(deployment::handle_deployment_replace)
+        .service(deployment::handle_deployment_status_patch)
+        .service(deployment::handle_deployment_status_replace);
 }
 
 pub(super) fn register_fleet(service: &mut ServiceConfig) {
@@ -91,7 +99,9 @@ pub(super) fn register_fleet(service: &mut ServiceConfig) {
         .service(fleet::handle_fleet_list_all)
         .service(fleet::handle_fleet_patch)
         .service(fleet::handle_fleet_read)
-        .service(fleet::handle_fleet_replace);
+        .service(fleet::handle_fleet_replace)
+        .service(fleet::handle_fleet_status_patch)
+        .service(fleet::handle_fleet_status_replace);
 }
 
 pub(super) fn register_replicaset(service: &mut ServiceConfig) {
@@ -102,5 +112,7 @@ pub(super) fn register_replicaset(service: &mut ServiceConfig) {
         .service(replicaset::handle_replicaset_list_all)
         .service(replicaset::handle_replicaset_patch)
         .service(replicaset::handle_replicaset_read)
-        .service(replicaset::handle_replicaset_replace);
+        .service(replicaset::handle_replicaset_replace)
+        .service(replicaset::handle_replicaset_status_patch)
+        .service(replicaset::handle_replicaset_status_replace);
 }

@@ -75,6 +75,18 @@ where
         }
     }
 
+    pub(crate) async fn get_with_optional_namespace(
+        &self,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<Option<T>, Error> {
+        if let Some(namespace) = namespace {
+            self.client.get_namespaced(namespace, name).await
+        } else {
+            self.get(name).await
+        }
+    }
+
     pub async fn list(&self) -> Result<Vec<T>, Error> {
         if let Some(namespace) = &self.namespace {
             self.client.list_namespaced(namespace).await
