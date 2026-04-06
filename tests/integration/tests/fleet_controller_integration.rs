@@ -334,6 +334,215 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
 }
 
 #[tokio::test]
+async fn fleet_controller_preserves_migrating_ship_during_rollout() -> Result<(), DynError> {
+    let _guard = test_lock().lock().await;
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let client = Client::new();
+    create_namespace(&client, &ctx.base_url, "test-ns").await?;
+    create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
+    let _controller_manager = ctx.start_controller_manager().await?;
+
+    create_resource(
+        &client,
+        &ctx.base_url,
+        "/apis/apps/v1/namespaces/test-ns/fleets",
+        &fleet_manifest(
+            "test-ns",
+            "migration-aware-fleet",
+            "tenant-net",
+            &[("frontend", 2, "example.com/images/frontend:v1")],
+        ),
+    )
+    .await?;
+
+    let initial_rs = wait_for_owned_replicaset(
+        &client,
+        &ctx.base_url,
+        "test-ns",
+        "migration-aware-fleet",
+        "frontend",
+        Duration::from_secs(20),
+        |rs| rs["spec"]["shipTemplate"]["spec"]["image"] == "example.com/images/frontend:v1",
+    )
+    .await?;
+    let initial_rs_name = string_field(&initial_rs, &["metadata", "name"])?;
+
+    let initial_ships = wait_for_owned_ship_count(
+        &client,
+        &ctx.base_url,
+        "test-ns",
+        &initial_rs_name,
+        2,
+        Duration::from_secs(20),
+    )
+    .await?;
+    mark_fleet_ships_running(&client, &ctx.base_url, "test-ns", "migration-aware-fleet").await?;
+
+    let migrating_ship_name = string_field(&initial_ships[0], &["metadata", "name"])?;
+    request_json(
+        &client,
+        Method::PATCH,
+        &format!(
+            "{}/api/v1/namespaces/test-ns/ships/{}/status",
+            ctx.base_url, migrating_ship_name
+        ),
+        StatusCode::OK,
+        Some(json!({
+            "status": {
+                "conditions": [
+                    {
+                        "status": "Running",
+                        "message": "integration test ready",
+                        "timestamp": "2023-11-14T22:13:20Z"
+                    }
+                ],
+                "migration": {
+                    "phase": "Migrating",
+                    "message": "integration test migration",
+                    "timestamp": "2023-11-14T22:13:20Z"
+                }
+            }
+        })),
+    )
+    .await?;
+
+    request_json(
+        &client,
+        Method::PATCH,
+        &format!(
+            "{}/apis/apps/v1/namespaces/test-ns/fleets/migration-aware-fleet",
+            ctx.base_url
+        ),
+        StatusCode::OK,
+        Some(json!({
+            "spec": {
+                "components": [
+                    {
+                        "name": "frontend",
+                        "replicas": 2,
+                        "shipTemplate": {
+                            "metadata": {
+                                "labels": {
+                                    "component": "frontend"
+                                }
+                            },
+                            "spec": {
+                                "image": "example.com/images/frontend:v2",
+                                "shipClass": "standard"
+                            }
+                        }
+                    }
+                ]
+            }
+        })),
+    )
+    .await?;
+
+    let new_rs = wait_for_owned_replicaset(
+        &client,
+        &ctx.base_url,
+        "test-ns",
+        "migration-aware-fleet",
+        "frontend",
+        Duration::from_secs(30),
+        |rs| {
+            rs["metadata"]["name"] != initial_rs_name
+                && rs["spec"]["shipTemplate"]["spec"]["image"] == "example.com/images/frontend:v2"
+                && rs["spec"]["replicas"] == 2
+        },
+    )
+    .await?;
+    let new_rs_name = string_field(&new_rs, &["metadata", "name"])?;
+
+    let new_ships = wait_for_owned_ship_count(
+        &client,
+        &ctx.base_url,
+        "test-ns",
+        &new_rs_name,
+        2,
+        Duration::from_secs(20),
+    )
+    .await?;
+    assert_eq!(new_ships.len(), 2);
+    mark_fleet_ships_running(&client, &ctx.base_url, "test-ns", "migration-aware-fleet").await?;
+
+    let retained_old_ships = wait_for_owned_ship_count(
+        &client,
+        &ctx.base_url,
+        "test-ns",
+        &initial_rs_name,
+        1,
+        Duration::from_secs(30),
+    )
+    .await?;
+    assert_eq!(
+        retained_old_ships[0]["metadata"]["name"].as_str(),
+        Some(migrating_ship_name.as_str())
+    );
+    assert_eq!(
+        retained_old_ships[0]["status"]["migration"]["phase"].as_str(),
+        Some("Migrating")
+    );
+
+    request_json(
+        &client,
+        Method::PATCH,
+        &format!(
+            "{}/api/v1/namespaces/test-ns/ships/{}/status",
+            ctx.base_url, migrating_ship_name
+        ),
+        StatusCode::OK,
+        Some(json!({
+            "status": {
+                "conditions": [
+                    {
+                        "status": "Running",
+                        "message": "integration test ready",
+                        "timestamp": "2023-11-14T22:13:20Z"
+                    }
+                ],
+                "migration": null
+            }
+        })),
+    )
+    .await?;
+
+    wait_for_owned_ship_count(
+        &client,
+        &ctx.base_url,
+        "test-ns",
+        &initial_rs_name,
+        0,
+        Duration::from_secs(30),
+    )
+    .await?;
+    wait_for_owned_replicaset(
+        &client,
+        &ctx.base_url,
+        "test-ns",
+        "migration-aware-fleet",
+        "frontend",
+        Duration::from_secs(30),
+        |rs| rs["metadata"]["name"] == new_rs_name,
+    )
+    .await?;
+    wait_for_owned_replicaset_count(
+        &client,
+        &ctx.base_url,
+        "test-ns",
+        "migration-aware-fleet",
+        1,
+        Duration::from_secs(30),
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn fleet_controller_deletes_managed_replicasets_and_ships_on_deletion() -> Result<(), DynError>
 {
     let _guard = test_lock().lock().await;
