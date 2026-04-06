@@ -1,5 +1,7 @@
 # Tugboat
 
+[English](./README.md)
+
 Tugboatは、KubernetesのようにVMのオーケストレーションを行うシステムです。
 
 ## Introduction
@@ -68,6 +70,7 @@ Tugboatはこれらの問題を解決するために生まれました。
 | Container image | VM image (OCI) |
 |   Dockerfile    |   Imagefile    |
 |     kubelet     |     agent      |
+|  RuntimeClass   |  RuntimeClass  |
 
 > **補足:** `Fleet` は複数の Ship タイプがプライベートネットワークを共有するグループを表す Tugboat 独自のリソースで、Kubernetes に直接対応するものはありません。
 
@@ -122,8 +125,6 @@ spec:
 同一構成の Ship の集合をローリングアップデート付きで管理します。
 Namespaced リソースです（`apps/v1`）。
 
-> **補足:** Deployment コントローラはまだ実装されていません。API でリソースの保存・取得は可能ですが、Ship の自動 reconcile はまだ行われません。
-
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -148,8 +149,6 @@ spec:
 レプリカ Ship の安定したセットを維持します。
 Namespaced リソースです（`apps/v1`）。
 
-> **補足:** ReplicaSet コントローラはまだ実装されていません。API でリソースの保存・取得は可能ですが、Ship の自動 reconcile はまだ行われません。
-
 ```yaml
 apiVersion: apps/v1
 kind: ReplicaSet
@@ -168,6 +167,38 @@ spec:
       image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
       shipClass: lightweight
 ```
+
+### RuntimeClass
+
+ノード上のVMランタイムが持つケーパビリティ（ライブマイグレーション対応、ホットプラグ対応）を宣言するリソースです。
+クラスタリソースです。
+
+```yaml
+apiVersion: v1
+kind: RuntimeClass
+metadata:
+  name: standard
+spec:
+  liveMigration: true
+  hotplug:
+    cpu:
+      add: true
+      remove: false
+    memory:
+      add: true
+      remove: false
+    nic:
+      add: true
+      remove: true
+    storage:
+      add: true
+      remove: true
+```
+
+Ship は `spec.runtimeClass` フィールドで RuntimeClass 名を参照できます。
+スケジューラの `RuntimeClassFit` プラグインが、Ship の要件（ライブマイグレーション対応など）を満たす RuntimeClass を持つノードにのみスケジューリングします。
+
+### CSI サポート
 
 CSI volume は `spec.volumes[].persistentVolumeClaim` で同一 namespace の
 `PersistentVolumeClaim` を参照できます。後方互換のため、従来の
@@ -241,18 +272,27 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
 - [x] tugboat-controller-manager
     - [x] CSIの動的プロビジョニング
     - [x] CSI管理下PVのcleanup
-    - [ ] ReplicaSet コントローラ (Shipの規定数維持)
-    - [ ] Deployment コントローラ (ReplicaSetのローリングアップデート管理)
-    - [ ] Fleet コントローラ
+    - [x] ReplicaSet コントローラ (Shipの規定数維持)
+    - [x] Deployment コントローラ (ReplicaSetのローリングアップデート管理)
+    - [x] Fleet コントローラ
 - [x] ReplicaSet リソース定義とAPI (`apps/v1`)
 - [x] Deployment リソース定義とAPI (`apps/v1`)
 - [x] ConfigMap
-- [ ] Live migration
+- [x] ライブマイグレーション
     - [x] `target_node_name` によるマイグレーションのトリガー
     - [x] マイグレーションのステートマシン (Pending, Ready, Migrating, Completed, Failed)
     - [x] Ship のステータス・条件へのマイグレーション状態の反映
-    - [ ] 事前互換性チェック (CPU、ストレージアクセス、ネットワーク継続性)
-    - [ ] マイグレーション失敗時の確実な復旧と明示的なエラー報告
+    - [x] 事前互換性チェック (CPU、共有ストレージ適格性、ターゲットネットワーク対応)
+    - [x] マイグレーション失敗時の確実な復旧と明示的なエラー報告
+    - [x] ノード間でブリッジ/インターフェース/MACを固定することによるゲスト/ネットワーク継続性
+    - [x] タイムアウト検出と自動QEMUキャンセル (Pending: 2分、Migrating: 30分)
+    - [x] ShipClassごとのQEMUマイグレーションパラメータ設定 (帯域幅、ダウンタイム、xbzrleキャッシュ)
+    - [x] スケジューラの StorageFit プラグインによる非 RWX ボリュームを持つ Ship のノード除外
+- [x] RuntimeClass
+    - [x] リソース定義とAPI (`core/v1`)
+    - [x] Ship の `spec.runtimeClass` フィールド
+    - [x] スケジューラの `RuntimeClassFit` プラグイン（ライブマイグレーション対応チェック）
+    - [ ] RuntimeClass フラグによるホットプラグ操作の制御
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
 
