@@ -199,7 +199,7 @@ async fn storageclass_can_be_created_and_deleted() -> Result<(), DynError> {
     let fetched = get_json(&client, &ctx.base_url, "/api/v1/storageclasses/fast-ssd").await?;
     assert_eq!(fetched["kind"], "StorageClass");
     assert_eq!(fetched["metadata"]["name"], "fast-ssd");
-    assert_eq!(fetched["spec"]["provisioner"], "csi.tugboat.dev/fast");
+    assert_eq!(fetched["spec"]["provisioner"], "csi.tugboat.cloud/fast");
     assert_eq!(fetched["spec"]["allowVolumeExpansion"], true);
 
     let deleted = request_json(
@@ -398,7 +398,7 @@ fn storageclass_manifest(name: &str) -> Value {
             "name": name
         },
         "spec": {
-            "provisioner": "csi.tugboat.dev/fast",
+            "provisioner": "csi.tugboat.cloud/fast",
             "parameters": {
                 "pool": "ssd"
             },

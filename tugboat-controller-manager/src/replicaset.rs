@@ -11,7 +11,7 @@ use tugboat_resources::manifests::core::v1::{Ship, ShipSpec};
 use tugboat_resources::manifests::meta::v1::OwnerReference;
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta, ShipMigrationExt};
 
-const UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.dev/update-strategy";
+const UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.cloud/update-strategy";
 const UPDATE_STRATEGY_ALL: &str = "all";
 
 #[derive(Clone)]

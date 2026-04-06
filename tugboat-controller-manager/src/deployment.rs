@@ -15,7 +15,7 @@ use tugboat_resources::manifests::apps::v1::{
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, OwnerReference};
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta};
 
-const REPLICASET_UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.dev/update-strategy";
+const REPLICASET_UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.cloud/update-strategy";
 const REPLICASET_UPDATE_STRATEGY_ALL: &str = "all";
 const TEMPLATE_HASH_BYTES: usize = 8;
 

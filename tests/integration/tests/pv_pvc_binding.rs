@@ -37,7 +37,10 @@ async fn persistent_volume_supports_status_updates() -> Result<(), DynError> {
 
     let fetched = get_json(&client, &ctx.base_url, "/api/v1/persistentvolumes/pv-1").await?;
     assert_eq!(fetched["spec"]["capacityBytes"], 1_073_741_824_i64);
-    assert_eq!(fetched["spec"]["csi"]["driver"], "csi.tugboat.dev/standard");
+    assert_eq!(
+        fetched["spec"]["csi"]["driver"],
+        "csi.tugboat.cloud/standard"
+    );
 
     let updated = request_json(
         &client,
@@ -365,7 +368,7 @@ fn storageclass_manifest(name: &str) -> Value {
             "name": name
         },
         "spec": {
-            "provisioner": "csi.tugboat.dev/standard",
+            "provisioner": "csi.tugboat.cloud/standard",
             "parameters": {
                 "pool": "standard"
             },
@@ -390,7 +393,7 @@ fn persistent_volume_manifest(name: &str, storage_class_name: &str) -> Value {
             "volumeMode": "Filesystem",
             "capacityBytes": 1_073_741_824_i64,
             "csi": {
-                "driver": "csi.tugboat.dev/standard",
+                "driver": "csi.tugboat.cloud/standard",
                 "volumeHandle": format!("handle-{name}"),
                 "readOnly": false,
                 "volumeAttributes": {

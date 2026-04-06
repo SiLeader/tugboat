@@ -1061,7 +1061,7 @@ fn storageclass_manifest(name: &str) -> Value {
             "name": name
         },
         "spec": {
-            "provisioner": "csi.tugboat.dev/standard",
+            "provisioner": "csi.tugboat.cloud/standard",
             "parameters": {
                 "pool": "standard"
             },
@@ -1086,7 +1086,7 @@ fn persistent_volume_manifest(name: &str, storage_class_name: &str) -> Value {
             "volumeMode": "Filesystem",
             "capacityBytes": 1_073_741_824_i64,
             "csi": {
-                "driver": "csi.tugboat.dev/standard",
+                "driver": "csi.tugboat.cloud/standard",
                 "volumeHandle": format!("handle-{name}"),
                 "readOnly": false,
                 "volumeAttributes": {
