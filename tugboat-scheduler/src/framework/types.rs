@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use tugboat_resources::manifests::core::v1::{
-    ClusterNetworkClass, NetworkClass, PersistentVolume, PersistentVolumeClaim, Ship, ShipClass,
+    ClusterNetworkClass, NetworkClass, PersistentVolume, PersistentVolumeClaim, RuntimeClass, Ship,
+    ShipClass,
 };
 
 /// Context shared across plugin invocations for a single scheduling cycle.
@@ -26,6 +27,8 @@ pub struct SchedulingContext {
     pub all_cluster_network_classes: Vec<ClusterNetworkClass>,
     /// All namespaced network classes.
     pub all_network_classes: Vec<NetworkClass>,
+    /// All runtime classes.
+    pub all_runtime_classes: Vec<RuntimeClass>,
     /// All Ships currently in the cluster (for resource usage calculation).
     pub all_ships: Vec<Ship>,
     /// All ShipClasses (for resolving resource requirements of scheduled ships).
@@ -140,6 +143,16 @@ impl SchedulingContext {
             let meta = network_class.object_meta.as_ref();
             meta.and_then(|item| item.name.as_deref()) == Some(name)
                 && meta.and_then(|item| item.namespace.as_deref()) == Some(namespace)
+        })
+    }
+
+    pub fn find_runtime_class(&self, name: &str) -> Option<&RuntimeClass> {
+        self.all_runtime_classes.iter().find(|runtime_class| {
+            runtime_class
+                .object_meta
+                .as_ref()
+                .and_then(|meta| meta.name.as_deref())
+                == Some(name)
         })
     }
 

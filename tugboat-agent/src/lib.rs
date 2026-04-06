@@ -41,10 +41,11 @@ pub async fn run() {
     let config = config::AgentConfig::load_or_panic(args.config);
 
     let node_name = config.node.name.clone();
+    let runtime_class = config.node.runtime_class.clone();
     let network_probe_interval = config.node.network_probe_interval();
     let cni_config = config.cni.clone();
     let client = TugboatClient::new(config.apiserver.url);
-    node_registration::ensure_node_exists(client.clone(), node_name.clone())
+    node_registration::ensure_node_exists(client.clone(), node_name.clone(), runtime_class)
         .await
         .unwrap_or_else(|e| panic!("Failed to ensure node resource exists: {e}"));
     let runtime_operator = RuntimeOperator::new(

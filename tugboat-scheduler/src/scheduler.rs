@@ -118,6 +118,12 @@ impl Scheduler {
             .as_ref()
             .map(|s| s.ship_class.as_str())
             .unwrap_or("");
+        let requested_runtime_class = ship
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.runtime_class.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
 
         let Some(ship_class) = cache.find_ship_class(class_name) else {
             tracing::warn!(
@@ -126,11 +132,21 @@ impl Scheduler {
             return;
         };
 
+        if let Some(runtime_class_name) = requested_runtime_class
+            && cache.find_runtime_class(runtime_class_name).is_none()
+        {
+            tracing::warn!(
+                "RuntimeClass '{runtime_class_name}' not found for ship {ship_namespace}/{ship_name}"
+            );
+            return;
+        }
+
         let ctx = SchedulingContext {
             ship: ship.clone(),
             ship_class: ship_class.clone(),
             all_cluster_network_classes: cache.cluster_network_classes().to_vec(),
             all_network_classes: cache.network_classes().to_vec(),
+            all_runtime_classes: cache.runtime_classes().to_vec(),
             all_ships: cache.ships().to_vec(),
             all_ship_classes: cache.ship_classes().to_vec(),
             all_persistent_volume_claims: cache.persistent_volume_claims().to_vec(),

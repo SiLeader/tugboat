@@ -124,6 +124,7 @@ mod tests {
             ship_class: "small".to_string(),
             node_name: None,
             network_class_ref: vec![],
+            runtime_class: None,
             uefi: None,
             tolerations: vec![],
             scheduler_name: None,

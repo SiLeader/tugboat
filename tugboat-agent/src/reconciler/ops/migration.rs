@@ -14,7 +14,6 @@
 
 use crate::cni::NetworkClassInfo;
 use crate::csi::READ_WRITE_MANY;
-use crate::node_registration::NODE_ARCH_LABEL;
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::volume::VolumeInfo;
@@ -23,6 +22,7 @@ use async_trait::async_trait;
 use std::collections::BTreeSet;
 use tracing::{error, info, warn};
 use tugboat_client::{Api, WatchParams};
+use tugboat_resources::NODE_ARCH_LABEL_KEY;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
     Node, NodeCniPluginStatus, Ship, ShipClass, ShipCondition, ShipMigrationStatus,
@@ -1011,12 +1011,12 @@ fn validate_target_architecture(ship_class: &ShipClass, target_node: &Node) -> O
     let node_name = meta.name.as_deref().unwrap_or("<unknown>");
     let Some(actual) = meta
         .labels
-        .get(NODE_ARCH_LABEL)
+        .get(NODE_ARCH_LABEL_KEY)
         .map(|arch| normalize_architecture(arch))
     else {
         return Some(format!(
             "target node '{node_name}' does not advertise '{}' label",
-            NODE_ARCH_LABEL
+            NODE_ARCH_LABEL_KEY
         ));
     };
 

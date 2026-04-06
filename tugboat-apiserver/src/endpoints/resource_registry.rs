@@ -20,7 +20,7 @@ use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
-    PersistentVolumeClaim, Secret, Ship, ShipClass, StorageClass,
+    PersistentVolumeClaim, RuntimeClass, Secret, Ship, ShipClass, StorageClass,
 };
 use utoipa_actix_web::service_config::ServiceConfig;
 
@@ -239,6 +239,10 @@ pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
             v1_core::register_persistent_volume_claim,
         ),
         ResourceApiDescriptor::new::<ReplicaSet>(WORKLOAD_OPS, v1_apps::register_replicaset),
+        ResourceApiDescriptor::new::<RuntimeClass>(
+            STORAGE_CLASS_OPS,
+            v1_core::register_runtimeclass,
+        ),
         ResourceApiDescriptor::new::<Secret>(SECRET_OPS, v1_core::register_secret),
         ResourceApiDescriptor::new::<Ship>(SHIP_OPS, v1_core::register_ship),
         ResourceApiDescriptor::new::<ShipClass>(CLUSTER_DEFAULT_OPS, v1_core::register_shipclass),

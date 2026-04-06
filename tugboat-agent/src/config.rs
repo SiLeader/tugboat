@@ -32,6 +32,8 @@ pub(crate) struct AgentConfig {
 #[derive(Debug, Deserialize)]
 pub(crate) struct NodeConfig {
     pub name: String,
+    #[serde(default)]
+    pub runtime_class: Option<String>,
     #[serde(default = "default_network_probe_interval_seconds")]
     pub network_probe_interval_seconds: u64,
 }

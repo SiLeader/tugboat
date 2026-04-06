@@ -24,6 +24,7 @@ use tugboat_resources::manifests::core::v1::{
     NodeStatus,
 };
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
+use tugboat_resources::{NODE_ARCH_LABEL_KEY, NODE_RUNTIME_CLASS_LABEL_KEY};
 
 const PROC_CPUINFO_PATH: &str = "/proc/cpuinfo";
 const PROC_MEMINFO_PATH: &str = "/proc/meminfo";
@@ -37,7 +38,6 @@ const DEFAULT_FLANNEL_SUBNET_FILE: &str = "/run/flannel/subnet.env";
 const DEFAULT_FLANNEL_DATA_DIR: &str = "/run/flannel";
 const REQUIRED_CNI_PLUGINS: [&str; 2] = ["bridge", "loopback"];
 const OPTIONAL_CNI_PLUGINS: [&str; 2] = ["flannel", "portmap"];
-pub(crate) const NODE_ARCH_LABEL: &str = "tugboat.cloud/arch";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum NodeRegistrationError {
@@ -58,16 +58,19 @@ struct NodeCapacity {
 pub(crate) async fn ensure_node_exists(
     client: TugboatClient,
     node_name: String,
+    runtime_class: Option<String>,
 ) -> Result<(), NodeRegistrationError> {
     let api: Api<Node> = Api::all(client.clone());
+    let desired_runtime_class = normalized_runtime_class(runtime_class.as_deref());
 
-    if api.get(&node_name).await?.is_some() {
+    if let Some(mut node) = api.get(&node_name).await? {
+        ensure_node_labels(&api, &node_name, &mut node, desired_runtime_class).await?;
         info!("Node resource '{node_name}' already exists. Skipping registration.");
         return Ok(());
     }
 
     let capacity = detect_node_capacity()?;
-    let node = build_node(node_name.clone(), capacity);
+    let node = build_node(node_name.clone(), capacity, desired_runtime_class);
 
     match api.create(node).await {
         Ok(_) => {
@@ -130,15 +133,23 @@ pub(crate) async fn refresh_node_status_loop(
     }
 }
 
-fn build_node(node_name: String, capacity: NodeCapacity) -> Node {
+fn build_node(node_name: String, capacity: NodeCapacity, runtime_class: Option<&str>) -> Node {
+    let mut labels = HashMap::from([(
+        NODE_ARCH_LABEL_KEY.to_string(),
+        normalized_host_architecture().to_string(),
+    )]);
+    if let Some(runtime_class) = runtime_class {
+        labels.insert(
+            NODE_RUNTIME_CLASS_LABEL_KEY.to_string(),
+            runtime_class.to_string(),
+        );
+    }
+
     Node {
         type_meta: None,
         object_meta: Some(ObjectMeta {
             name: Some(node_name),
-            labels: HashMap::from([(
-                NODE_ARCH_LABEL.to_string(),
-                normalized_host_architecture().to_string(),
-            )]),
+            labels,
             ..Default::default()
         }),
         spec: Some(NodeSpec {
@@ -163,32 +174,95 @@ async fn ensure_node_architecture_label(
     node_name: &str,
     node: &mut Node,
 ) -> Result<(), NodeRegistrationError> {
-    let current = node
+    let current_arch = node
         .object_meta
         .as_ref()
-        .and_then(|meta| meta.labels.get(NODE_ARCH_LABEL))
+        .and_then(|meta| meta.labels.get(NODE_ARCH_LABEL_KEY))
         .map(String::as_str);
-    let desired = normalized_host_architecture();
+    let desired_arch = normalized_host_architecture();
 
-    if current == Some(desired) {
+    if current_arch == Some(desired_arch) {
         return Ok(());
     }
 
     let patch = serde_json::json!({
         "metadata": {
             "labels": {
-                NODE_ARCH_LABEL: desired,
+                NODE_ARCH_LABEL_KEY: desired_arch,
             }
         }
     });
     api.patch(node_name, patch).await?;
 
-    if let Some(meta) = node.object_meta.as_mut() {
-        meta.labels
-            .insert(NODE_ARCH_LABEL.to_string(), desired.to_string());
+    let meta = node.object_meta.get_or_insert_with(ObjectMeta::default);
+    meta.labels
+        .insert(NODE_ARCH_LABEL_KEY.to_string(), desired_arch.to_string());
+
+    Ok(())
+}
+
+async fn ensure_node_labels(
+    api: &Api<Node>,
+    node_name: &str,
+    node: &mut Node,
+    runtime_class: Option<&str>,
+) -> Result<(), NodeRegistrationError> {
+    let current_arch = node
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.labels.get(NODE_ARCH_LABEL_KEY))
+        .map(String::as_str);
+    let desired_arch = normalized_host_architecture();
+    let current_runtime_class = node
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.labels.get(NODE_RUNTIME_CLASS_LABEL_KEY))
+        .map(String::as_str);
+
+    if current_arch == Some(desired_arch) && current_runtime_class == runtime_class {
+        return Ok(());
+    }
+
+    let mut labels = serde_json::Map::from_iter([(
+        NODE_ARCH_LABEL_KEY.to_string(),
+        serde_json::Value::String(desired_arch.to_string()),
+    )]);
+    labels.insert(
+        NODE_RUNTIME_CLASS_LABEL_KEY.to_string(),
+        runtime_class.map_or(serde_json::Value::Null, |runtime_class| {
+            serde_json::Value::String(runtime_class.to_string())
+        }),
+    );
+
+    let patch = serde_json::json!({
+        "metadata": {
+            "labels": labels
+        }
+    });
+    api.patch(node_name, patch).await?;
+
+    let meta = node.object_meta.get_or_insert_with(ObjectMeta::default);
+    meta.labels
+        .insert(NODE_ARCH_LABEL_KEY.to_string(), desired_arch.to_string());
+    match runtime_class {
+        Some(runtime_class) => {
+            meta.labels.insert(
+                NODE_RUNTIME_CLASS_LABEL_KEY.to_string(),
+                runtime_class.to_string(),
+            );
+        }
+        None => {
+            meta.labels.remove(NODE_RUNTIME_CLASS_LABEL_KEY);
+        }
     }
 
     Ok(())
+}
+
+fn normalized_runtime_class(runtime_class: Option<&str>) -> Option<&str> {
+    runtime_class
+        .map(str::trim)
+        .filter(|runtime_class| !runtime_class.is_empty())
 }
 
 pub(crate) fn normalized_host_architecture() -> &'static str {
@@ -447,6 +521,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn build_node_sets_runtime_class_label_when_configured() {
+        let node = build_node(
+            "node-a".to_string(),
+            NodeCapacity {
+                cpu: 4,
+                memory: 8192,
+            },
+            Some("qemu"),
+        );
+        let labels = &node.object_meta.as_ref().unwrap().labels;
+
+        assert_eq!(
+            labels.get(NODE_RUNTIME_CLASS_LABEL_KEY).map(String::as_str),
+            Some("qemu")
+        );
+        assert_eq!(
+            labels.get(NODE_ARCH_LABEL_KEY).map(String::as_str),
+            Some(normalized_host_architecture())
+        );
+    }
+
+    #[test]
+    fn build_node_omits_runtime_class_label_when_not_configured() {
+        let node = build_node(
+            "node-a".to_string(),
+            NodeCapacity {
+                cpu: 4,
+                memory: 8192,
+            },
+            None,
+        );
+        let labels = &node.object_meta.as_ref().unwrap().labels;
+
+        assert!(!labels.contains_key(NODE_RUNTIME_CLASS_LABEL_KEY));
+        assert_eq!(
+            labels.get(NODE_ARCH_LABEL_KEY).map(String::as_str),
+            Some(normalized_host_architecture())
+        );
+    }
+
+    #[test]
+    fn normalized_runtime_class_rejects_blank_values() {
+        assert_eq!(normalized_runtime_class(None), None);
+        assert_eq!(normalized_runtime_class(Some("")), None);
+        assert_eq!(normalized_runtime_class(Some("   ")), None);
+        assert_eq!(normalized_runtime_class(Some(" kata ")), Some("kata"));
+    }
+
+    #[test]
     fn can_parse_cgroup_v2_cpu_limit() {
         assert_eq!(parse_cgroup_v2_cpu_max("200000 100000"), Some(2));
         assert_eq!(parse_cgroup_v2_cpu_max("50000 100000"), Some(1));
@@ -492,6 +615,7 @@ mod tests {
                 cpu: 4,
                 memory: 8_589_934_592,
             },
+            None,
         );
 
         let spec = node.spec.expect("spec should exist");
@@ -504,7 +628,7 @@ mod tests {
         assert_eq!(resource.cpu, 4);
         assert_eq!(resource.memory, 8_589_934_592);
         assert_eq!(
-            labels.get(NODE_ARCH_LABEL).map(String::as_str),
+            labels.get(NODE_ARCH_LABEL_KEY).map(String::as_str),
             Some(normalized_host_architecture())
         );
         assert!(node.status.is_none());

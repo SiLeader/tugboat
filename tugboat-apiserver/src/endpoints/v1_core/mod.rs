@@ -23,6 +23,7 @@ mod networkclass;
 mod node;
 mod persistent_volume;
 mod persistent_volume_claim;
+mod runtime_class;
 mod secret;
 mod ship;
 mod shipclass;
@@ -74,6 +75,10 @@ mod storage_class;
         persistent_volume_claim::handle_persistent_volume_claim_replace,
         persistent_volume_claim::handle_persistent_volume_claim_status_patch,
         persistent_volume_claim::handle_persistent_volume_claim_status_replace,
+        runtime_class::handle_runtimeclass_create,
+        runtime_class::handle_runtimeclass_delete,
+        runtime_class::handle_runtimeclass_list,
+        runtime_class::handle_runtimeclass_read,
         networkclass::handle_networkclass_create,
         networkclass::handle_networkclass_delete,
         networkclass::handle_networkclass_list,
@@ -114,6 +119,7 @@ mod storage_class;
         tugboat_resources::manifests::core::v1::ConfigMap,
         tugboat_resources::manifests::core::v1::Node,
         tugboat_resources::manifests::core::v1::Secret,
+        tugboat_resources::manifests::core::v1::RuntimeClass,
         tugboat_resources::manifests::core::v1::StorageClass,
         tugboat_resources::manifests::core::v1::Ship,
         tugboat_resources::manifests::core::v1::ShipClass,
@@ -222,6 +228,14 @@ pub(super) fn register_secret(service: &mut ServiceConfig) {
         .service(secret::handle_secret_replace);
 }
 
+pub(super) fn register_runtimeclass(service: &mut ServiceConfig) {
+    service
+        .service(runtime_class::handle_runtimeclass_create)
+        .service(runtime_class::handle_runtimeclass_delete)
+        .service(runtime_class::handle_runtimeclass_list)
+        .service(runtime_class::handle_runtimeclass_read);
+}
+
 pub(super) fn register_storage_class(service: &mut ServiceConfig) {
     service
         .service(storage_class::handle_storage_class_create)
@@ -262,6 +276,7 @@ pub(super) fn register_v1_core(service: &mut ServiceConfig) {
         .configure(register_persistent_volume)
         .configure(register_persistent_volume_claim)
         .configure(register_networkclass)
+        .configure(register_runtimeclass)
         .configure(register_secret)
         .configure(register_storage_class)
         .configure(register_ship)

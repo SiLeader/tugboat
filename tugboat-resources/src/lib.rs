@@ -19,6 +19,9 @@ pub mod resource_version;
 pub mod sized;
 pub mod validators;
 
+pub const NODE_ARCH_LABEL_KEY: &str = "tugboat.cloud/arch";
+pub const NODE_RUNTIME_CLASS_LABEL_KEY: &str = "tugboat.cloud/runtime-class";
+
 pub trait Resource {
     fn type_meta() -> TypeMeta;
 }
