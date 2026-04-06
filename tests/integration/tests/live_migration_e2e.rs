@@ -86,7 +86,9 @@ async fn live_migration_happy_path_transitions_to_completed() -> Result<(), DynE
                 && ship["status"]["conditions"]
                     .as_array()
                     .is_some_and(|conditions| {
-                        conditions.iter().any(|condition| condition["status"] == "Running")
+                        conditions
+                            .iter()
+                            .any(|condition| condition["status"] == "Running")
                     })
         },
     )
@@ -124,7 +126,10 @@ async fn live_migration_happy_path_transitions_to_completed() -> Result<(), DynE
 
     assert_eq!(completed["spec"]["nodeName"], ctx.target_node);
     assert!(completed["spec"]["targetNodeName"].is_null());
-    assert_eq!(completed["status"]["migration"]["targetNodeName"], ctx.target_node);
+    assert_eq!(
+        completed["status"]["migration"]["targetNodeName"],
+        ctx.target_node
+    );
 
     Ok(())
 }
@@ -202,7 +207,9 @@ async fn live_migration_rejects_rwo_storage_during_preflight() -> Result<(), Dyn
                 && ship["status"]["conditions"]
                     .as_array()
                     .is_some_and(|conditions| {
-                        conditions.iter().any(|condition| condition["status"] == "Running")
+                        conditions
+                            .iter()
+                            .any(|condition| condition["status"] == "Running")
                     })
         },
     )
@@ -252,9 +259,7 @@ struct ExternalMigrationContext {
 
 async fn setup_or_skip() -> Result<Option<ExternalMigrationContext>, DynError> {
     if std::env::var_os(LIVE_MIGRATION_ENABLED_ENV).is_none() {
-        eprintln!(
-            "skipping live migration e2e: set {LIVE_MIGRATION_ENABLED_ENV}=1 to enable"
-        );
+        eprintln!("skipping live migration e2e: set {LIVE_MIGRATION_ENABLED_ENV}=1 to enable");
         return Ok(None);
     }
 
@@ -465,7 +470,9 @@ async fn bind_pvc(
     request_json(
         client,
         Method::PUT,
-        &format!("{base_url}/api/v1/namespaces/{namespace}/persistentvolumeclaims/{pvc_name}/status"),
+        &format!(
+            "{base_url}/api/v1/namespaces/{namespace}/persistentvolumeclaims/{pvc_name}/status"
+        ),
         StatusCode::OK,
         Some(json!({
             "apiVersion": "v1",
