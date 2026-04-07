@@ -22,12 +22,12 @@ use async_trait::async_trait;
 use std::collections::BTreeSet;
 use tracing::{error, info, warn};
 use tugboat_client::{Api, WatchParams};
-use tugboat_resources::{NODE_ARCH_LABEL_KEY, NODE_RUNTIME_CLASS_LABEL_KEY};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
     Node, NodeCniPluginStatus, RuntimeClass, Ship, ShipClass, ShipCondition, ShipMigrationStatus,
 };
 use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_resources::{NODE_ARCH_LABEL_KEY, NODE_RUNTIME_CLASS_LABEL_KEY};
 use tugboat_vm_runtime_interface::migrate::{
     VmMigrationParams, VmMigrationPhase, VmMigrationStatusResponse,
 };
