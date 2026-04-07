@@ -72,6 +72,7 @@ Existing VM orchestration systems come with significant challenges:
 | Container image | VM image (OCI)  |
 |   Dockerfile    |    Imagefile    |
 |     kubelet     |      agent      |
+|  RuntimeClass   |  RuntimeClass   |
 
 > **Note:** `Fleet` is a Tugboat-specific resource for grouping multiple Ship types that share a private network — it has no direct Kubernetes equivalent.
 
@@ -126,8 +127,6 @@ spec:
 Manages a set of identical Ships with rolling-update support.
 This is a namespaced resource (`apps/v1`).
 
-> **Note:** The Deployment controller is not yet implemented. Resources can be stored and retrieved via the API, but Ships are not yet reconciled automatically.
-
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -152,8 +151,6 @@ spec:
 Maintains a stable set of replica Ships.
 This is a namespaced resource (`apps/v1`).
 
-> **Note:** The ReplicaSet controller is not yet implemented. Resources can be stored and retrieved via the API, but Ships are not yet reconciled automatically.
-
 ```yaml
 apiVersion: apps/v1
 kind: ReplicaSet
@@ -172,6 +169,37 @@ spec:
       image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
       shipClass: lightweight
 ```
+
+### RuntimeClass
+
+Declares the capabilities of the VM runtime on a node (live migration support, hotplug support).
+This is a cluster‑scoped resource.
+
+```yaml
+apiVersion: v1
+kind: RuntimeClass
+metadata:
+  name: standard
+spec:
+  liveMigration: true
+  hotplug:
+    cpu:
+      add: true
+      remove: false
+    memory:
+      add: true
+      remove: false
+    nic:
+      add: true
+      remove: true
+    storage:
+      add: true
+      remove: true
+```
+
+A Ship can reference a `RuntimeClass` by name via `spec.runtimeClass`. The scheduler uses the
+`RuntimeClassFit` plugin to ensure Ships are only placed on nodes whose associated `RuntimeClass`
+satisfies the Ship's requirements (e.g., live migration capability).
 
 ### CSI support
 
@@ -245,9 +273,9 @@ For a manual multi-node validation flow:
 - [x] tugboat-controller-manager
     - [x] Dynamic CSI volume provisioning
     - [x] CSI-backed managed PV cleanup
-    - [ ] ReplicaSet controller (maintaining the prescribed number of Ships)
-    - [ ] Deployment controller (rolling-update management of ReplicaSets)
-    - [ ] Fleet controller
+    - [x] ReplicaSet controller (maintaining the prescribed number of Ships)
+    - [x] Deployment controller (rolling-update management of ReplicaSets)
+    - [x] Fleet controller
 - [x] ReplicaSet resource definition and API (`apps/v1`)
 - [x] Deployment resource definition and API (`apps/v1`)
 - [x] ConfigMap
@@ -261,6 +289,11 @@ For a manual multi-node validation flow:
     - [x] Timeout detection with automatic QEMU cancel (Pending: 2 min, Migrating: 30 min)
     - [x] Per-ShipClass configurable QEMU migration parameters (bandwidth, downtime, xbzrle cache)
     - [x] Scheduler StorageFit plugin rejects nodes for Ships with non-RWX volumes
+- [x] RuntimeClass
+    - [x] Resource definition and API (`core/v1`)
+    - [x] `spec.runtimeClass` field on Ship
+    - [x] Scheduler `RuntimeClassFit` plugin (live migration capability check)
+    - [ ] Hotplug operations gated by RuntimeClass flags
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
 

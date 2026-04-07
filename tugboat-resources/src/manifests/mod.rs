@@ -69,6 +69,14 @@ pub mod core {
         );
         apply_resource!(Secret, "core", "v1", "secrets", "secret", namespaced);
         apply_resource!(
+            RuntimeClass,
+            "core",
+            "v1",
+            "runtimeclasses",
+            "runtimeclass",
+            cluster
+        );
+        apply_resource!(
             StorageClass,
             "core",
             "v1",
@@ -87,6 +95,7 @@ pub mod core {
         apply_validators!(PersistentVolume, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(PersistentVolumeClaim, validators NameValidator);
         apply_validators!(Secret, validators NameValidator);
+        apply_validators!(RuntimeClass, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(StorageClass, validators NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator);
 
         impl HasReclaimPolicy for StorageClass {
@@ -99,7 +108,7 @@ pub mod core {
 
         #[cfg(test)]
         mod tests {
-            use super::ConfigMap;
+            use super::{ConfigMap, RuntimeClass};
             use crate::manifests::meta::v1::ObjectMeta;
             use crate::validators::Validatable;
 
@@ -129,6 +138,46 @@ pub mod core {
                 };
 
                 assert!(!config_map.validate());
+            }
+
+            #[test]
+            fn runtimeclass_with_valid_name_passes_validation() {
+                let rc = RuntimeClass {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("qemu-kvm".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(rc.validate());
+            }
+
+            #[test]
+            fn runtimeclass_with_invalid_name_fails_validation() {
+                let rc = RuntimeClass {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("Invalid_Name".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(!rc.validate());
+            }
+
+            #[test]
+            fn runtimeclass_with_namespace_fails_validation() {
+                let rc = RuntimeClass {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("qemu-kvm".to_string()),
+                        namespace: Some("default".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(!rc.validate());
             }
         }
     }

@@ -14,14 +14,15 @@
 
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::core::v1::{
-    ClusterNetworkClass, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim, Ship,
-    ShipClass,
+    ClusterNetworkClass, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim, RuntimeClass,
+    Ship, ShipClass,
 };
 
 pub(crate) struct Cache {
     client: TugboatClient,
     cluster_network_classes: Vec<ClusterNetworkClass>,
     network_classes: Vec<NetworkClass>,
+    runtime_classes: Vec<RuntimeClass>,
     nodes: Vec<Node>,
     ships: Vec<Ship>,
     ship_classes: Vec<ShipClass>,
@@ -35,6 +36,7 @@ impl Cache {
             client,
             cluster_network_classes: Vec::new(),
             network_classes: Vec::new(),
+            runtime_classes: Vec::new(),
             nodes: Vec::new(),
             ships: Vec::new(),
             ship_classes: Vec::new(),
@@ -46,6 +48,7 @@ impl Cache {
     pub async fn refresh(&mut self) -> Result<(), tugboat_client::Error> {
         let cluster_network_class_api: Api<ClusterNetworkClass> = Api::all(self.client.clone());
         let network_class_api: Api<NetworkClass> = Api::all(self.client.clone());
+        let runtime_class_api: Api<RuntimeClass> = Api::all(self.client.clone());
         let node_api: Api<Node> = Api::all(self.client.clone());
         let ship_api: Api<Ship> = Api::all(self.client.clone());
         let ship_class_api: Api<ShipClass> = Api::all(self.client.clone());
@@ -54,6 +57,7 @@ impl Cache {
 
         self.cluster_network_classes = cluster_network_class_api.list().await?;
         self.network_classes = network_class_api.list().await?;
+        self.runtime_classes = runtime_class_api.list().await?;
         self.nodes = node_api.list().await?;
         self.ships = ship_api.list().await?;
         self.ship_classes = ship_class_api.list().await?;
@@ -61,10 +65,11 @@ impl Cache {
         self.persistent_volumes = pv_api.list().await?;
 
         tracing::debug!(
-            "Cache refreshed: {} cluster network classes, {} network classes, {} nodes, {} ships, \
-             {} ship classes, {} pvcs, {} pvs",
+            "Cache refreshed: {} cluster network classes, {} network classes, {} runtime classes, \
+             {} nodes, {} ships, {} ship classes, {} pvcs, {} pvs",
             self.cluster_network_classes.len(),
             self.network_classes.len(),
+            self.runtime_classes.len(),
             self.nodes.len(),
             self.ships.len(),
             self.ship_classes.len(),
@@ -85,6 +90,16 @@ impl Cache {
 
     pub fn network_classes(&self) -> &[NetworkClass] {
         &self.network_classes
+    }
+
+    pub fn runtime_classes(&self) -> &[RuntimeClass] {
+        &self.runtime_classes
+    }
+
+    pub fn find_runtime_class(&self, name: &str) -> Option<&RuntimeClass> {
+        self.runtime_classes
+            .iter()
+            .find(|rc| rc.object_meta.as_ref().and_then(|m| m.name.as_deref()) == Some(name))
     }
 
     pub fn ships(&self) -> &[Ship] {

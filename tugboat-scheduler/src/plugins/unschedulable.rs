@@ -48,6 +48,7 @@ mod tests {
             ship_class: ShipClass::default(),
             all_cluster_network_classes: Vec::new(),
             all_network_classes: Vec::new(),
+            all_runtime_classes: Vec::new(),
             all_ships: Vec::new(),
             all_ship_classes: Vec::new(),
             all_persistent_volume_claims: Vec::new(),

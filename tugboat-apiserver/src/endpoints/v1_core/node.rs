@@ -22,7 +22,7 @@ use serde::Serialize;
 use tugboat_resources::ShipMigrationExt;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, NetworkClass, Node, NodeSpec, PersistentVolume, PersistentVolumeClaim,
-    Ship, ShipClass,
+    RuntimeClass, Ship, ShipClass,
 };
 use tugboat_scheduler::framework::{Framework, SchedulingContext};
 use tugboat_scheduler::plugins::{create_filter_plugin, create_score_plugin};
@@ -60,6 +60,7 @@ struct DrainPlanningResources {
     ship_classes: Vec<ShipClass>,
     network_classes: Vec<NetworkClass>,
     cluster_network_classes: Vec<ClusterNetworkClass>,
+    runtime_classes: Vec<RuntimeClass>,
     persistent_volume_claims: Vec<PersistentVolumeClaim>,
     persistent_volumes: Vec<PersistentVolume>,
 }
@@ -417,6 +418,7 @@ fn plan_node_drain(
             ship_class: ship_class.clone(),
             all_cluster_network_classes: resources.cluster_network_classes.clone(),
             all_network_classes: resources.network_classes.clone(),
+            all_runtime_classes: resources.runtime_classes.clone(),
             all_ships: shadow_ships.clone(),
             all_ship_classes: resources.ship_classes.clone(),
             all_persistent_volume_claims: resources.persistent_volume_claims.clone(),
@@ -622,6 +624,14 @@ async fn load_drain_resources(
         persistent_volumes: operator
             .store
             .list::<PersistentVolume>(None, None)
+            .await
+            .map_err(Box::<StatusResponse>::from)?
+            .into_iter()
+            .map(|item| item.apply_revision())
+            .collect(),
+        runtime_classes: operator
+            .store
+            .list::<RuntimeClass>(None, None)
             .await
             .map_err(Box::<StatusResponse>::from)?
             .into_iter()
@@ -835,6 +845,7 @@ mod tests {
             ship_classes: vec![ship_class("small", 1, "1Gi")],
             network_classes: Vec::new(),
             cluster_network_classes: Vec::new(),
+            runtime_classes: Vec::new(),
             persistent_volume_claims: vec![pvc],
             persistent_volumes: vec![pv],
         };

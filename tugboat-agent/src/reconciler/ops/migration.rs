@@ -14,7 +14,6 @@
 
 use crate::cni::NetworkClassInfo;
 use crate::csi::READ_WRITE_MANY;
-use crate::node_registration::NODE_ARCH_LABEL;
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::volume::VolumeInfo;
@@ -25,9 +24,10 @@ use tracing::{error, info, warn};
 use tugboat_client::{Api, WatchParams};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    Node, NodeCniPluginStatus, Ship, ShipClass, ShipCondition, ShipMigrationStatus,
+    Node, NodeCniPluginStatus, RuntimeClass, Ship, ShipClass, ShipCondition, ShipMigrationStatus,
 };
 use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_resources::{NODE_ARCH_LABEL_KEY, NODE_RUNTIME_CLASS_LABEL_KEY};
 use tugboat_vm_runtime_interface::migrate::{
     VmMigrationParams, VmMigrationPhase, VmMigrationStatusResponse,
 };
@@ -889,6 +889,37 @@ impl ShipReconciler {
                 "target node '{target_node_name}' was not found"
             )));
         };
+        let node_runtime_class_name = target_node
+            .object_meta
+            .as_ref()
+            .and_then(|meta| meta.labels.get(NODE_RUNTIME_CLASS_LABEL_KEY))
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(node_runtime_class_name) = node_runtime_class_name else {
+            return Ok(MigrationPreflight::Reject(format!(
+                "target node '{target_node_name}' does not declare '{}' label",
+                NODE_RUNTIME_CLASS_LABEL_KEY
+            )));
+        };
+
+        let runtime_class_api: Api<RuntimeClass> = Api::all(self.client.clone());
+        let Some(target_runtime_class) = runtime_class_api.get(node_runtime_class_name).await?
+        else {
+            return Ok(MigrationPreflight::Reject(format!(
+                "target node '{target_node_name}' references missing runtime class '{node_runtime_class_name}'"
+            )));
+        };
+        let target_supports_live_migration = target_runtime_class
+            .spec
+            .as_ref()
+            .map(|spec| spec.live_migration)
+            .unwrap_or(false);
+        if !target_supports_live_migration {
+            return Ok(MigrationPreflight::Reject(format!(
+                "target node '{target_node_name}' runtime class '{node_runtime_class_name}' does not support live migration"
+            )));
+        }
 
         let Some(ship_class) = self.ship_class_api.get(&ship_spec.ship_class).await? else {
             return Err(ReconcileError::ShipClassNotFound(
@@ -1011,12 +1042,12 @@ fn validate_target_architecture(ship_class: &ShipClass, target_node: &Node) -> O
     let node_name = meta.name.as_deref().unwrap_or("<unknown>");
     let Some(actual) = meta
         .labels
-        .get(NODE_ARCH_LABEL)
+        .get(NODE_ARCH_LABEL_KEY)
         .map(|arch| normalize_architecture(arch))
     else {
         return Some(format!(
             "target node '{node_name}' does not advertise '{}' label",
-            NODE_ARCH_LABEL
+            NODE_ARCH_LABEL_KEY
         ));
     };
 

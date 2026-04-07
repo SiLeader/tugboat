@@ -40,6 +40,7 @@ message ShipSpec {
   repeated ShipVolumeClaimReference volume_claim_ref = 8;
   repeated ShipVolume volumes = 9;
   optional string target_node_name = 10;
+  optional string runtime_class = 11;
 }
 
 message ShipVolumeClaimReference {

@@ -77,6 +77,7 @@ fn default_filter_plugins() -> Vec<String> {
         "Unschedulable".to_string(),
         "NetworkFit".to_string(),
         "TaintToleration".to_string(),
+        "RuntimeClassFit".to_string(),
         "ResourceFit".to_string(),
         "StorageFit".to_string(),
     ]

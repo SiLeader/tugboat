@@ -20,7 +20,7 @@ use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
-    PersistentVolumeClaim, Secret, Ship, ShipClass, StorageClass,
+    PersistentVolumeClaim, RuntimeClass, Secret, Ship, ShipClass, StorageClass,
 };
 use tugboat_resources::manifests::meta::v1::TypeMeta;
 use tugboat_resources::{Resource, StaticResource};
@@ -75,6 +75,7 @@ protobuf_serializable!(Lease);
 protobuf_serializable!(Namespace);
 protobuf_serializable!(NetworkClass);
 protobuf_serializable!(Node);
+protobuf_serializable!(RuntimeClass);
 protobuf_serializable!(Ship);
 protobuf_serializable!(ShipClass);
 protobuf_serializable!(StorageClass);

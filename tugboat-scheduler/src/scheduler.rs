@@ -18,7 +18,10 @@ use crate::framework::Framework;
 use crate::framework::SchedulingContext;
 use crate::leader_election::LeaderElector;
 use tugboat_client::{Api, TugboatClient};
-use tugboat_resources::manifests::core::v1::Ship;
+use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
+use tugboat_resources::manifests::meta::v1::Time;
+
+const CONDITION_SCHEDULING_BLOCKED: &str = "SchedulingBlocked";
 
 pub(crate) struct Scheduler {
     client: TugboatClient,
@@ -118,19 +121,49 @@ impl Scheduler {
             .as_ref()
             .map(|s| s.ship_class.as_str())
             .unwrap_or("");
+        let requested_runtime_class = ship
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.runtime_class.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
 
         let Some(ship_class) = cache.find_ship_class(class_name) else {
-            tracing::warn!(
-                "ShipClass '{class_name}' not found for ship {ship_namespace}/{ship_name}"
-            );
+            let message = format!("ShipClass '{class_name}' not found");
+            tracing::warn!("{message} for ship {ship_namespace}/{ship_name}");
+            self.update_ship_scheduling_status(
+                ship,
+                ship_namespace,
+                ship_name,
+                CONDITION_SCHEDULING_BLOCKED,
+                message,
+            )
+            .await;
             return;
         };
+
+        if let Some(runtime_class_name) = requested_runtime_class
+            && cache.find_runtime_class(runtime_class_name).is_none()
+        {
+            let message = format!("RuntimeClass '{runtime_class_name}' not found");
+            tracing::warn!("{message} for ship {ship_namespace}/{ship_name}");
+            self.update_ship_scheduling_status(
+                ship,
+                ship_namespace,
+                ship_name,
+                CONDITION_SCHEDULING_BLOCKED,
+                message,
+            )
+            .await;
+            return;
+        }
 
         let ctx = SchedulingContext {
             ship: ship.clone(),
             ship_class: ship_class.clone(),
             all_cluster_network_classes: cache.cluster_network_classes().to_vec(),
             all_network_classes: cache.network_classes().to_vec(),
+            all_runtime_classes: cache.runtime_classes().to_vec(),
             all_ships: cache.ships().to_vec(),
             all_ship_classes: cache.ship_classes().to_vec(),
             all_persistent_volume_claims: cache.persistent_volume_claims().to_vec(),
@@ -169,5 +202,108 @@ impl Scheduler {
                 );
             }
         }
+    }
+
+    async fn update_ship_scheduling_status(
+        &self,
+        ship: &Ship,
+        ship_namespace: &str,
+        ship_name: &str,
+        status: &str,
+        message: String,
+    ) {
+        let ship_api: Api<Ship> = Api::namespaced(self.client.clone(), ship_namespace);
+        let mut status_ship = ship.clone();
+        append_ship_condition(
+            &mut status_ship,
+            ShipCondition {
+                status: status.to_string(),
+                message,
+                timestamp: Some(Time::now()),
+            },
+        );
+
+        if let Err(error) = ship_api.replace_status(ship_name, status_ship).await {
+            tracing::error!(
+                "Failed to update scheduling status for ship {ship_namespace}/{ship_name}: {error}"
+            );
+        }
+    }
+}
+
+fn append_ship_condition(ship: &mut Ship, condition: ShipCondition) {
+    let status = ship.status.get_or_insert_with(ShipStatus::default);
+    upsert_ship_condition(&mut status.conditions, condition);
+}
+
+fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
+    if let Some(existing) = conditions
+        .iter_mut()
+        .find(|item| item.status == condition.status)
+    {
+        if existing.message == condition.message {
+            return;
+        }
+        *existing = condition;
+    } else {
+        conditions.push(condition);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_ship_condition_adds_new_condition_when_missing() {
+        let mut ship = Ship::default();
+
+        append_ship_condition(
+            &mut ship,
+            ShipCondition {
+                status: CONDITION_SCHEDULING_BLOCKED.to_string(),
+                message: "RuntimeClass 'kata' not found".to_string(),
+                timestamp: None,
+            },
+        );
+
+        let status = ship.status.expect("ship status should be initialized");
+        assert_eq!(status.conditions.len(), 1);
+        assert_eq!(status.conditions[0].status, CONDITION_SCHEDULING_BLOCKED);
+        assert_eq!(
+            status.conditions[0].message,
+            "RuntimeClass 'kata' not found"
+        );
+    }
+
+    #[test]
+    fn append_ship_condition_updates_existing_condition_with_same_status() {
+        let mut ship = Ship {
+            status: Some(ShipStatus {
+                conditions: vec![ShipCondition {
+                    status: CONDITION_SCHEDULING_BLOCKED.to_string(),
+                    message: "ShipClass 'small' not found".to_string(),
+                    timestamp: None,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        append_ship_condition(
+            &mut ship,
+            ShipCondition {
+                status: CONDITION_SCHEDULING_BLOCKED.to_string(),
+                message: "RuntimeClass 'kata' not found".to_string(),
+                timestamp: None,
+            },
+        );
+
+        let status = ship.status.expect("ship status should exist");
+        assert_eq!(status.conditions.len(), 1);
+        assert_eq!(
+            status.conditions[0].message,
+            "RuntimeClass 'kata' not found"
+        );
     }
 }

@@ -15,6 +15,7 @@
 mod least_allocated;
 mod network_fit;
 mod resource_fit;
+mod runtime_class_fit;
 mod storage_fit;
 mod taint_toleration;
 mod unschedulable;
@@ -27,6 +28,7 @@ pub fn create_filter_plugin(name: &str) -> Option<Box<dyn FilterPlugin>> {
         "NetworkFit" => Some(Box::new(network_fit::NetworkFitFilter)),
         "TaintToleration" => Some(Box::new(taint_toleration::TaintTolerationFilter)),
         "ResourceFit" => Some(Box::new(resource_fit::ResourceFitFilter)),
+        "RuntimeClassFit" => Some(Box::new(runtime_class_fit::RuntimeClassFitFilter)),
         "StorageFit" => Some(Box::new(storage_fit::StorageFitFilter)),
         _ => None,
     }

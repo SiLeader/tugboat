@@ -68,6 +68,7 @@ fn main() {
                 "proto/core/v1/persistent_volume.proto",
                 "proto/core/v1/persistent_volume_claim.proto",
                 "proto/core/v1/secret.proto",
+                "proto/core/v1/runtime_class.proto",
                 "proto/core/v1/storage_class.proto",
                 "proto/core/v1/ship.proto",
                 "proto/core/v1/ship_class.proto",
