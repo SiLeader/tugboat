@@ -12,6 +12,7 @@ use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::apps::v1::{
     Deployment, DeploymentStatus, ReplicaSet, ReplicaSetSpec, ShipTemplateSpec,
 };
+use tugboat_resources::manifests::core::v1::RuntimeClass;
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, OwnerReference};
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta};
 
@@ -403,6 +404,28 @@ impl TugboatController for DeploymentController {
 }
 
 impl DeploymentReconciler {
+    async fn resolve_runtime_class(
+        &self,
+        template: &ShipTemplateSpec,
+    ) -> Result<Option<RuntimeClass>, ControllerError> {
+        let runtime_class_name = template
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.runtime_class.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+
+        let Some(runtime_class_name) = runtime_class_name else {
+            return Ok(None);
+        };
+
+        let runtime_class_api: Api<RuntimeClass> = Api::all(self.client.clone());
+        runtime_class_api
+            .get(runtime_class_name)
+            .await
+            .map_err(Into::into)
+    }
+
     async fn reconcile_deleted(&self, dep: Deployment) -> Result<Action, ControllerError> {
         let namespace = dep.namespace().unwrap_or_default().to_string();
         let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), &namespace);
@@ -544,7 +567,7 @@ impl DeploymentReconciler {
         change_kind: TemplateChangeKind,
     ) -> Result<Action, ControllerError> {
         match change_kind {
-            TemplateChangeKind::InPlace => {
+            TemplateChangeKind::InPlace | TemplateChangeKind::Hotplug => {
                 let active_rs = active_replicaset(managed_replicasets);
                 let Some(active_rs) = active_rs else {
                     let hash = dep
@@ -694,7 +717,7 @@ impl DeploymentReconciler {
                     return Ok(Action::requeue(Duration::from_secs(2)));
                 }
             }
-            TemplateChangeKind::InPlace => {
+            TemplateChangeKind::InPlace | TemplateChangeKind::Hotplug => {
                 if let Some(active_rs) = active_rs {
                     let mut updated_rs = update_replicaset_for_in_place(active_rs, dep);
                     set_in_place_update_strategy(&mut updated_rs, None);
@@ -791,6 +814,7 @@ impl DeploymentReconciler {
                 name: dep_name,
             })?;
         let dep_template = dep_spec.ship_template.clone().unwrap_or_default();
+        let runtime_class = self.resolve_runtime_class(&dep_template).await?;
 
         let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), namespace);
         let replicasets = rs_api.list().await?;
@@ -809,6 +833,7 @@ impl DeploymentReconciler {
                         .and_then(|spec| spec.ship_template.clone())
                         .unwrap_or_default(),
                     &dep_template,
+                    runtime_class.as_ref(),
                 )
             })
             .unwrap_or(TemplateChangeKind::RequiresRotation);

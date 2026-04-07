@@ -28,3 +28,6 @@ tracing = { workspace = true, optional = true }
 
 [features]
 operator = ["tokio", "thiserror", "serde_json", "tracing"]
+
+[dev-dependencies]
+serde_json.workspace = true

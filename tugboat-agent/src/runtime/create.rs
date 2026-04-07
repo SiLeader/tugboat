@@ -112,6 +112,7 @@ impl RuntimeOperator {
                 namespace,
                 ship_name,
                 ship_id,
+                ship_spec.clone(),
                 fingerprints,
                 published_volumes,
             ),

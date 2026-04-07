@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod hotplug;
-pub mod migrate;
-#[cfg(feature = "operator")]
-pub mod operator;
-pub mod run;
-pub mod status;
-pub mod stop;
+use crate::runtime::RuntimeOperator;
+use crate::runtime::error::RuntimeError;
+use tugboat_vm_runtime_interface::hotplug::VmHotplugRequest;
+
+impl RuntimeOperator {
+    pub(crate) async fn hotplug(&self, request: VmHotplugRequest) -> Result<(), RuntimeError> {
+        self.operator.hotplug(request).await?;
+        Ok(())
+    }
+}

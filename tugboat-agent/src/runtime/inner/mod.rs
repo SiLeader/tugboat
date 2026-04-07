@@ -16,11 +16,13 @@ mod status;
 
 use crate::csi::PublishedVolume;
 use crate::reconciler::ShipFingerprints;
+use tugboat_resources::manifests::core::v1::ShipSpec;
 
 pub(crate) struct Runtime {
     namespace: String,
     ship_name: String,
     id: String,
+    ship_spec: ShipSpec,
     fingerprints: ShipFingerprints,
     published_volumes: Vec<PublishedVolume>,
 }
@@ -30,6 +32,7 @@ impl Runtime {
         namespace: String,
         ship_name: String,
         id: String,
+        ship_spec: ShipSpec,
         fingerprints: ShipFingerprints,
         published_volumes: Vec<PublishedVolume>,
     ) -> Self {
@@ -37,13 +40,22 @@ impl Runtime {
             namespace,
             ship_name,
             id,
+            ship_spec,
             fingerprints,
             published_volumes,
         }
     }
 
+    pub(super) fn ship_spec(&self) -> &ShipSpec {
+        &self.ship_spec
+    }
+
     pub(super) fn into_published_volumes(self) -> Vec<PublishedVolume> {
         self.published_volumes
+    }
+
+    pub(super) fn published_volumes(&self) -> &[PublishedVolume] {
+        &self.published_volumes
     }
 
     pub(super) fn matches_spec_fingerprint(&self, fingerprint: &str) -> bool {
@@ -60,5 +72,16 @@ impl Runtime {
 
     pub(super) fn update_materialized_volume_fingerprint(&mut self, fingerprint: String) {
         self.fingerprints.materialized_volume = fingerprint;
+    }
+
+    pub(super) fn update_runtime_state(
+        &mut self,
+        ship_spec: ShipSpec,
+        fingerprints: ShipFingerprints,
+        published_volumes: Vec<PublishedVolume>,
+    ) {
+        self.ship_spec = ship_spec;
+        self.fingerprints = fingerprints;
+        self.published_volumes = published_volumes;
     }
 }
