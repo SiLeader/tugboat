@@ -33,10 +33,11 @@ impl FilterPlugin for RuntimeClassFitFilter {
             .and_then(|spec| spec.runtime_class.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty());
+        let requires_live_migration = ship_requires_live_migration(ctx);
 
-        let Some(requested_runtime_class) = requested_runtime_class else {
+        if requested_runtime_class.is_none() && !requires_live_migration {
             return FilterResult::Accept;
-        };
+        }
 
         let Some(node_runtime_class_name) = node_runtime_class_name(node) else {
             return FilterResult::Reject(format!(
@@ -45,7 +46,9 @@ impl FilterPlugin for RuntimeClassFitFilter {
             ));
         };
 
-        if node_runtime_class_name != requested_runtime_class {
+        if let Some(requested_runtime_class) = requested_runtime_class
+            && node_runtime_class_name != requested_runtime_class
+        {
             return FilterResult::Reject(format!(
                 "node runtime class '{}' does not match requested runtime class '{}'",
                 node_runtime_class_name, requested_runtime_class
@@ -59,7 +62,7 @@ impl FilterPlugin for RuntimeClassFitFilter {
             ));
         };
 
-        if ship_requires_live_migration(ctx)
+        if requires_live_migration
             && !runtime_class
                 .spec
                 .as_ref()
@@ -131,6 +134,28 @@ mod tests {
             ship(Some("kata"), Some("node-b")),
             vec![runtime_class("kata", false)],
         );
+        let node = node("node-a", Some("kata"));
+
+        assert!(matches!(
+            filter.filter(&ctx, &node),
+            FilterResult::Reject(_)
+        ));
+    }
+
+    #[test]
+    fn accepts_migrating_ship_without_requested_runtime_class_when_node_supports_live_migration() {
+        let filter = RuntimeClassFitFilter;
+        let ctx = scheduling_context(ship(None, Some("node-b")), vec![runtime_class("kata", true)]);
+        let node = node("node-a", Some("kata"));
+
+        assert!(matches!(filter.filter(&ctx, &node), FilterResult::Accept));
+    }
+
+    #[test]
+    fn rejects_migrating_ship_without_requested_runtime_class_when_node_disables_live_migration() {
+        let filter = RuntimeClassFitFilter;
+        let ctx =
+            scheduling_context(ship(None, Some("node-b")), vec![runtime_class("kata", false)]);
         let node = node("node-a", Some("kata"));
 
         assert!(matches!(

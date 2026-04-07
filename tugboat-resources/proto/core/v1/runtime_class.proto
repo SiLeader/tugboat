@@ -31,10 +31,10 @@ message RuntimeClassSpec {
 }
 
 message RuntimeHotplug {
-  HotplugCapabilities cpu = 2;
-  HotplugCapabilities memory = 3;
-  HotplugCapabilities nic = 4;
-  HotplugCapabilities storage = 5;
+  HotplugCapabilities cpu = 1;
+  HotplugCapabilities memory = 2;
+  HotplugCapabilities nic = 3;
+  HotplugCapabilities storage = 4;
 }
 
 message HotplugCapabilities {
