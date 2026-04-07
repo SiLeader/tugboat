@@ -19,7 +19,7 @@ use tugboat_vm_runtime_interface::hotplug::{
 };
 use tugboat_vm_runtime_interface::run::{VmNetworkConfig, VmVolumeConfig, VmVolumeKind};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct HotplugBaseline {
     pub current_cpu_cores: u64,
     pub current_memory_bytes: u64,
@@ -27,7 +27,7 @@ pub(crate) struct HotplugBaseline {
     pub current_volume_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct HotplugDesired {
     pub desired_cpu_cores: u64,
     pub desired_memory_bytes: u64,
@@ -36,7 +36,7 @@ pub(crate) struct HotplugDesired {
     pub volumes_added: Vec<VmVolumeConfig>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct HotplugPlan {
     pub hotplug_req: Option<VmHotplugRequest>,
     pub has_unsupported_changes: bool,
@@ -282,6 +282,61 @@ fn sanitize_identifier(value: &str) -> String {
         }
     }
     out.trim_matches('-').to_string()
+}
+
+impl std::fmt::Debug for HotplugBaseline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HotplugBaseline")
+            .field("current_cpu_cores", &self.current_cpu_cores)
+            .field("current_memory_bytes", &self.current_memory_bytes)
+            .field("current_nic_ids_len", &self.current_nic_ids.len())
+            .field("current_volume_ids_len", &self.current_volume_ids.len())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for HotplugDesired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HotplugDesired")
+            .field("desired_cpu_cores", &self.desired_cpu_cores)
+            .field("desired_memory_bytes", &self.desired_memory_bytes)
+            .field("memory_size", &self.memory_size)
+            .field("nics_added_len", &self.nics_added.len())
+            .field("volumes_added_len", &self.volumes_added.len())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for HotplugPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Only expose high-level info about the hotplug request and redact IDs.
+        let (nics_added_len, nics_removed_len, volumes_added_len, volumes_removed_len) =
+            if let Some(req) = &self.hotplug_req {
+                (
+                    req.nics_added.len(),
+                    req.nics_removed.len(),
+                    req.volumes_added.len(),
+                    req.volumes_removed.len(),
+                )
+            } else {
+                (0, 0, 0, 0)
+            };
+        f.debug_struct("HotplugPlan")
+            .field("has_hotplug_req", &self.hotplug_req.is_some())
+            .field("has_unsupported_changes", &self.has_unsupported_changes)
+            .field("hotplug_req_nics_added_len", &nics_added_len)
+            .field("hotplug_req_nics_removed_len", &nics_removed_len)
+            .field("hotplug_req_volumes_added_len", &volumes_added_len)
+            .field("hotplug_req_volumes_removed_len", &volumes_removed_len)
+            .field("actual_cpu_cores", &self.actual_allocation.cpu_cores)
+            .field("actual_memory_size", &self.actual_allocation.memory_size)
+            .field("actual_nic_ids_len", &self.actual_allocation.nic_ids.len())
+            .field(
+                "actual_volume_ids_len",
+                &self.actual_allocation.volume_ids.len(),
+            )
+            .finish()
+    }
 }
 
 #[cfg(test)]
