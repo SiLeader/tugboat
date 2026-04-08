@@ -120,6 +120,40 @@ spec:
         secretName: app-secret
 ```
 
+### Fleet
+
+複数の Ship タイプがプライベートネットワークを共有するグループを定義するリソースです。
+Namespaced リソースです（`apps/v1`）。
+
+```yaml
+apiVersion: apps/v1
+kind: Fleet
+metadata:
+  namespace: default
+  name: my-fleet
+spec:
+  networkClassName: my-network-class
+  components:
+    - name: frontend
+      replicas: 2
+      shipTemplate:
+        metadata:
+          labels:
+            role: frontend
+        spec:
+          image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+          shipClass: lightweight
+    - name: backend
+      replicas: 3
+      shipTemplate:
+        metadata:
+          labels:
+            role: backend
+        spec:
+          image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+          shipClass: lightweight
+```
+
 ### Deployment
 
 同一構成の Ship の集合をローリングアップデート付きで管理します。
@@ -275,6 +309,7 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [x] ReplicaSet コントローラ (Shipの規定数維持)
     - [x] Deployment コントローラ (ReplicaSetのローリングアップデート管理)
     - [x] Fleet コントローラ
+- [x] Fleet リソース定義とAPI (`apps/v1`)
 - [x] ReplicaSet リソース定義とAPI (`apps/v1`)
 - [x] Deployment リソース定義とAPI (`apps/v1`)
 - [x] ConfigMap
@@ -286,13 +321,13 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [x] マイグレーション失敗時の確実な復旧と明示的なエラー報告
     - [x] ノード間でブリッジ/インターフェース/MACを固定することによるゲスト/ネットワーク継続性
     - [x] タイムアウト検出と自動QEMUキャンセル (Pending: 2分、Migrating: 30分)
-    - [x] ShipClassごとのQEMUマイグレーションパラメータ設定 (帯域幅、ダウンタイム、xbzrleキャッシュ)
+    - [x] ShipClassごとのQEMUマイグレーションパラメータ設定 (帯域幅、ダウンタイム、xbzrleキャッシュ、ポストコピー)
     - [x] スケジューラの StorageFit プラグインによる非 RWX ボリュームを持つ Ship のノード除外
 - [x] RuntimeClass
     - [x] リソース定義とAPI (`core/v1`)
     - [x] Ship の `spec.runtimeClass` フィールド
     - [x] スケジューラの `RuntimeClassFit` プラグイン（ライブマイグレーション対応チェック）
-    - [ ] RuntimeClass フラグによるホットプラグ操作の制御
+    - [x] RuntimeClass フラグによるホットプラグ操作の制御
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
 
