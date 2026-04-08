@@ -90,7 +90,21 @@ async fn apply_cpu_hotplug(qmp: &mut QmpClient, target_cores: u64) -> crate::Res
                     .await?;
             }
         }
-        std::cmp::Ordering::Less => {
+            let mut cores_to_add = target_cores - current_cores;
+            for slot in absent.iter() {
+                if cores_to_add == 0 {
+                    break;
+                }
+                let vcpus = slot_u64(slot, "vcpus-count").unwrap_or(1);
+                if vcpus <= cores_to_add {
+                    qmp.execute("device_add", Some(cpu_add_arguments(slot)?))
+                        .await?;
+                    cores_to_add -= vcpus;
+                }
+            }
+            if cores_to_add > 0 {
+                 return Err(crate::Error::Qmp("unable to satisfy requested CPU count exactly with available slots".into()));
+            }
             let diff = (current_cores - target_cores) as usize;
             if present.len() < diff {
                 return Err(crate::Error::Qmp(format!(
