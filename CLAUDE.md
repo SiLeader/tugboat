@@ -35,7 +35,8 @@ As a final verification before merging or releasing, run the following commands 
 
 Packages: `tugboat-resources`, `tugboat-apiserver`, `tugboat-agent`, `tugboat-runtime`,
 `tugboat-resource-store`, `tugboat-client`, `tugboat-cli`, `tugboat-vm-image`,
-`tugboat-vm-runtime-interface`, `tugboat-cni-operator`, `tugboat-csi-operator`, `tugboat-scheduler`
+`tugboat-vm-runtime-interface`, `tugboat-cni-operator`, `tugboat-csi-operator`, `tugboat-scheduler`,
+`tugboat-controller-manager`
 
 ## Architecture
 
@@ -54,9 +55,15 @@ tugboat-agent (node reconciler)
   ├─ tugboat-resources
   ├─ tugboat-vm-image (OCI image handling)
   ├─ tugboat-vm-runtime-interface (runtime bridge)
-  └─ tugboat-cni-operator (CNI networking)
+  ├─ tugboat-cni-operator (CNI networking)
+  └─ tugboat-csi-operator (CSI storage)
 
-tugboat-scheduler (pod scheduler)
+tugboat-controller-manager (workload + storage controllers)
+  ├─ tugboat-client
+  ├─ tugboat-csi-operator
+  └─ tugboat-resources
+
+tugboat-scheduler (ship scheduler)
   ├─ tugboat-client
   └─ tugboat-resources
 
@@ -73,6 +80,12 @@ tugboat-runtime (QEMU executor)
 All API types are defined as protobuf in `tugboat-resources/proto/` and compiled via `build.rs`
 using prost-build. The build script applies serde + optional utoipa (OpenAPI) derives.
 
+API groups and their resources:
+- **core/v1**: Ship, ShipClass, Node, Namespace, PersistentVolume, PersistentVolumeClaim,
+  NetworkClass, ClusterNetworkClass, Secret, RuntimeClass, StorageClass, ConfigMap
+- **apps/v1**: Deployment, ReplicaSet, Fleet
+- **coordination/v1**: Lease
+
 Resources implement traits via the `apply_resource!` macro in `tugboat-resources/src/manifests/mod.rs`:
 - `StaticResource` – group, version, kind, plural, singular
 - `ClusterScopedResource` or `NamespacedResource` – scope marker
@@ -81,31 +94,52 @@ Resources implement traits via the `apply_resource!` macro in `tugboat-resources
 
 Validators are applied via `apply_validators!` macro (e.g., `NameValidator`, `NamespaceProhibitedValidator`).
 
-**Kubernetes concept mapping:** Pod→Ship, Deployment→Fleet, Container image→VM image (OCI), Dockerfile→Imagefile
+**Kubernetes concept mapping:** Pod→Ship, Deployment→Deployment, ReplicaSet→ReplicaSet, DaemonSet→Fleet, Container image→VM image (OCI), Dockerfile→Imagefile
 
 ### API Server (tugboat-apiserver)
 
-Endpoints live in `tugboat-apiserver/src/endpoints/v1_core/`. Each resource has separate files for
-create, list, and read operations. Registration happens in `endpoints/v1_core/mod.rs` →
-`endpoints/mod.rs` → mounted under the configured path in `lib.rs`.
+Endpoints live in `tugboat-apiserver/src/endpoints/` organized by API group:
+- `v1_core/` – core/v1 resources
+- `v1_apps/` – apps/v1 resources (Deployment, ReplicaSet, Fleet)
+- `v1_coordination/` – coordination/v1 resources (Lease)
+
+Each resource has separate files for create, list, read, and other operations.
+All resources are registered centrally in `endpoints/resource_registry.rs`, which wires routes and exposes discovery verbs.
 
 Key patterns:
-- **Cluster-scoped resources** (ShipClass, Namespace, Node, PersistentVolume, ClusterNetworkClass): route pattern `/v1/{plural}` and `/v1/{plural}/{name}`
-- **Namespaced resources** (Ship, PersistentVolumeClaim, Secret, NetworkClass, Lease): route pattern `/v1/namespaces/{namespace}/{plural}` and `/v1/namespaces/{namespace}/{plural}/{name}`, plus `/v1/{plural}` for list-all
+- **Cluster-scoped resources** (ShipClass, Namespace, Node, PersistentVolume, ClusterNetworkClass, RuntimeClass, StorageClass): route pattern `/v1/{plural}` and `/v1/{plural}/{name}`
+- **Namespaced resources** (Ship, PersistentVolumeClaim, Secret, NetworkClass, ConfigMap, Lease, Deployment, ReplicaSet, Fleet): route pattern `/v1/namespaces/{namespace}/{plural}` and `/v1/namespaces/{namespace}/{plural}/{name}`, plus `/v1/{plural}` for list-all
 - Macros in `endpoints/utils.rs`: `extract_object_meta!`, `check_namespace_absent!`, `create_object!`
-- Generic handlers in `endpoints/v1_core/cluster_resources.rs` for cluster-scoped CRUD
 - `ApiOperator` (in `operator.rs`) wraps `ResourceStore` + `NameGenerator`
+
+### Controller Manager (tugboat-controller-manager)
+
+Runs multiple reconciliation controllers as concurrent tasks:
+- **NetworkClassStatusController** – propagates CNI plugin readiness from Nodes to NetworkClass status
+- **PvcProvisionerController** – provisions CSI-backed PersistentVolumes for PVCs
+- **FleetController** – manages Fleet workloads (DaemonSet-equivalent), creates ReplicaSets per component
+- **DeploymentController** – manages Deployment rollouts via ReplicaSets
+- **ReplicaSetController** – manages individual Ship replicas for a ReplicaSet
+- **PersistentVolumeCleanupController** – deletes CSI-backed PVs when released
+
+Config path: `/etc/tugboat/controller-manager/config.toml`
 
 ### Adding a New API Resource
 
-1. Define protobuf in `tugboat-resources/proto/core/v1/` and add to `build.rs` compile list
+1. Define protobuf in `tugboat-resources/proto/{group}/v1/` and add to `build.rs` compile list
 2. Register with `apply_resource!` and `apply_validators!` in `tugboat-resources/src/manifests/mod.rs`
-3. Create endpoint files (create, list, read) in `tugboat-apiserver/src/endpoints/v1_core/`
-4. Register handlers in `tugboat-apiserver/src/endpoints/v1_core/mod.rs`
+3. Create endpoint files (create, list, read, etc.) in `tugboat-apiserver/src/endpoints/v1_{group}/`
+4. Register the resource in `tugboat-apiserver/src/endpoints/resource_registry.rs`
+5. Add the resource type to `tugboat-resource-store/src/serializer/mod.rs` via `protobuf_serializable!`
 
 ### Configuration
 
-All components use TOML config files. Examples in `sample-configs/`. Default paths: `/etc/tugboat/{component}/config.toml`.
+All components use TOML config files. Examples in `sample-configs/`. Default paths:
+- `/etc/tugboat/apiserver/config.toml`
+- `/etc/tugboat/agent/config.toml`
+- `/etc/tugboat/scheduler/config.toml`
+- `/etc/tugboat/controller-manager/config.toml`
+- `/etc/tugboat/runtime/config.toml`
 
 ### Editing guidance
 

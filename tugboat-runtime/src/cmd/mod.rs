@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod create;
+pub mod hotplug;
 pub mod migrate;
 pub mod migrate_cancel;
 pub mod migration_status;

@@ -15,6 +15,7 @@
 mod create;
 mod delete;
 pub(crate) mod error;
+mod hotplug;
 mod inner;
 mod migration;
 mod start;
@@ -26,9 +27,13 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+use tugboat_resources::manifests::core::v1::ShipSpec;
 use tugboat_vm_image::VmImageRegistry;
 use tugboat_vm_runtime_interface::operator::VmRuntimeOperator;
+
+use crate::csi::PublishedVolume;
+use crate::reconciler::ShipFingerprints;
 
 #[derive(Clone)]
 pub(crate) struct RuntimeOperator {
@@ -100,14 +105,60 @@ impl RuntimeOperator {
         namespace: String,
         ship_name: String,
         id: String,
-        fingerprints: crate::reconciler::ShipFingerprints,
-        published_volumes: Vec<crate::csi::PublishedVolume>,
+        ship_spec: ShipSpec,
+        fingerprints: ShipFingerprints,
+        published_volumes: Vec<PublishedVolume>,
     ) {
         let mut children = self.children.write().await;
         children.insert(
             id.clone(),
-            Runtime::new(namespace, ship_name, id, fingerprints, published_volumes),
+            Runtime::new(
+                namespace,
+                ship_name,
+                id,
+                ship_spec,
+                fingerprints,
+                published_volumes,
+            ),
         );
+    }
+
+    pub(crate) async fn current_ship_spec(&self, id: &str) -> Option<ShipSpec> {
+        self.children
+            .read()
+            .await
+            .get(id)
+            .map(|runtime| runtime.ship_spec().clone())
+    }
+
+    pub(crate) async fn current_published_volumes(&self, id: &str) -> Option<Vec<PublishedVolume>> {
+        self.children
+            .read()
+            .await
+            .get(id)
+            .map(|runtime| runtime.published_volumes().to_vec())
+    }
+
+    pub(crate) async fn update_runtime_state(
+        &self,
+        id: &str,
+        ship_spec: ShipSpec,
+        fingerprints: ShipFingerprints,
+        published_volumes: Vec<PublishedVolume>,
+    ) {
+        if let Some(runtime) = self.children.write().await.get_mut(id) {
+            runtime.update_runtime_state(ship_spec, fingerprints, published_volumes);
+        }
+    }
+
+    /// Returns the per-ship hotplug lock, which must be held for the duration of
+    /// any hotplug operation to prevent concurrent modifications for the same ship.
+    pub(crate) async fn get_hotplug_lock(&self, id: &str) -> Option<Arc<Mutex<()>>> {
+        self.children
+            .read()
+            .await
+            .get(id)
+            .map(|runtime| runtime.hotplug_lock())
     }
 }
 

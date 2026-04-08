@@ -89,6 +89,14 @@ message ShipStatus {
   repeated ShipCondition conditions = 1;
   repeated ShipIp ips = 2;
   optional ShipMigrationStatus migration = 3;
+  optional ShipActualAllocation actual_allocation = 4;
+}
+
+message ShipActualAllocation {
+  optional uint64 cpu_cores = 1;
+  optional string memory_size = 2;
+  repeated string nic_ids = 3;
+  repeated string volume_ids = 4;
 }
 
 message ShipMigrationStatus {

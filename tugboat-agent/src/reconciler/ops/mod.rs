@@ -15,6 +15,7 @@
 pub(crate) mod add;
 pub(crate) mod add_helpers;
 pub(crate) mod delete;
+pub(crate) mod hotplug;
 pub(crate) mod migration;
 pub(crate) mod modify;
 pub(crate) mod secret_resolver;

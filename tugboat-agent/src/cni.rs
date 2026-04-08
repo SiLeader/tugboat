@@ -52,10 +52,19 @@ impl CniWrapper {
         ship_id: &str,
         network_classes: Vec<NetworkClassInfo>,
     ) -> Vec<PlannedNetworkConfig> {
+        self.create_network_configs_from_index(ship_id, 0, network_classes)
+    }
+
+    pub(crate) fn create_network_configs_from_index(
+        &self,
+        ship_id: &str,
+        start_index: usize,
+        network_classes: Vec<NetworkClassInfo>,
+    ) -> Vec<PlannedNetworkConfig> {
         debug!("Create network configuration plans for '{ship_id}'");
         let mut planned = Vec::new();
-        for (idx, network_class) in network_classes.into_iter().enumerate() {
-            let iface_name = format!("eth{}", idx);
+        for (offset, network_class) in network_classes.into_iter().enumerate() {
+            let iface_name = format!("eth{}", start_index + offset);
             let plan = Self::plan_single(ship_id, iface_name, network_class);
             planned.push(plan);
         }
@@ -127,7 +136,7 @@ impl CniWrapper {
         Ok(())
     }
 
-    async fn add_single(
+    pub(crate) async fn add_single(
         &self,
         ship_id: &str,
         config: PlannedNetworkConfig,
@@ -139,7 +148,7 @@ impl CniWrapper {
         Ok(config.vm)
     }
 
-    async fn del_single(
+    pub(crate) async fn del_single(
         &self,
         ship_id: &str,
         config: PlannedNetworkConfig,

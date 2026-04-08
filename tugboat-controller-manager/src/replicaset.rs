@@ -1,4 +1,5 @@
 use crate::base::TugboatController;
+use crate::change_classifier::{TemplateChangeKind, classify_template_change};
 use crate::error::ControllerError;
 use rand::{RngExt, rng};
 use std::collections::HashMap;
@@ -7,7 +8,7 @@ use tracing::debug;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::apps::v1::{ReplicaSet, ReplicaSetStatus, ShipTemplateSpec};
-use tugboat_resources::manifests::core::v1::{Ship, ShipSpec};
+use tugboat_resources::manifests::core::v1::{RuntimeClass, Ship, ShipSpec};
 use tugboat_resources::manifests::meta::v1::OwnerReference;
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta, ShipMigrationExt};
 
@@ -116,12 +117,12 @@ fn generate_suffix() -> String {
 }
 
 fn needs_spec_update(template_spec: &ShipSpec, ship_spec: &ShipSpec) -> bool {
-    template_spec.image != ship_spec.image
-        || template_spec.ship_class != ship_spec.ship_class
-        || template_spec.network_class_ref != ship_spec.network_class_ref
-        || template_spec.uefi != ship_spec.uefi
-        || template_spec.volume_claim_ref != ship_spec.volume_claim_ref
-        || template_spec.volumes != ship_spec.volumes
+    let mut normalized_ship_spec = ship_spec.clone();
+    normalized_ship_spec.node_name = template_spec.node_name.clone();
+    normalized_ship_spec.scheduler_name = template_spec.scheduler_name.clone();
+    normalized_ship_spec.target_node_name = template_spec.target_node_name.clone();
+
+    template_spec != &normalized_ship_spec
 }
 
 fn ship_is_ready(ship: &Ship) -> bool {
@@ -150,13 +151,13 @@ fn build_replicaset_status(owned_ships: &[&Ship]) -> ReplicaSetStatus {
 }
 
 fn apply_template_spec(ship: &mut Ship, template_spec: &ShipSpec) {
-    let ship_spec = ship.spec.get_or_insert_with(ShipSpec::default);
-    ship_spec.image = template_spec.image.clone();
-    ship_spec.ship_class = template_spec.ship_class.clone();
-    ship_spec.network_class_ref = template_spec.network_class_ref.clone();
-    ship_spec.uefi = template_spec.uefi;
-    ship_spec.volume_claim_ref = template_spec.volume_claim_ref.clone();
-    ship_spec.volumes = template_spec.volumes.clone();
+    let current_spec = ship.spec.clone().unwrap_or_default();
+    ship.spec = Some(ShipSpec {
+        node_name: current_spec.node_name,
+        scheduler_name: current_spec.scheduler_name,
+        target_node_name: current_spec.target_node_name,
+        ..template_spec.clone()
+    });
 }
 
 fn update_strategy(rs: &ReplicaSet) -> Option<&str> {
@@ -164,6 +165,27 @@ fn update_strategy(rs: &ReplicaSet) -> Option<&str> {
         .as_ref()
         .and_then(|meta| meta.annotations.get(UPDATE_STRATEGY_ANNOTATION))
         .map(String::as_str)
+}
+
+async fn resolve_runtime_class(
+    client: &TugboatClient,
+    template: Option<&ShipTemplateSpec>,
+) -> Result<Option<RuntimeClass>, ControllerError> {
+    let runtime_class_name = template
+        .and_then(|template| template.spec.as_ref())
+        .and_then(|spec| spec.runtime_class.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+
+    let Some(runtime_class_name) = runtime_class_name else {
+        return Ok(None);
+    };
+
+    let runtime_class_api: Api<RuntimeClass> = Api::all(client.clone());
+    runtime_class_api
+        .get(runtime_class_name)
+        .await
+        .map_err(Into::into)
 }
 
 async fn delete_ship_ignore_not_found(
@@ -278,12 +300,35 @@ impl ReplicaSetReconciler {
             .and_then(|template| template.spec.as_ref())
             .cloned()
             .unwrap_or_default();
+        let runtime_class =
+            resolve_runtime_class(&self.client, rs_spec.ship_template.as_ref()).await?;
+        let desired_template = rs_spec.ship_template.clone().unwrap_or_default();
+        let change_kind = matching_ships
+            .iter()
+            .find_map(|ship| ship.spec.as_ref())
+            .map(|current_spec| {
+                classify_template_change(
+                    &ShipTemplateSpec {
+                        spec: Some(current_spec.clone()),
+                        ..Default::default()
+                    },
+                    &desired_template,
+                    runtime_class.as_ref(),
+                )
+            })
+            .unwrap_or(TemplateChangeKind::NoChange);
 
-        let migration_blocks_update = matching_ships
+        let migration_blocks_update = matches!(
+            change_kind,
+            TemplateChangeKind::InPlace | TemplateChangeKind::Hotplug
+        ) && matching_ships
             .iter()
             .any(|ship| ship_needs_update(ship, &template_spec) && ship.has_active_migration());
 
-        if matching_ships.iter().any(|ship| {
+        if matches!(
+            change_kind,
+            TemplateChangeKind::InPlace | TemplateChangeKind::Hotplug
+        ) && matching_ships.iter().any(|ship| {
             ship_needs_update(ship, &template_spec)
                 && !ship.has_active_migration()
                 && !ship_is_ready(ship)
@@ -291,49 +336,77 @@ impl ReplicaSetReconciler {
             return Ok(Action::requeue(Duration::from_secs(5)));
         }
 
-        if update_strategy(&rs) == Some(UPDATE_STRATEGY_ALL) {
-            let mut updated_any = false;
-            for ship in &matching_ships {
-                if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
-                    continue;
+        match change_kind {
+            TemplateChangeKind::NoChange => {}
+            TemplateChangeKind::RequiresRotation => {
+                if update_strategy(&rs) == Some(UPDATE_STRATEGY_ALL) {
+                    let mut updated_any = false;
+                    for ship in &matching_ships {
+                        if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
+                            continue;
+                        }
+                        let Some(name) = ship.name() else {
+                            continue;
+                        };
+                        let mut updated = (*ship).clone();
+                        apply_template_spec(&mut updated, &template_spec);
+                        ship_api.replace(name, updated).await?;
+                        updated_any = true;
+                    }
+                    if updated_any {
+                        return Ok(Action::requeue(Duration::from_secs(5)));
+                    }
                 }
-                let Some(name) = ship.name() else {
-                    continue;
-                };
-                let mut updated = (*ship).clone();
-                apply_template_spec(&mut updated, &template_spec);
-                ship_api.replace(name, updated).await?;
-                updated_any = true;
-            }
-            if updated_any {
-                return Ok(Action::requeue(Duration::from_secs(5)));
-            }
-            if migration_blocks_update {
-                return Ok(Action::requeue(Duration::from_secs(5)));
-            }
-        }
 
-        let mut updated_any = false;
-        for ship in &matching_ships {
-            if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
-                continue;
+                let mut updated_any = false;
+                for ship in &matching_ships {
+                    if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
+                        continue;
+                    }
+                    let Some(name) = ship.name() else {
+                        continue;
+                    };
+                    let mut updated = (*ship).clone();
+                    apply_template_spec(&mut updated, &template_spec);
+                    ship_api.replace(name, updated).await?;
+                    updated_any = true;
+                    break;
+                }
+
+                if updated_any {
+                    return Ok(Action::requeue(Duration::from_secs(5)));
+                }
             }
-            let Some(name) = ship.name() else {
-                continue;
-            };
-            let mut updated = (*ship).clone();
-            apply_template_spec(&mut updated, &template_spec);
-            ship_api.replace(name, updated).await?;
-            updated_any = true;
-            break;
-        }
+            TemplateChangeKind::InPlace | TemplateChangeKind::Hotplug => {
+                let update_all = update_strategy(&rs) == Some(UPDATE_STRATEGY_ALL)
+                    || change_kind == TemplateChangeKind::Hotplug;
+                let mut updated_any = false;
 
-        if updated_any {
-            return Ok(Action::requeue(Duration::from_secs(5)));
-        }
+                for ship in &matching_ships {
+                    if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
+                        continue;
+                    }
+                    let Some(name) = ship.name() else {
+                        continue;
+                    };
 
-        if migration_blocks_update {
-            return Ok(Action::requeue(Duration::from_secs(5)));
+                    let mut updated = (*ship).clone();
+                    apply_template_spec(&mut updated, &template_spec);
+                    ship_api.patch(name, &updated).await?;
+                    updated_any = true;
+
+                    if !update_all {
+                        break;
+                    }
+                }
+
+                if updated_any {
+                    return Ok(Action::requeue(Duration::from_secs(5)));
+                }
+                if migration_blocks_update {
+                    return Ok(Action::requeue(Duration::from_secs(5)));
+                }
+            }
         }
 
         let new_status = build_replicaset_status(&matching_ships);
@@ -765,10 +838,20 @@ mod tests {
     }
 
     #[test]
+    fn runtime_class_change_requires_update() {
+        let template_spec = base_ship_spec();
+        let mut ship_spec = template_spec.clone();
+        ship_spec.runtime_class = Some("kata".to_string());
+
+        assert!(needs_spec_update(&template_spec, &ship_spec));
+    }
+
+    #[test]
     fn applying_template_spec_preserves_scheduling_fields() {
         let template_spec = ShipSpec {
             image: "example.com/images/demo:v2".to_string(),
             ship_class: "large".to_string(),
+            runtime_class: Some("kata".to_string()),
             ..Default::default()
         };
         let mut ship = Ship {
@@ -788,6 +871,7 @@ mod tests {
 
         assert_eq!(updated.image, "example.com/images/demo:v2");
         assert_eq!(updated.ship_class, "large");
+        assert_eq!(updated.runtime_class.as_deref(), Some("kata"));
         assert_eq!(updated.node_name.as_deref(), Some("node-a"));
         assert_eq!(updated.scheduler_name.as_deref(), Some("scheduler"));
         assert_eq!(updated.target_node_name.as_deref(), Some("node-b"));

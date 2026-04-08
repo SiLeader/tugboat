@@ -122,6 +122,40 @@ spec:
         secretName: app-secret
 ```
 
+### Fleet
+
+Groups multiple Ship types that share a private network.
+This is a namespaced resource (`apps/v1`).
+
+```yaml
+apiVersion: apps/v1
+kind: Fleet
+metadata:
+  namespace: default
+  name: my-fleet
+spec:
+  networkClassName: my-network-class
+  components:
+    - name: frontend
+      replicas: 2
+      shipTemplate:
+        metadata:
+          labels:
+            role: frontend
+        spec:
+          image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+          shipClass: lightweight
+    - name: backend
+      replicas: 3
+      shipTemplate:
+        metadata:
+          labels:
+            role: backend
+        spec:
+          image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+          shipClass: lightweight
+```
+
 ### Deployment
 
 Manages a set of identical Ships with rolling-update support.
@@ -276,6 +310,7 @@ For a manual multi-node validation flow:
     - [x] ReplicaSet controller (maintaining the prescribed number of Ships)
     - [x] Deployment controller (rolling-update management of ReplicaSets)
     - [x] Fleet controller
+- [x] Fleet resource definition and API (`apps/v1`)
 - [x] ReplicaSet resource definition and API (`apps/v1`)
 - [x] Deployment resource definition and API (`apps/v1`)
 - [x] ConfigMap
@@ -287,13 +322,13 @@ For a manual multi-node validation flow:
     - [x] Reliable recovery and explicit error reporting on migration failure
     - [x] Guest/network continuity via deterministic bridge/interface/MAC identity across nodes
     - [x] Timeout detection with automatic QEMU cancel (Pending: 2 min, Migrating: 30 min)
-    - [x] Per-ShipClass configurable QEMU migration parameters (bandwidth, downtime, xbzrle cache)
+    - [x] Per-ShipClass configurable QEMU migration parameters (bandwidth, downtime, xbzrle cache, postcopy)
     - [x] Scheduler StorageFit plugin rejects nodes for Ships with non-RWX volumes
 - [x] RuntimeClass
     - [x] Resource definition and API (`core/v1`)
     - [x] `spec.runtimeClass` field on Ship
     - [x] Scheduler `RuntimeClassFit` plugin (live migration capability check)
-    - [ ] Hotplug operations gated by RuntimeClass flags
+    - [x] Hotplug operations gated by RuntimeClass flags
 - [ ] RBAC / ServiceAccount
 - [ ] CRD
 

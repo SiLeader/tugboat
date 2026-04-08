@@ -220,6 +220,7 @@ impl ShipReconciler {
                     namespace,
                     name.clone(),
                     ship_id.clone(),
+                    ship_spec.clone(),
                     runtime_fingerprints,
                     published_volumes,
                 )
@@ -472,7 +473,7 @@ impl ShipReconciler {
         Ok(())
     }
 
-    async fn setup_volumes(
+    pub(super) async fn setup_volumes(
         &self,
         ship_id: &str,
         namespace: &str,
