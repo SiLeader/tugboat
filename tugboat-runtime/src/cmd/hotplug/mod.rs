@@ -246,7 +246,19 @@ async fn apply_nic_add(qmp: &mut QmpClient, nic: &VmNetworkConfig) -> crate::Res
     .await?;
     qmp.execute(
         "device_add",
+    qmp.execute(
+        "netdev_add",
+        Some(netdev_add_arguments(&key, &nic.iface_name)),
+    )
+    .await?;
+    if let Err(err) = qmp.execute(
+        "device_add",
         Some(nic_device_add_arguments(&key, &nic.mac_address)),
+    )
+    .await {
+        let _ = qmp.execute("netdev_del", Some(json!({ "id": format!("net-{key}") }))).await;
+        return Err(err);
+    }
     )
     .await?;
     Ok(())
