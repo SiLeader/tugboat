@@ -15,7 +15,7 @@
 use crate::reconciler::volume::{NormalizedVolumeSource, normalized_ship_volumes};
 use tugboat_resources::manifests::core::v1::{RuntimeHotplug, ShipActualAllocation, ShipSpec};
 use tugboat_vm_runtime_interface::hotplug::{
-    VmCpuHotplugConfig, VmHotplugRequest, VmMemoryHotplugConfig,
+    VmCpuHotplugConfig, VmHotplugRequest, VmMemoryHotplugConfig, sanitize_identifier,
 };
 use tugboat_vm_runtime_interface::run::{VmNetworkConfig, VmVolumeConfig, VmVolumeKind};
 
@@ -270,18 +270,6 @@ fn nic_device_id(mac_address: &str) -> String {
 
 fn volume_device_id(host_path: &str) -> String {
     format!("dev-{}", sanitize_identifier(host_path))
-}
-
-fn sanitize_identifier(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    out.trim_matches('-').to_string()
 }
 
 impl std::fmt::Debug for HotplugBaseline {

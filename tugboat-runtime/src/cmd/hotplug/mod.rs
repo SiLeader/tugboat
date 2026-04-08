@@ -16,10 +16,13 @@ use crate::config::load_config_or_panic;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use serde_json::{Map, Value, json};
-use sha2::Digest;
+use std::collections::VecDeque;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tugboat_vm_runtime_interface::hotplug::{VmHotplugRequest, VmMemoryHotplugConfig};
+use tugboat_vm_runtime_interface::hotplug::{
+    VmHotplugRequest, VmMemoryHotplugConfig, normalize_identifier_key, sanitize_identifier,
+};
 use tugboat_vm_runtime_interface::run::{VmNetworkConfig, VmVolumeConfig, VmVolumeKind};
 
 #[derive(Debug, Parser)]
@@ -92,33 +95,25 @@ async fn apply_cpu_hotplug(qmp: &mut QmpClient, target_cores: u64) -> crate::Res
             }
         }
         std::cmp::Ordering::Less => {
-            let mut cores_to_add = target_cores - current_cores;
-            for slot in absent.iter() {
-                if cores_to_add == 0 {
+            let mut cores_to_remove = current_cores - target_cores;
+            let mut removal_ids = Vec::new();
+            for slot in present.iter().rev() {
+                if cores_to_remove == 0 {
                     break;
                 }
                 let vcpus = slot_u64(slot, "vcpus-count").unwrap_or(1);
-                if vcpus <= cores_to_add {
-                    qmp.execute("device_add", Some(cpu_add_arguments(slot)?))
-                        .await?;
-                    cores_to_add -= vcpus;
+                if vcpus <= cores_to_remove {
+                    removal_ids.push(cpu_slot_id(slot));
+                    cores_to_remove -= vcpus;
                 }
             }
-            if cores_to_add > 0 {
+            if cores_to_remove > 0 {
                 return Err(crate::Error::Qmp(
                     "unable to satisfy requested CPU count exactly with available slots".into(),
                 ));
             }
-            let diff = (current_cores - target_cores) as usize;
-            if present.len() < diff {
-                return Err(crate::Error::Qmp(format!(
-                    "not enough present CPUs to remove: need {diff}, have {}",
-                    present.len()
-                )));
-            }
-            for slot in present.iter().rev().take(diff) {
-                qmp.execute("device_del", Some(json!({ "id": cpu_slot_id(slot) })))
-                    .await?;
+            for id in removal_ids {
+                qmp.execute("device_del", Some(json!({ "id": id }))).await?;
             }
         }
     }
@@ -228,6 +223,7 @@ async fn remove_memory_devices(qmp: &mut QmpClient, mut bytes_to_remove: u64) ->
 
     for (id, memdev) in plan {
         qmp.execute("device_del", Some(json!({ "id": id }))).await?;
+        qmp.wait_for_device_deleted(&id).await?;
         qmp.execute("object-del", Some(json!({ "id": memdev })))
             .await?;
     }
@@ -266,7 +262,7 @@ async fn apply_nic_add(qmp: &mut QmpClient, nic: &VmNetworkConfig) -> crate::Res
 }
 
 async fn apply_nic_remove(qmp: &mut QmpClient, id: &str) -> crate::Result<()> {
-    let key = normalize_existing_key(id, &["nic-", "net-"]);
+    let key = normalize_identifier_key(id, &["nic-", "net-"]);
     qmp.execute("device_del", Some(json!({ "id": format!("nic-{key}") })))
         .await?;
     qmp.execute("netdev_del", Some(json!({ "id": format!("net-{key}") })))
@@ -282,13 +278,6 @@ async fn apply_volume_add(qmp: &mut QmpClient, volume: &VmVolumeConfig) -> crate
     }
 
     let key = volume_key(&volume.host_path);
-    qmp.execute(
-        "blockdev-add",
-        Some(blockdev_add_arguments(&key, &volume.host_path)),
-    )
-    .await?;
-    qmp.execute("device_add", Some(block_device_add_arguments(&key)))
-        .await?;
     qmp.execute(
         "blockdev-add",
         Some(blockdev_add_arguments(&key, &volume.host_path)),
@@ -311,7 +300,7 @@ async fn apply_volume_add(qmp: &mut QmpClient, volume: &VmVolumeConfig) -> crate
 }
 
 async fn apply_volume_remove(qmp: &mut QmpClient, id: &str) -> crate::Result<()> {
-    let key = normalize_existing_key(id, &["dev-", "blk-"]);
+    let key = normalize_identifier_key(id, &["dev-", "blk-"]);
     qmp.execute("device_del", Some(json!({ "id": format!("dev-{key}") })))
         .await?;
     qmp.execute(
@@ -444,22 +433,10 @@ fn volume_key(host_path: &str) -> String {
     sanitize_identifier(host_path)
 }
 
-fn normalize_existing_key(value: &str, prefixes: &[&str]) -> String {
-    let trimmed = prefixes
-        .iter()
-        .find_map(|prefix| value.strip_prefix(prefix))
-        .unwrap_or(value);
-    sanitize_identifier(trimmed)
-}
-
-fn sanitize_identifier(value: &str) -> String {
-    let digest = sha2::Sha256::digest(value.as_bytes());
-    format!("{:x}", digest)
-}
-
 struct QmpClient {
     reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: tokio::net::unix::OwnedWriteHalf,
+    pending_events: VecDeque<Value>,
 }
 
 impl QmpClient {
@@ -469,6 +446,7 @@ impl QmpClient {
         let mut client = Self {
             reader: BufReader::new(reader),
             writer,
+            pending_events: VecDeque::new(),
         };
         client.read_message().await?;
         client.execute("qmp_capabilities", None).await?;
@@ -500,7 +478,44 @@ impl QmpClient {
             if response.get("return").is_some() {
                 return Ok(response.get("return").cloned().unwrap_or(Value::Null));
             }
+            if response.get("event").is_some() {
+                self.pending_events.push_back(response);
+            }
         }
+    }
+
+    async fn wait_for_device_deleted(&mut self, id: &str) -> crate::Result<()> {
+        if let Some(index) = self
+            .pending_events
+            .iter()
+            .position(|event| device_deleted_event_matches(event, id))
+        {
+            self.pending_events.remove(index);
+            return Ok(());
+        }
+
+        let wait = async {
+            loop {
+                let response = self.read_message().await?;
+                if let Some(error) = response.get("error") {
+                    return Err(crate::Error::Qmp(error.to_string()));
+                }
+                if device_deleted_event_matches(&response, id) {
+                    return Ok(());
+                }
+                if response.get("event").is_some() {
+                    self.pending_events.push_back(response);
+                }
+            }
+        };
+
+        tokio::time::timeout(Duration::from_secs(30), wait)
+            .await
+            .map_err(|_| {
+                crate::Error::Qmp(format!(
+                    "timed out waiting for DEVICE_DELETED event for '{id}'"
+                ))
+            })?
     }
 
     async fn read_message(&mut self) -> crate::Result<Value> {
@@ -521,13 +536,31 @@ impl QmpClient {
     }
 }
 
+fn device_deleted_event_matches(message: &Value, id: &str) -> bool {
+    message.get("event").and_then(Value::as_str) == Some("DEVICE_DELETED")
+        && message
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("device"))
+            .and_then(Value::as_str)
+            == Some(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        block_device_add_arguments, blockdev_add_arguments, cpu_add_arguments,
-        netdev_add_arguments, nic_device_add_arguments,
+        QmpClient, apply_cpu_hotplug, apply_volume_add, block_device_add_arguments,
+        blockdev_add_arguments, cpu_add_arguments, netdev_add_arguments, nic_device_add_arguments,
+        remove_memory_devices,
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
+    use std::future::Future;
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+    use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+    use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
     #[test]
     fn cpu_add_command_format() {
@@ -596,5 +629,249 @@ mod tests {
                 "drive": "blk-var-lib-disk1-img",
             })
         );
+    }
+
+    #[tokio::test]
+    async fn cpu_hotplug_reduction_removes_present_cpu_slots() {
+        let (socket_path, server) =
+            spawn_fake_qmp_server("cpu-remove", |mut reader, mut writer| async move {
+                qmp_handshake(&mut reader, &mut writer).await;
+
+                expect_command(&mut reader, "query-hotpluggable-cpus").await;
+                write_json(
+                    &mut writer,
+                    json!({
+                        "return": [
+                            {
+                                "type": "host-x86_64-cpu",
+                                "qom-path": "/machine/peripheral/cpu-0-0-0",
+                                "vcpus-count": 1,
+                                "props": {
+                                    "socket-id": 0,
+                                    "core-id": 0,
+                                    "thread-id": 0
+                                }
+                            },
+                            {
+                                "type": "host-x86_64-cpu",
+                                "qom-path": "/machine/peripheral/cpu-0-1-0",
+                                "vcpus-count": 1,
+                                "props": {
+                                    "socket-id": 0,
+                                    "core-id": 1,
+                                    "thread-id": 0
+                                }
+                            },
+                            {
+                                "type": "host-x86_64-cpu",
+                                "vcpus-count": 1,
+                                "props": {
+                                    "socket-id": 0,
+                                    "core-id": 2,
+                                    "thread-id": 0
+                                }
+                            }
+                        ]
+                    }),
+                )
+                .await;
+
+                let request = expect_command(&mut reader, "device_del").await;
+                assert_eq!(
+                    request.get("arguments"),
+                    Some(&json!({ "id": "cpu-0-1-0" }))
+                );
+                write_json(&mut writer, json!({ "return": {} })).await;
+
+                assert_no_extra_commands(&mut reader).await;
+            })
+            .await;
+
+        let mut qmp = QmpClient::connect(socket_path).await.unwrap();
+        apply_cpu_hotplug(&mut qmp, 1).await.unwrap();
+        drop(qmp);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_remove_waits_for_device_deleted_before_backend_cleanup() {
+        let (socket_path, server) =
+            spawn_fake_qmp_server("memory-remove", |mut reader, mut writer| async move {
+                qmp_handshake(&mut reader, &mut writer).await;
+
+                expect_command(&mut reader, "query-memory-devices").await;
+                write_json(
+                    &mut writer,
+                    json!({
+                        "return": [
+                            {
+                                "data": {
+                                    "id": "dimm-1",
+                                    "memdev": "mem-1",
+                                    "size": 1024
+                                }
+                            }
+                        ]
+                    }),
+                )
+                .await;
+
+                let request = expect_command(&mut reader, "device_del").await;
+                assert_eq!(request.get("arguments"), Some(&json!({ "id": "dimm-1" })));
+                write_json(
+                    &mut writer,
+                    json!({
+                        "event": "DEVICE_DELETED",
+                        "data": { "device": "dimm-1" }
+                    }),
+                )
+                .await;
+                write_json(&mut writer, json!({ "return": {} })).await;
+
+                let request = expect_command(&mut reader, "object-del").await;
+                assert_eq!(request.get("arguments"), Some(&json!({ "id": "mem-1" })));
+                write_json(&mut writer, json!({ "return": {} })).await;
+
+                assert_no_extra_commands(&mut reader).await;
+            })
+            .await;
+
+        let mut qmp = QmpClient::connect(socket_path).await.unwrap();
+        remove_memory_devices(&mut qmp, 1024).await.unwrap();
+        drop(qmp);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn volume_add_executes_block_setup_once() {
+        let volume = VmVolumeConfig::block("/var/lib/disk1.img", "raw", false);
+        let key = super::volume_key(&volume.host_path);
+        let volume_for_server = volume.clone();
+        let (socket_path, server) =
+            spawn_fake_qmp_server("volume-add", move |mut reader, mut writer| async move {
+                qmp_handshake(&mut reader, &mut writer).await;
+
+                let request = expect_command(&mut reader, "blockdev-add").await;
+                assert_eq!(
+                    request.get("arguments"),
+                    Some(&blockdev_add_arguments(&key, &volume_for_server.host_path))
+                );
+                write_json(&mut writer, json!({ "return": {} })).await;
+
+                let request = expect_command(&mut reader, "device_add").await;
+                assert_eq!(
+                    request.get("arguments"),
+                    Some(&block_device_add_arguments(&key))
+                );
+                write_json(&mut writer, json!({ "return": {} })).await;
+
+                assert_no_extra_commands(&mut reader).await;
+            })
+            .await;
+
+        let mut qmp = QmpClient::connect(socket_path).await.unwrap();
+        apply_volume_add(&mut qmp, &volume).await.unwrap();
+        drop(qmp);
+
+        server.await.unwrap();
+    }
+
+    fn unique_socket_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tugboat-runtime-hotplug-{name}-{}.sock",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should be monotonic")
+                .as_nanos()
+        ))
+    }
+
+    async fn spawn_fake_qmp_server<F, Fut>(
+        name: &str,
+        handler: F,
+    ) -> (String, tokio::task::JoinHandle<()>)
+    where
+        F: FnOnce(BufReader<OwnedReadHalf>, OwnedWriteHalf) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let socket_path = unique_socket_path(name);
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).expect("listener should bind");
+        let socket_path_for_server = socket_path.clone();
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("server should accept");
+            let (reader, writer) = stream.into_split();
+            handler(BufReader::new(reader), writer).await;
+            let _ = std::fs::remove_file(socket_path_for_server);
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        (socket_path.display().to_string(), handle)
+    }
+
+    async fn qmp_handshake(reader: &mut BufReader<OwnedReadHalf>, writer: &mut OwnedWriteHalf) {
+        write_json(
+            writer,
+            json!({
+                "QMP": {
+                    "version": {
+                        "qemu": {
+                            "major": 9,
+                            "minor": 0,
+                            "micro": 0
+                        },
+                        "package": ""
+                    },
+                    "capabilities": []
+                }
+            }),
+        )
+        .await;
+        let request = expect_command(reader, "qmp_capabilities").await;
+        assert!(request.get("arguments").is_none());
+        write_json(writer, json!({ "return": {} })).await;
+    }
+
+    async fn expect_command(reader: &mut BufReader<OwnedReadHalf>, expected: &str) -> Value {
+        let request = read_json(reader).await;
+        assert_eq!(
+            request.get("execute").and_then(Value::as_str),
+            Some(expected)
+        );
+        request
+    }
+
+    async fn read_json(reader: &mut BufReader<OwnedReadHalf>) -> Value {
+        let mut line = String::new();
+        let bytes = reader
+            .read_line(&mut line)
+            .await
+            .expect("request should be readable");
+        assert!(bytes > 0, "expected QMP message");
+        serde_json::from_str(line.trim()).expect("request should be valid JSON")
+    }
+
+    async fn write_json(writer: &mut OwnedWriteHalf, value: Value) {
+        let encoded = serde_json::to_vec(&value).expect("response should encode");
+        writer
+            .write_all(&encoded)
+            .await
+            .expect("response should write");
+        writer
+            .write_all(b"\n")
+            .await
+            .expect("response newline should write");
+        writer.flush().await.expect("response should flush");
+    }
+
+    async fn assert_no_extra_commands(reader: &mut BufReader<OwnedReadHalf>) {
+        let mut line = String::new();
+        match tokio::time::timeout(Duration::from_millis(100), reader.read_line(&mut line)).await {
+            Err(_) => {}
+            Ok(Ok(0)) => {}
+            Ok(Ok(_)) => panic!("unexpected extra QMP command: {}", line.trim()),
+            Ok(Err(err)) => panic!("failed to read trailing QMP command: {err}"),
+        }
     }
 }

@@ -20,6 +20,7 @@ license.workspace = true
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
 
 tokio = { workspace = true, optional = true, features = ["process", "rt", "io-util"] }
 thiserror = { workspace = true, optional = true }

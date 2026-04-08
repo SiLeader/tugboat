@@ -28,6 +28,7 @@ use tugboat_resources::manifests::core::v1::{
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_resources::sized::SizedString;
 use tugboat_resources::{NODE_RUNTIME_CLASS_LABEL_KEY, ObjectMetaResource, ShipMigrationExt};
+use tugboat_vm_runtime_interface::hotplug::sanitize_identifier;
 
 use super::migration::MigrationStateMachine;
 use super::{PHASE_COMPLETED, PHASE_FAILED};
@@ -495,15 +496,23 @@ impl ShipReconciler {
             .await;
 
         let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
-        let mut status_ship = ship.clone();
-        let status = status_ship.status.get_or_insert_with(Default::default);
+        let mut status = ship.status.clone().unwrap_or_default();
         status.actual_allocation = Some(plan.actual_allocation);
         status.append_status(ShipCondition {
             status: "Hotplugged".to_string(),
             message: "Applied supported CPU/memory/network/storage changes in-place".to_string(),
             timestamp: Some(Time::now()),
         });
-        api.replace_status(ship_name, status_ship).await?;
+        api.patch_status(
+            ship_name,
+            serde_json::json!({
+                "status": {
+                    "actualAllocation": status.actual_allocation,
+                    "conditions": status.conditions,
+                }
+            }),
+        )
+        .await?;
 
         self.check_pending_volume_expansions(ship_id, namespace, new_spec)
             .await;
@@ -890,18 +899,6 @@ fn pvc_aliases(spec: &ShipSpec) -> Result<Vec<String>, ReconcileError> {
             _ => None,
         })
         .collect())
-}
-
-fn sanitize_identifier(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    out.trim_matches('-').to_string()
 }
 
 async fn best_effort_cleanup_hotplug_additions(
