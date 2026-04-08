@@ -302,7 +302,16 @@ async fn apply_volume_add(qmp: &mut QmpClient, volume: &VmVolumeConfig) -> crate
     .await?;
     qmp.execute("device_add", Some(block_device_add_arguments(&key)))
         .await?;
-    Ok(())
+    qmp.execute(
+        "blockdev-add",
+        Some(blockdev_add_arguments(&key, &volume.host_path)),
+    )
+    .await?;
+    if let Err(err) = qmp.execute("device_add", Some(block_device_add_arguments(&key)))
+        .await {
+        let _ = qmp.execute("blockdev-del", Some(json!({ "node-name": format!("blk-{key}") }))).await;
+        return Err(err);
+    }
 }
 
 async fn apply_volume_remove(qmp: &mut QmpClient, id: &str) -> crate::Result<()> {
