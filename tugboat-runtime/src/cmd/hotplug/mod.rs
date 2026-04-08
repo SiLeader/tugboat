@@ -16,6 +16,7 @@ use crate::config::load_config_or_panic;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use serde_json::{Map, Value, json};
+use sha2::Digest;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tugboat_vm_runtime_interface::hotplug::{VmHotplugRequest, VmMemoryHotplugConfig};
@@ -90,6 +91,7 @@ async fn apply_cpu_hotplug(qmp: &mut QmpClient, target_cores: u64) -> crate::Res
                     .await?;
             }
         }
+        std::cmp::Ordering::Less => {
             let mut cores_to_add = target_cores - current_cores;
             for slot in absent.iter() {
                 if cores_to_add == 0 {
@@ -103,7 +105,9 @@ async fn apply_cpu_hotplug(qmp: &mut QmpClient, target_cores: u64) -> crate::Res
                 }
             }
             if cores_to_add > 0 {
-                 return Err(crate::Error::Qmp("unable to satisfy requested CPU count exactly with available slots".into()));
+                return Err(crate::Error::Qmp(
+                    "unable to satisfy requested CPU count exactly with available slots".into(),
+                ));
             }
             let diff = (current_cores - target_cores) as usize;
             if present.len() < diff {
@@ -144,34 +148,22 @@ async fn apply_memory_hotplug(
                 })),
             )
             .await?;
-            qmp.execute(
-                "device_add",
-                Some(json!({
-                    "driver": "pc-dimm",
-                    "id": dimm_id,
-                    "memdev": backend_id,
-                })),
-            qmp.execute(
-                "object-add",
-                Some(json!({
-                    "qom-type": "memory-backend-ram",
-                    "id": backend_id,
-                    "size": size,
-                })),
-            )
-            .await?;
-            if let Err(err) = qmp.execute(
-                "device_add",
-                Some(json!({
-                    "driver": "pc-dimm",
-                    "id": dimm_id,
-                    "memdev": backend_id,
-                })),
-            ).await {
-                let _ = qmp.execute("object-del", Some(json!({ "id": backend_id }))).await;
+            if let Err(err) = qmp
+                .execute(
+                    "device_add",
+                    Some(json!({
+                        "driver": "pc-dimm",
+                        "id": dimm_id,
+                        "memdev": backend_id,
+                    })),
+                )
+                .await
+            {
+                let _ = qmp
+                    .execute("object-del", Some(json!({ "id": backend_id })))
+                    .await;
                 return Err(err);
             }
-            .await?;
             Ok(())
         }
         std::cmp::Ordering::Less => remove_memory_devices(qmp, current - target.size).await,
@@ -258,23 +250,18 @@ async fn apply_nic_add(qmp: &mut QmpClient, nic: &VmNetworkConfig) -> crate::Res
         Some(netdev_add_arguments(&key, &nic.iface_name)),
     )
     .await?;
-    qmp.execute(
-        "device_add",
-    qmp.execute(
-        "netdev_add",
-        Some(netdev_add_arguments(&key, &nic.iface_name)),
-    )
-    .await?;
-    if let Err(err) = qmp.execute(
-        "device_add",
-        Some(nic_device_add_arguments(&key, &nic.mac_address)),
-    )
-    .await {
-        let _ = qmp.execute("netdev_del", Some(json!({ "id": format!("net-{key}") }))).await;
+    if let Err(err) = qmp
+        .execute(
+            "device_add",
+            Some(nic_device_add_arguments(&key, &nic.mac_address)),
+        )
+        .await
+    {
+        let _ = qmp
+            .execute("netdev_del", Some(json!({ "id": format!("net-{key}") })))
+            .await;
         return Err(err);
     }
-    )
-    .await?;
     Ok(())
 }
 
@@ -307,11 +294,20 @@ async fn apply_volume_add(qmp: &mut QmpClient, volume: &VmVolumeConfig) -> crate
         Some(blockdev_add_arguments(&key, &volume.host_path)),
     )
     .await?;
-    if let Err(err) = qmp.execute("device_add", Some(block_device_add_arguments(&key)))
-        .await {
-        let _ = qmp.execute("blockdev-del", Some(json!({ "node-name": format!("blk-{key}") }))).await;
+    if let Err(err) = qmp
+        .execute("device_add", Some(block_device_add_arguments(&key)))
+        .await
+    {
+        let _ = qmp
+            .execute(
+                "blockdev-del",
+                Some(json!({ "node-name": format!("blk-{key}") })),
+            )
+            .await;
         return Err(err);
     }
+
+    Ok(())
 }
 
 async fn apply_volume_remove(qmp: &mut QmpClient, id: &str) -> crate::Result<()> {
@@ -457,15 +453,8 @@ fn normalize_existing_key(value: &str, prefixes: &[&str]) -> String {
 }
 
 fn sanitize_identifier(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    out.trim_matches('-').to_string()
+    let digest = sha2::Sha256::digest(value.as_bytes());
+    format!("{:x}", digest)
 }
 
 struct QmpClient {
