@@ -16,6 +16,8 @@ mod status;
 
 use crate::csi::PublishedVolume;
 use crate::reconciler::ShipFingerprints;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tugboat_resources::manifests::core::v1::ShipSpec;
 
 pub(crate) struct Runtime {
@@ -25,6 +27,7 @@ pub(crate) struct Runtime {
     ship_spec: ShipSpec,
     fingerprints: ShipFingerprints,
     published_volumes: Vec<PublishedVolume>,
+    hotplug_lock: Arc<Mutex<()>>,
 }
 
 impl Runtime {
@@ -43,6 +46,7 @@ impl Runtime {
             ship_spec,
             fingerprints,
             published_volumes,
+            hotplug_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -83,5 +87,9 @@ impl Runtime {
         self.ship_spec = ship_spec;
         self.fingerprints = fingerprints;
         self.published_volumes = published_volumes;
+    }
+
+    pub(super) fn hotplug_lock(&self) -> Arc<Mutex<()>> {
+        self.hotplug_lock.clone()
     }
 }

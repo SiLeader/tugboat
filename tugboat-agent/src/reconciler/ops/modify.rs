@@ -207,6 +207,33 @@ impl ShipReconciler {
         new_spec: &ShipSpec,
         fingerprints: &super::ShipFingerprints,
     ) -> Result<bool, ReconcileError> {
+        // Acquire the per-ship hotplug lock before reading baseline state.
+        // This serializes concurrent reconcile loops for the same ship and prevents
+        // a second loop from applying a stale diff or overwriting state written by
+        // the first.
+        let Some(hotplug_lock) = self.runtime_operator.get_hotplug_lock(ship_id).await else {
+            return Ok(false);
+        };
+        let _hotplug_guard = hotplug_lock.lock().await;
+
+        // Re-validate fingerprints after acquiring the lock: a concurrent hotplug
+        // may have already applied the desired changes while we were waiting.
+        let spec_now_matches = self
+            .runtime_operator
+            .matches_spec_fingerprint(ship_id, &fingerprints.spec)
+            .await;
+        let pvc_now_matches = self
+            .runtime_operator
+            .matches_pvc_volume_fingerprint(ship_id, &fingerprints.pvc_volume)
+            .await;
+        if spec_now_matches && pvc_now_matches {
+            debug!(
+                "Ship '{}' fingerprints already match after acquiring hotplug lock; skipping",
+                ship_id
+            );
+            return Ok(true);
+        }
+
         let Some(old_spec) = self.runtime_operator.current_ship_spec(ship_id).await else {
             return Ok(false);
         };

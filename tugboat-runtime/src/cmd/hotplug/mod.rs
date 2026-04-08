@@ -20,6 +20,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+use tracing::warn;
 use tugboat_vm_runtime_interface::hotplug::{
     VmHotplugRequest, VmMemoryHotplugConfig, normalize_identifier_key, sanitize_identifier,
 };
@@ -31,33 +32,135 @@ pub struct HotplugArgs {
     config: String,
 }
 
+/// Represents a single QMP-level undo action for a successfully applied hotplug addition.
+/// Removals are not tracked because rolling back an already-ejected device is not safe.
+enum HotplugRollback {
+    CpuDevice(String),
+    MemoryDevice { dimm_id: String, backend_id: String },
+    Nic(String),
+    Volume(String),
+}
+
+/// Best-effort rollback: executes collected undo actions in reverse order.
+/// Failures are logged at warn level and then ignored.
+async fn execute_rollback(qmp: &mut QmpClient, actions: Vec<HotplugRollback>) {
+    for action in actions.into_iter().rev() {
+        match action {
+            HotplugRollback::CpuDevice(id) => {
+                if let Err(e) = qmp.execute("device_del", Some(json!({ "id": id }))).await {
+                    warn!("hotplug rollback: failed to remove CPU device '{id}': {e}");
+                }
+            }
+            HotplugRollback::MemoryDevice {
+                dimm_id,
+                backend_id,
+            } => {
+                if let Err(e) = qmp
+                    .execute("device_del", Some(json!({ "id": dimm_id })))
+                    .await
+                {
+                    warn!("hotplug rollback: failed to remove memory device '{dimm_id}': {e}");
+                } else if let Err(e) = qmp.wait_for_device_deleted(&dimm_id).await {
+                    warn!(
+                        "hotplug rollback: timed out waiting for memory device '{dimm_id}' deletion: {e}"
+                    );
+                } else if let Err(e) = qmp
+                    .execute("object-del", Some(json!({ "id": backend_id })))
+                    .await
+                {
+                    warn!("hotplug rollback: failed to remove memory backend '{backend_id}': {e}");
+                }
+            }
+            HotplugRollback::Nic(key) => {
+                let device_id = format!("nic-{key}");
+                let netdev_id = format!("net-{key}");
+                if let Err(e) = qmp
+                    .execute("device_del", Some(json!({ "id": device_id })))
+                    .await
+                {
+                    warn!("hotplug rollback: failed to remove NIC device '{device_id}': {e}");
+                } else if let Err(e) = qmp.wait_for_device_deleted(&device_id).await {
+                    warn!(
+                        "hotplug rollback: timed out waiting for NIC device '{device_id}' deletion: {e}"
+                    );
+                } else if let Err(e) = qmp
+                    .execute("netdev_del", Some(json!({ "id": netdev_id })))
+                    .await
+                {
+                    warn!("hotplug rollback: failed to remove netdev '{netdev_id}': {e}");
+                }
+            }
+            HotplugRollback::Volume(key) => {
+                let device_id = format!("dev-{key}");
+                let node_name = format!("blk-{key}");
+                if let Err(e) = qmp
+                    .execute("device_del", Some(json!({ "id": device_id })))
+                    .await
+                {
+                    warn!("hotplug rollback: failed to remove volume device '{device_id}': {e}");
+                } else if let Err(e) = qmp.wait_for_device_deleted(&device_id).await {
+                    warn!(
+                        "hotplug rollback: timed out waiting for volume device '{device_id}' deletion: {e}"
+                    );
+                } else if let Err(e) = qmp
+                    .execute("blockdev-del", Some(json!({ "node-name": node_name })))
+                    .await
+                {
+                    warn!("hotplug rollback: failed to remove blockdev '{node_name}': {e}");
+                }
+            }
+        }
+    }
+}
+
 pub async fn run(config: QemuVmConfig, args: HotplugArgs) -> crate::Result<()> {
     let req: VmHotplugRequest = load_config_or_panic(args.config);
     let mut qmp = QmpClient::connect(config.get_uds_path(&req.id)).await?;
 
-    if let Some(cpu) = &req.cpu {
-        apply_cpu_hotplug(&mut qmp, cpu.cores).await?;
+    let mut rollback: Vec<HotplugRollback> = Vec::new();
+    let result = apply_hotplug_changes(&mut qmp, &req, &mut rollback).await;
+    if let Err(ref err) = result {
+        warn!("hotplug failed ({err}); attempting best-effort rollback of applied changes");
+        execute_rollback(&mut qmp, rollback).await;
     }
-    if let Some(memory) = &req.memory {
-        apply_memory_hotplug(&mut qmp, memory).await?;
+    result
+}
+
+async fn apply_hotplug_changes(
+    qmp: &mut QmpClient,
+    req: &VmHotplugRequest,
+    rollback: &mut Vec<HotplugRollback>,
+) -> crate::Result<()> {
+    if let Some(cpu) = &req.cpu {
+        let added_ids = apply_cpu_hotplug(qmp, cpu.cores).await?;
+        rollback.extend(added_ids.into_iter().map(HotplugRollback::CpuDevice));
+    }
+    if let Some(memory) = &req.memory
+        && let Some((dimm_id, backend_id)) = apply_memory_hotplug(qmp, memory).await?
+    {
+        rollback.push(HotplugRollback::MemoryDevice {
+            dimm_id,
+            backend_id,
+        });
     }
     for nic in &req.nics_added {
-        apply_nic_add(&mut qmp, nic).await?;
+        apply_nic_add(qmp, nic).await?;
+        rollback.push(HotplugRollback::Nic(nic_key(&nic.mac_address)));
     }
     for nic in &req.nics_removed {
-        apply_nic_remove(&mut qmp, nic).await?;
+        apply_nic_remove(qmp, nic).await?;
     }
     for volume in &req.volumes_added {
-        apply_volume_add(&mut qmp, volume).await?;
+        apply_volume_add(qmp, volume).await?;
+        rollback.push(HotplugRollback::Volume(volume_key(&volume.host_path)));
     }
     for volume in &req.volumes_removed {
-        apply_volume_remove(&mut qmp, volume).await?;
+        apply_volume_remove(qmp, volume).await?;
     }
-
     Ok(())
 }
 
-async fn apply_cpu_hotplug(qmp: &mut QmpClient, target_cores: u64) -> crate::Result<()> {
+async fn apply_cpu_hotplug(qmp: &mut QmpClient, target_cores: u64) -> crate::Result<Vec<String>> {
     let slots = qmp.execute("query-hotpluggable-cpus", None).await?;
     let slots = slots
         .as_array()
@@ -89,10 +192,13 @@ async fn apply_cpu_hotplug(qmp: &mut QmpClient, target_cores: u64) -> crate::Res
                     absent.len()
                 )));
             }
+            let mut added_ids = Vec::with_capacity(diff);
             for slot in absent.iter().take(diff) {
                 qmp.execute("device_add", Some(cpu_add_arguments(slot)?))
                     .await?;
+                added_ids.push(cpu_slot_id(slot));
             }
+            return Ok(added_ids);
         }
         std::cmp::Ordering::Less => {
             let mut cores_to_remove = current_cores - target_cores;
@@ -118,16 +224,16 @@ async fn apply_cpu_hotplug(qmp: &mut QmpClient, target_cores: u64) -> crate::Res
         }
     }
 
-    Ok(())
+    Ok(Vec::new())
 }
 
 async fn apply_memory_hotplug(
     qmp: &mut QmpClient,
     target: &VmMemoryHotplugConfig,
-) -> crate::Result<()> {
+) -> crate::Result<Option<(String, String)>> {
     let current = current_memory_size(qmp).await?;
     match target.size.cmp(&current) {
-        std::cmp::Ordering::Equal => Ok(()),
+        std::cmp::Ordering::Equal => Ok(None),
         std::cmp::Ordering::Greater => {
             let index = next_memory_index(qmp).await?;
             let backend_id = format!("mem-{index}");
@@ -154,14 +260,23 @@ async fn apply_memory_hotplug(
                 )
                 .await
             {
-                let _ = qmp
+                if let Err(cleanup_err) = qmp
                     .execute("object-del", Some(json!({ "id": backend_id })))
-                    .await;
+                    .await
+                {
+                    warn!(
+                        "memory hotplug: failed to clean up backend '{backend_id}' \
+                         after device_add failure: {cleanup_err}; backend may be leaked"
+                    );
+                }
                 return Err(err);
             }
-            Ok(())
+            Ok(Some((dimm_id, backend_id)))
         }
-        std::cmp::Ordering::Less => remove_memory_devices(qmp, current - target.size).await,
+        std::cmp::Ordering::Less => {
+            remove_memory_devices(qmp, current - target.size).await?;
+            Ok(None)
+        }
     }
 }
 
