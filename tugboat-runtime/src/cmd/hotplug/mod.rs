@@ -263,9 +263,12 @@ async fn apply_nic_add(qmp: &mut QmpClient, nic: &VmNetworkConfig) -> crate::Res
 
 async fn apply_nic_remove(qmp: &mut QmpClient, id: &str) -> crate::Result<()> {
     let key = normalize_identifier_key(id, &["nic-", "net-"]);
-    qmp.execute("device_del", Some(json!({ "id": format!("nic-{key}") })))
+    let device_id = format!("nic-{key}");
+    let netdev_id = format!("net-{key}");
+    qmp.execute("device_del", Some(json!({ "id": device_id.clone() })))
         .await?;
-    qmp.execute("netdev_del", Some(json!({ "id": format!("net-{key}") })))
+    qmp.wait_for_device_deleted(&device_id).await?;
+    qmp.execute("netdev_del", Some(json!({ "id": netdev_id })))
         .await?;
     Ok(())
 }
@@ -301,13 +304,13 @@ async fn apply_volume_add(qmp: &mut QmpClient, volume: &VmVolumeConfig) -> crate
 
 async fn apply_volume_remove(qmp: &mut QmpClient, id: &str) -> crate::Result<()> {
     let key = normalize_identifier_key(id, &["dev-", "blk-"]);
-    qmp.execute("device_del", Some(json!({ "id": format!("dev-{key}") })))
+    let device_id = format!("dev-{key}");
+    let node_name = format!("blk-{key}");
+    qmp.execute("device_del", Some(json!({ "id": device_id.clone() })))
         .await?;
-    qmp.execute(
-        "blockdev-del",
-        Some(json!({ "node-name": format!("blk-{key}") })),
-    )
-    .await?;
+    qmp.wait_for_device_deleted(&device_id).await?;
+    qmp.execute("blockdev-del", Some(json!({ "node-name": node_name })))
+        .await?;
     Ok(())
 }
 
@@ -549,9 +552,9 @@ fn device_deleted_event_matches(message: &Value, id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        QmpClient, apply_cpu_hotplug, apply_volume_add, block_device_add_arguments,
-        blockdev_add_arguments, cpu_add_arguments, netdev_add_arguments, nic_device_add_arguments,
-        remove_memory_devices,
+        QmpClient, apply_cpu_hotplug, apply_nic_remove, apply_volume_add, apply_volume_remove,
+        block_device_add_arguments, blockdev_add_arguments, cpu_add_arguments,
+        netdev_add_arguments, nic_device_add_arguments, remove_memory_devices,
     };
     use serde_json::{Value, json};
     use std::future::Future;
@@ -719,6 +722,8 @@ mod tests {
 
                 let request = expect_command(&mut reader, "device_del").await;
                 assert_eq!(request.get("arguments"), Some(&json!({ "id": "dimm-1" })));
+                write_json(&mut writer, json!({ "return": {} })).await;
+                assert_no_extra_commands(&mut reader).await;
                 write_json(
                     &mut writer,
                     json!({
@@ -727,7 +732,6 @@ mod tests {
                     }),
                 )
                 .await;
-                write_json(&mut writer, json!({ "return": {} })).await;
 
                 let request = expect_command(&mut reader, "object-del").await;
                 assert_eq!(request.get("arguments"), Some(&json!({ "id": "mem-1" })));
@@ -739,6 +743,48 @@ mod tests {
 
         let mut qmp = QmpClient::connect(socket_path).await.unwrap();
         remove_memory_devices(&mut qmp, 1024).await.unwrap();
+        drop(qmp);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn nic_remove_waits_for_device_deleted_before_backend_cleanup() {
+        let nic_id = "02:00:00:00:00:01";
+        let key = super::nic_key(nic_id);
+        let (socket_path, server) =
+            spawn_fake_qmp_server("nic-remove", move |mut reader, mut writer| async move {
+                qmp_handshake(&mut reader, &mut writer).await;
+
+                let request = expect_command(&mut reader, "device_del").await;
+                assert_eq!(
+                    request.get("arguments"),
+                    Some(&json!({ "id": format!("nic-{key}") }))
+                );
+                write_json(&mut writer, json!({ "return": {} })).await;
+                assert_no_extra_commands(&mut reader).await;
+                write_json(
+                    &mut writer,
+                    json!({
+                        "event": "DEVICE_DELETED",
+                        "data": { "device": format!("nic-{key}") }
+                    }),
+                )
+                .await;
+
+                let request = expect_command(&mut reader, "netdev_del").await;
+                assert_eq!(
+                    request.get("arguments"),
+                    Some(&json!({ "id": format!("net-{key}") }))
+                );
+                write_json(&mut writer, json!({ "return": {} })).await;
+
+                assert_no_extra_commands(&mut reader).await;
+            })
+            .await;
+
+        let mut qmp = QmpClient::connect(socket_path).await.unwrap();
+        apply_nic_remove(&mut qmp, nic_id).await.unwrap();
         drop(qmp);
 
         server.await.unwrap();
@@ -773,6 +819,48 @@ mod tests {
 
         let mut qmp = QmpClient::connect(socket_path).await.unwrap();
         apply_volume_add(&mut qmp, &volume).await.unwrap();
+        drop(qmp);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn volume_remove_waits_for_device_deleted_before_backend_cleanup() {
+        let volume_id = "/var/lib/disk1.img";
+        let key = super::volume_key(volume_id);
+        let (socket_path, server) =
+            spawn_fake_qmp_server("volume-remove", move |mut reader, mut writer| async move {
+                qmp_handshake(&mut reader, &mut writer).await;
+
+                let request = expect_command(&mut reader, "device_del").await;
+                assert_eq!(
+                    request.get("arguments"),
+                    Some(&json!({ "id": format!("dev-{key}") }))
+                );
+                write_json(&mut writer, json!({ "return": {} })).await;
+                assert_no_extra_commands(&mut reader).await;
+                write_json(
+                    &mut writer,
+                    json!({
+                        "event": "DEVICE_DELETED",
+                        "data": { "device": format!("dev-{key}") }
+                    }),
+                )
+                .await;
+
+                let request = expect_command(&mut reader, "blockdev-del").await;
+                assert_eq!(
+                    request.get("arguments"),
+                    Some(&json!({ "node-name": format!("blk-{key}") }))
+                );
+                write_json(&mut writer, json!({ "return": {} })).await;
+
+                assert_no_extra_commands(&mut reader).await;
+            })
+            .await;
+
+        let mut qmp = QmpClient::connect(socket_path).await.unwrap();
+        apply_volume_remove(&mut qmp, volume_id).await.unwrap();
         drop(qmp);
 
         server.await.unwrap();
