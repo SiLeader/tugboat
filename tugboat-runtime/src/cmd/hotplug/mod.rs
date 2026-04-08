@@ -137,7 +137,26 @@ async fn apply_memory_hotplug(
                     "id": dimm_id,
                     "memdev": backend_id,
                 })),
+            qmp.execute(
+                "object-add",
+                Some(json!({
+                    "qom-type": "memory-backend-ram",
+                    "id": backend_id,
+                    "size": size,
+                })),
             )
+            .await?;
+            if let Err(err) = qmp.execute(
+                "device_add",
+                Some(json!({
+                    "driver": "pc-dimm",
+                    "id": dimm_id,
+                    "memdev": backend_id,
+                })),
+            ).await {
+                let _ = qmp.execute("object-del", Some(json!({ "id": backend_id }))).await;
+                return Err(err);
+            }
             .await?;
             Ok(())
         }
