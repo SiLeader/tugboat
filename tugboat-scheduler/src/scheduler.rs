@@ -97,6 +97,10 @@ impl Scheduler {
             }
 
             for ship in unscheduled {
+                if !self.leader_elector.is_leader() {
+                    tracing::warn!("Lost leadership during scheduling loop, aborting");
+                    break;
+                }
                 self.schedule_ship(ship, &cache).await;
             }
 
@@ -194,6 +198,11 @@ impl Scheduler {
             Ok(_) => {
                 tracing::info!(
                     "Successfully bound ship {ship_namespace}/{ship_name} to node {node_name}"
+                );
+            }
+            Err(tugboat_client::Error::Api(ref status)) if status.code == 409 => {
+                tracing::info!(
+                    "Conflict binding ship {ship_namespace}/{ship_name}: already modified, will retry"
                 );
             }
             Err(e) => {

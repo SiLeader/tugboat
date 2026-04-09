@@ -289,7 +289,7 @@ impl ReplicaSetReconciler {
                     delete_ship_ignore_not_found(&ship_api, name).await?;
                 }
             }
-            if !to_delete.is_empty() || to_delete.len() < excess {
+            if to_delete.len() < excess {
                 return Ok(Action::requeue(Duration::from_secs(5)));
             }
         }
