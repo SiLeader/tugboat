@@ -57,28 +57,38 @@ impl WatchMuxAggregator {
         resource_version: Option<String>,
     ) -> Result<WatchReceiver, crate::Error> {
         debug!("Get watch receiver: key: {key}");
-        let mut mux = self.mux.lock().await;
-        if let Some(mux) = mux.get(key).cloned()
+        let mut mux_map = self.mux.lock().await;
+        if let Some(mux) = mux_map.get(key).cloned()
             && resource_version.is_none()
         {
             return Ok(mux.receiver());
         }
         let m = Arc::new(WatchMux::new());
         if resource_version.is_none() {
-            mux.insert(key.to_string(), m.clone());
+            mux_map.insert(key.to_string(), m.clone());
         }
+        drop(mux_map);
 
         let client = self.client.watch_client();
         let key = key.to_string();
-        let mux = m.clone();
+        let watch_mux = m.clone();
+        let aggregator_mux = Arc::clone(&self.mux);
         let start_revision = resource_version
             .as_deref()
             .and_then(|value| value.parse::<i64>().ok())
             .map(|revision| revision.saturating_add(1));
+        // Create the receiver before spawning to avoid a race where the task
+        // sees zero receivers and exits before the caller can subscribe.
+        let receiver = m.receiver();
         tokio::spawn(async move {
             let mut client = client;
             let mut current_revision = start_revision;
             loop {
+                if !watch_mux.has_receivers() {
+                    debug!("No active receivers for watch key: {key}, stopping watch task");
+                    aggregator_mux.lock().await.remove(&key);
+                    break;
+                }
                 let mut options = WatchOptions::default().with_prefix().with_prev_key();
                 if let Some(rev) = current_revision {
                     options = options.with_start_revision(rev);
@@ -99,8 +109,13 @@ impl WatchMuxAggregator {
                                 .iter()
                                 .filter_map(transform_event)
                                 .collect::<Vec<_>>();
-                            if let Err(e) = mux.emit(events) {
-                                error!("Watch event emit error: {e}");
+                            if watch_mux.emit(events).is_err() {
+                                debug!(
+                                    "All receivers dropped for watch key: {key}, \
+                                     stopping watch task"
+                                );
+                                aggregator_mux.lock().await.remove(&key);
+                                return;
                             }
                         }
                         Err(e) => {
@@ -111,7 +126,7 @@ impl WatchMuxAggregator {
                 }
             }
         });
-        Ok(m.receiver())
+        Ok(receiver)
     }
 }
 
@@ -146,15 +161,14 @@ fn transform_event(event: &etcd_client::Event) -> Option<WatchEvent> {
 
 pub(crate) struct WatchMux {
     tx: Sender<Vec<WatchEvent>>,
-    rx: Receiver<Vec<WatchEvent>>,
 }
 
 pub type WatchReceiver = Receiver<Vec<WatchEvent>>;
 
 impl WatchMux {
     pub(crate) fn new() -> Self {
-        let (tx, rx) = channel(vec![]);
-        Self { tx, rx }
+        let (tx, _) = channel(vec![]);
+        Self { tx }
     }
 
     pub(crate) fn emit(&self, value: Vec<WatchEvent>) -> Result<(), crate::Error> {
@@ -163,7 +177,11 @@ impl WatchMux {
     }
 
     pub(crate) fn receiver(&self) -> WatchReceiver {
-        self.rx.clone()
+        self.tx.subscribe()
+    }
+
+    pub(crate) fn has_receivers(&self) -> bool {
+        self.tx.receiver_count() > 0
     }
 }
 
