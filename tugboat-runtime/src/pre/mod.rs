@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use nix::libc::umask;
+use nix::libc::{dup2, umask};
 use nix::mount::{MsFlags, mount};
 use nix::sched::{CloneFlags, setns, unshare};
 use nix::sys::signal::{SigHandler, Signal, signal};
 use nix::unistd::{Gid, Uid, chdir, fork, setgid, setsid, setuid};
 use std::fs::File;
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use tracing::{debug, info};
@@ -112,5 +113,12 @@ pub(crate) fn daemonize() {
     }
     unsafe { umask(0) };
     chdir("/").expect("Failed to chdir");
+    let devnull = File::open("/dev/null").expect("Failed to open /dev/null");
+    let null_fd = devnull.as_raw_fd();
+    unsafe {
+        dup2(null_fd, 0);
+        dup2(null_fd, 1);
+        dup2(null_fd, 2);
+    }
     info!("Successfully daemonized");
 }
