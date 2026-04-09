@@ -16,11 +16,14 @@ mod protobuf;
 
 use crate::error::Error;
 use crate::serializer::protobuf::ProtobufSerializer;
+use tugboat_resources::manifests::authorization::v1::{
+    ClusterRole, ClusterRoleBinding, Role, RoleBinding,
+};
 use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
-    PersistentVolumeClaim, RuntimeClass, Secret, Ship, ShipClass, StorageClass,
+    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
 };
 use tugboat_resources::manifests::meta::v1::TypeMeta;
 use tugboat_resources::{Resource, StaticResource};
@@ -68,6 +71,8 @@ macro_rules! protobuf_serializable {
 }
 
 protobuf_serializable!(ClusterNetworkClass);
+protobuf_serializable!(ClusterRole);
+protobuf_serializable!(ClusterRoleBinding);
 protobuf_serializable!(ConfigMap);
 protobuf_serializable!(Deployment);
 protobuf_serializable!(Fleet);
@@ -75,7 +80,10 @@ protobuf_serializable!(Lease);
 protobuf_serializable!(Namespace);
 protobuf_serializable!(NetworkClass);
 protobuf_serializable!(Node);
+protobuf_serializable!(Role);
+protobuf_serializable!(RoleBinding);
 protobuf_serializable!(RuntimeClass);
+protobuf_serializable!(ServiceAccount);
 protobuf_serializable!(Ship);
 protobuf_serializable!(ShipClass);
 protobuf_serializable!(StorageClass);
