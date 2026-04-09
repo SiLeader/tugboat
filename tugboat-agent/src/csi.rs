@@ -578,9 +578,8 @@ fn prepare_target_path(
     create_dir_all(parent)?;
     match access_type {
         PublishedAccessType::Block => {
-            if path.is_dir() {
-                return Err(CsiError::TargetPathIsDirectory(target_path.to_string()));
-            }
+            // Directly attempt the file operation instead of a separate is_dir() check
+            // to avoid a TOCTOU race between the check and the open.
             OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -594,9 +593,9 @@ fn prepare_target_path(
 
 fn prepare_directory_path(target_path: &str) -> Result<(), CsiError> {
     let path = Path::new(target_path);
-    if path.is_file() {
-        return Err(CsiError::TargetPathIsFile(target_path.to_string()));
-    }
+    // Skip the separate is_file() check to avoid a TOCTOU race between the
+    // check and create_dir_all. If the path is a regular file, create_dir_all
+    // will return an appropriate IO error (ENOTDIR).
     create_dir_all(path)?;
     Ok(())
 }

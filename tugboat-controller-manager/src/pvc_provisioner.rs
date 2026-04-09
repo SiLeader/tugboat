@@ -189,17 +189,12 @@ impl PvcProvisionerReconciler {
                 }
                 Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
                     let Some(existing) = pv_api.get(&pv_name).await? else {
-                        if let Err(cleanup_err) = self
-                            .csi_operator
-                            .delete_volume(
-                                &provisioner_config.socket_path,
-                                volume_id.clone(),
-                                controller_create_secrets.clone(),
-                            )
-                            .await
-                        {
-                            tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
-                        }
+                        self.cleanup_csi_volume_with_retry(
+                            &provisioner_config.socket_path,
+                            &volume_id,
+                            &controller_create_secrets,
+                        )
+                        .await;
                         return Err(ControllerError::ExistingVolumeConflict {
                             name: pv_name.clone(),
                             namespace: namespace.clone(),
@@ -212,17 +207,12 @@ impl PvcProvisionerReconciler {
                         &name,
                         &storage_class_name,
                     )? {
-                        if let Err(cleanup_err) = self
-                            .csi_operator
-                            .delete_volume(
-                                &provisioner_config.socket_path,
-                                volume_id.clone(),
-                                controller_create_secrets.clone(),
-                            )
-                            .await
-                        {
-                            tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
-                        }
+                        self.cleanup_csi_volume_with_retry(
+                            &provisioner_config.socket_path,
+                            &volume_id,
+                            &controller_create_secrets,
+                        )
+                        .await;
                         return Err(ControllerError::ExistingVolumeConflict {
                             name: pv_name.clone(),
                             namespace: namespace.clone(),
@@ -231,17 +221,12 @@ impl PvcProvisionerReconciler {
                     }
                 }
                 Err(err) => {
-                    if let Err(cleanup_err) = self
-                        .csi_operator
-                        .delete_volume(
-                            &provisioner_config.socket_path,
-                            volume_id,
-                            controller_create_secrets.clone(),
-                        )
-                        .await
-                    {
-                        tracing::warn!("Failed to clean up orphaned volume: {}", cleanup_err);
-                    }
+                    self.cleanup_csi_volume_with_retry(
+                        &provisioner_config.socket_path,
+                        &volume_id,
+                        &controller_create_secrets,
+                    )
+                    .await;
                     return Err(err.into());
                 }
             }
@@ -383,6 +368,11 @@ impl PvcProvisionerReconciler {
                         }
                         return Ok(Action::await_change());
                     };
+                    if csi.volume_handle.is_empty() {
+                        return Err(ControllerError::MissingVolumeHandle {
+                            name: pv_name.clone(),
+                        });
+                    }
                     (
                         csi.volume_handle.clone(),
                         csi.fs_type.clone(),
@@ -486,6 +476,43 @@ impl PvcProvisionerReconciler {
                 pv_name,
                 cleanup_err
             );
+        }
+    }
+
+    /// Attempts to delete a CSI volume with up to 3 retries on failure.
+    async fn cleanup_csi_volume_with_retry(
+        &self,
+        socket_path: &str,
+        volume_id: &str,
+        secrets: &std::collections::HashMap<String, String>,
+    ) {
+        const MAX_RETRIES: usize = 3;
+        for attempt in 1..=MAX_RETRIES {
+            match self
+                .csi_operator
+                .delete_volume(socket_path, volume_id.to_string(), secrets.clone())
+                .await
+            {
+                Ok(()) => return,
+                Err(err) if attempt < MAX_RETRIES => {
+                    tracing::warn!(
+                        "Failed to clean up orphaned CSI volume '{}' (attempt {}/{}): {}",
+                        volume_id,
+                        attempt,
+                        MAX_RETRIES,
+                        err
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(
+                        "Failed to clean up orphaned CSI volume '{}' after {} attempts: {}; \
+                         manual intervention may be required",
+                        volume_id,
+                        MAX_RETRIES,
+                        err
+                    );
+                }
+            }
         }
     }
 }

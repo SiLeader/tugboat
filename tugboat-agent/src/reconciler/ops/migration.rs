@@ -52,7 +52,16 @@ fn is_migration_timed_out(timestamp: &Option<Time>, timeout_secs: i64) -> bool {
         return false;
     };
     let now = Time::now();
-    now.seconds.saturating_sub(ts.seconds) > timeout_secs
+    // Treat far-future timestamps (e.g. from clock skew) as not timed out but
+    // log a warning so operators can investigate.
+    if ts.seconds > now.seconds {
+        tracing::warn!(
+            "Migration timestamp is {} seconds in the future; possible clock skew",
+            ts.seconds - now.seconds
+        );
+        return false;
+    }
+    now.seconds - ts.seconds > timeout_secs
 }
 
 fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
