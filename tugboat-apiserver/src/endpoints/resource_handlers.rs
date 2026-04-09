@@ -174,21 +174,11 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(crate) struct ReplaceOptions {
     pub(crate) preserve_status: bool,
     pub(crate) use_client_resource_version: bool,
     pub(crate) update_generation: bool,
-}
-
-impl Default for ReplaceOptions {
-    fn default() -> Self {
-        Self {
-            preserve_status: false,
-            use_client_resource_version: false,
-            update_generation: false,
-        }
-    }
 }
 
 pub(crate) struct ResourceUpdater<'a, T> {

@@ -85,7 +85,7 @@ impl VmRuntimeOperator {
     }
 
     pub async fn create(&self, args: VmRunRequest) -> Result<u32, Error> {
-        let mut child = self.call("create", &args).await?;
+        let child = self.call("create", &args).await?;
         let pid = match child.id() {
             Some(p) => p,
             None => {
