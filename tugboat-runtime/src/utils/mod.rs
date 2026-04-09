@@ -13,31 +13,30 @@
 // limitations under the License.
 
 use crate::Error;
-use nix::libc::{S_IRUSR, S_IWGRP, S_IWOTH, S_IWUSR};
+use crate::validate::validate_safe_id;
+use nix::libc::{S_IRUSR, S_IWUSR};
 use nix::sys::stat::Mode;
 use std::fs::File;
 use std::io::{Read, Write};
 use tracing::{debug, info};
 
-fn create_fifo_path(container_id: &str) -> String {
-    format!("/tmp/tugboat-runtime-{container_id}-exec.fifo")
+fn create_fifo_path(container_id: &str) -> Result<String, Error> {
+    validate_safe_id(container_id, "container_id")?;
+    Ok(format!("/tmp/tugboat-runtime-{container_id}-exec.fifo"))
 }
 
 pub(crate) fn create_signal_fifo(container_id: &str) -> Result<(), Error> {
     debug!("Create fifo for signal. id = {container_id}");
-    let path = create_fifo_path(container_id);
+    let path = create_fifo_path(container_id)?;
 
-    nix::unistd::mkfifo(
-        path.as_str(),
-        Mode::from_bits_truncate(S_IRUSR | S_IWUSR | S_IWGRP | S_IWOTH),
-    )?;
+    nix::unistd::mkfifo(path.as_str(), Mode::from_bits_truncate(S_IRUSR | S_IWUSR))?;
     info!("FIFO for signal created. path = {path:?}");
     Ok(())
 }
 
 pub(crate) fn start_signal_using_fifo(container_id: &str) -> Result<(), Error> {
     debug!("Sending signal using fifo. id = {container_id}");
-    let path = create_fifo_path(container_id);
+    let path = create_fifo_path(container_id)?;
 
     let mut file = File::options()
         .write(true)
@@ -53,7 +52,7 @@ pub(crate) fn start_signal_using_fifo(container_id: &str) -> Result<(), Error> {
 
 pub(crate) fn wait_signal_using_fifo(container_id: &str) -> Result<(), Error> {
     debug!("Waiting signal using fifo. id = {container_id}");
-    let path = create_fifo_path(container_id);
+    let path = create_fifo_path(container_id)?;
 
     info!("Waiting signal using fifo. path = {path}");
     let mut file = File::options()
@@ -64,6 +63,11 @@ pub(crate) fn wait_signal_using_fifo(container_id: &str) -> Result<(), Error> {
     let mut buf = [0u8; 1];
     file.read_exact(&mut buf)?;
     info!("Received signal using fifo. path = {path}");
+
+    // Clean up the FIFO after successfully receiving the signal
+    if let Err(e) = std::fs::remove_file(&path) {
+        tracing::warn!("Failed to remove FIFO '{path}': {e}");
+    }
 
     Ok(())
 }

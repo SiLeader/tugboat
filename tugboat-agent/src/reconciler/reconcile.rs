@@ -79,17 +79,19 @@ pub(super) trait AppendStatus {
 
 impl AppendStatus for ShipStatus {
     fn append_status(&mut self, condition: ShipCondition) {
-        if let Some(existing) = self
-            .conditions
-            .iter_mut()
-            .find(|c| c.status == condition.status)
-        {
+        self.conditions.append_status(condition);
+    }
+}
+
+impl AppendStatus for Vec<ShipCondition> {
+    fn append_status(&mut self, condition: ShipCondition) {
+        if let Some(existing) = self.iter_mut().find(|c| c.status == condition.status) {
             if existing.message == condition.message {
                 return;
             }
             *existing = condition;
         } else {
-            self.conditions.push(condition);
+            self.push(condition);
         }
     }
 }

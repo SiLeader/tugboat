@@ -18,13 +18,17 @@ use nix::sched::{CloneFlags, setns, unshare};
 use nix::sys::signal::{SigHandler, Signal, signal};
 use nix::unistd::{Gid, Uid, chdir, fork, setgid, setsid, setuid};
 use std::fs::File;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use tracing::{debug, info};
 use tugboat_vm_runtime_interface::run::VmExecUser;
 use tugboat_vm_runtime_interface::run::mount_namespace_path;
 
+use crate::validate::validate_safe_id;
+
 pub(crate) fn enter_mount_namespace(ship_id: &str) -> Result<(), crate::Error> {
+    validate_safe_id(ship_id, "ship_id")?;
     let mountns = mount_namespace_path(ship_id);
     if !PathBuf::from(&mountns).exists() {
         debug!("No mount namespace found for ship '{ship_id}', skipping");
@@ -39,6 +43,7 @@ pub(crate) fn enter_mount_namespace(ship_id: &str) -> Result<(), crate::Error> {
 }
 
 pub(crate) fn create_and_enter_to_network_namespace(ship_id: &str) -> Result<(), crate::Error> {
+    validate_safe_id(ship_id, "ship_id")?;
     debug!(
         "Create and enter to network namespace. pid = {}",
         std::process::id()
@@ -52,7 +57,12 @@ pub(crate) fn create_and_enter_to_network_namespace(ship_id: &str) -> Result<(),
     let netns = format!("/var/run/netns/{ship_id}");
     debug!("Creating bind mount netns path '{netns}'");
     std::fs::create_dir_all("/var/run/netns")?;
-    std::fs::File::create(&netns)?;
+    // Use O_NOFOLLOW to prevent symlink attacks between file creation and bind mount.
+    File::options()
+        .write(true)
+        .create_new(true)
+        .custom_flags(nix::libc::O_NOFOLLOW)
+        .open(&netns)?;
     debug!(
         "/proc/self/ns/net exists: {}",
         PathBuf::from("/proc/self/ns/net").exists()

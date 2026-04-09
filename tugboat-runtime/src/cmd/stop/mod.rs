@@ -27,6 +27,7 @@ pub struct StopArgs {
 
 pub async fn stop(config: QemuVmConfig, args: StopArgs) -> crate::Result<()> {
     let req: VmStopRequest = load_config_or_panic(args.config);
+    crate::validate::validate_safe_id(&req.id, "vm id")?;
 
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
         .await

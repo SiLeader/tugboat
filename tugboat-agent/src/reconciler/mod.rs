@@ -93,7 +93,7 @@ impl ShipReconciler {
                     match status {
                         Ok(status) => {
                             let api: Api<Ship> = Api::namespaced(client.clone(), &status.namespace);
-                            let mut ship = match api.get(&status.ship_name).await {
+                            let ship = match api.get(&status.ship_name).await {
                                 Ok(Some(s)) => s,
                                 Ok(None) => continue,
                                 Err(err) => {
@@ -102,8 +102,15 @@ impl ShipReconciler {
                                 }
                             };
 
-                            ship.append_status(status.condition);
-                            if let Err(e) = api.replace_status(&status.ship_name, ship).await {
+                            let mut conditions =
+                                ship.status.map(|s| s.conditions).unwrap_or_default();
+                            conditions.append_status(status.condition);
+                            let patch = serde_json::json!({
+                                "status": {
+                                    "conditions": conditions
+                                }
+                            });
+                            if let Err(e) = api.patch_status(&status.ship_name, patch).await {
                                 error!("Failed to update ship status: {e}");
                             }
                         }
