@@ -13,14 +13,18 @@
 // limitations under the License.
 
 use crate::endpoints::v1_apps;
+use crate::endpoints::v1_authorization;
 use crate::endpoints::v1_coordination;
 use crate::endpoints::v1_core;
 use tugboat_resources::StaticResource;
 use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
+use tugboat_resources::manifests::authorization::v1::{
+    ClusterRole, ClusterRoleBinding, Role, RoleBinding,
+};
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
-    PersistentVolumeClaim, RuntimeClass, Secret, Ship, ShipClass, StorageClass,
+    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
 };
 use utoipa_actix_web::service_config::ServiceConfig;
 
@@ -181,6 +185,13 @@ const SECRET_OPS: ResourceOperations = ResourceOperations {
     ..NAMESPACED_DEFAULT_OPS
 };
 
+const SERVICE_ACCOUNT_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
+    update: true,
+    delete: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
 const CONFIGMAP_OPS: ResourceOperations = ResourceOperations {
     patch: true,
     update: true,
@@ -215,8 +226,30 @@ const WORKLOAD_OPS: ResourceOperations = ResourceOperations {
     ..NAMESPACED_DEFAULT_OPS
 };
 
+const CLUSTER_RBAC_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
+    update: true,
+    delete: true,
+    ..CLUSTER_DEFAULT_OPS
+};
+
+const NAMESPACED_RBAC_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
+    update: true,
+    delete: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
 pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
     vec![
+        ResourceApiDescriptor::new::<ClusterRole>(
+            CLUSTER_RBAC_OPS,
+            v1_authorization::register_cluster_role,
+        ),
+        ResourceApiDescriptor::new::<ClusterRoleBinding>(
+            CLUSTER_RBAC_OPS,
+            v1_authorization::register_cluster_role_binding,
+        ),
         ResourceApiDescriptor::new::<Deployment>(WORKLOAD_OPS, v1_apps::register_deployment),
         ResourceApiDescriptor::new::<Fleet>(WORKLOAD_OPS, v1_apps::register_fleet),
         ResourceApiDescriptor::new::<ClusterNetworkClass>(
@@ -239,11 +272,20 @@ pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
             v1_core::register_persistent_volume_claim,
         ),
         ResourceApiDescriptor::new::<ReplicaSet>(WORKLOAD_OPS, v1_apps::register_replicaset),
+        ResourceApiDescriptor::new::<Role>(NAMESPACED_RBAC_OPS, v1_authorization::register_role),
+        ResourceApiDescriptor::new::<RoleBinding>(
+            NAMESPACED_RBAC_OPS,
+            v1_authorization::register_role_binding,
+        ),
         ResourceApiDescriptor::new::<RuntimeClass>(
             STORAGE_CLASS_OPS,
             v1_core::register_runtimeclass,
         ),
         ResourceApiDescriptor::new::<Secret>(SECRET_OPS, v1_core::register_secret),
+        ResourceApiDescriptor::new::<ServiceAccount>(
+            SERVICE_ACCOUNT_OPS,
+            v1_core::register_service_account,
+        ),
         ResourceApiDescriptor::new::<Ship>(SHIP_OPS, v1_core::register_ship),
         ResourceApiDescriptor::new::<ShipClass>(CLUSTER_DEFAULT_OPS, v1_core::register_shipclass),
         ResourceApiDescriptor::new::<StorageClass>(
