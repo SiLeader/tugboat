@@ -178,6 +178,7 @@ where
 pub(crate) struct ReplaceOptions {
     pub(crate) preserve_status: bool,
     pub(crate) use_client_resource_version: bool,
+    pub(crate) update_generation: bool,
 }
 
 pub(crate) struct ResourceUpdater<'a, T> {
@@ -205,6 +206,7 @@ where
         let mut merged_value = serde_json::Value::Object(current_obj.clone());
         rfc7396_merge_patch(&mut merged_value, &serde_json::Value::Object(patch));
         let mut merged_obj = to_object(merged_value, "patched resource")?;
+        let content_changed = generation_tracked_fields_changed(&current_obj, &merged_obj);
 
         // Restore fields that must be preserved from current
         if let Some(v) = current_obj.get("apiVersion") {
@@ -225,7 +227,7 @@ where
         let mut updated: T = serde_json::from_value(serde_json::Value::Object(merged_obj))
             .map_err(|e| Box::new(e.into()))?;
 
-        self.enforce_metadata(&mut updated, patch_metadata.as_ref());
+        self.enforce_metadata(&mut updated, patch_metadata.as_ref(), content_changed);
 
         Ok(updated)
     }
@@ -233,6 +235,7 @@ where
     pub(crate) fn apply_replacement(self, replacement: &T) -> Result<T, Box<StatusResponse>> {
         let current_value = serde_json::to_value(self.current).map_err(|e| Box::new(e.into()))?;
         let mut current_obj = to_object(current_value, "current resource")?;
+        let current_generation_fields = generation_tracked_fields(&current_obj);
 
         let replacement_value =
             serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
@@ -250,10 +253,11 @@ where
             current_obj.insert(key, value);
         }
 
+        let content_changed = current_generation_fields != generation_tracked_fields(&current_obj);
         let mut updated: T = serde_json::from_value(serde_json::Value::Object(current_obj))
             .map_err(|e| Box::new(e.into()))?;
 
-        self.enforce_metadata(&mut updated, patch_metadata.as_ref());
+        self.enforce_metadata(&mut updated, patch_metadata.as_ref(), content_changed);
 
         Ok(updated)
     }
@@ -271,19 +275,28 @@ where
             .map_err(|e| Box::new(e.into()))?;
 
         // For status updates, we always preserve the current metadata.
-        self.enforce_metadata(&mut updated, None);
+        self.enforce_metadata(&mut updated, None, false);
 
         Ok(updated)
     }
 
-    fn enforce_metadata(&self, updated: &mut T, patch_metadata: Option<&serde_json::Value>) {
+    fn enforce_metadata(
+        &self,
+        updated: &mut T,
+        patch_metadata: Option<&serde_json::Value>,
+        content_changed: bool,
+    ) {
         if let (Some(current_meta), Some(updated_meta)) =
             (self.current.object_meta(), updated.object_meta_mut())
         {
             updated_meta.name = current_meta.name.clone();
             updated_meta.namespace = current_meta.namespace.clone();
             updated_meta.uid = current_meta.uid.clone();
-            updated_meta.generation = current_meta.generation;
+            updated_meta.generation = if self.options.update_generation && content_changed {
+                next_generation(current_meta.generation)
+            } else {
+                current_meta.generation
+            };
             updated_meta.creation_timestamp = current_meta.creation_timestamp;
             updated_meta.deletion_timestamp = current_meta.deletion_timestamp;
 
@@ -297,6 +310,15 @@ where
                 updated_meta.resource_version = current_meta.resource_version.clone();
             }
         }
+    }
+}
+
+pub(crate) fn bump_generation<T>(resource: &mut T)
+where
+    T: ObjectMetaResource,
+{
+    if let Some(meta) = resource.object_meta_mut().as_mut() {
+        meta.generation = next_generation(meta.generation);
     }
 }
 
@@ -596,6 +618,27 @@ fn validate_patch_name(
     Ok(())
 }
 
+fn generation_tracked_fields(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    object
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "metadata" | "apiVersion" | "kind" | "status"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn generation_tracked_fields_changed(
+    current: &serde_json::Map<String, serde_json::Value>,
+    updated: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    generation_tracked_fields(current) != generation_tracked_fields(updated)
+}
+
+fn next_generation(current: Option<i64>) -> Option<i64> {
+    Some(current.unwrap_or(0).max(0).saturating_add(1))
+}
+
 /// Applies a JSON merge patch (RFC 7396) to `target` in place.
 /// Objects are merged recursively; all other types (including arrays) are replaced.
 fn rfc7396_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
@@ -666,6 +709,7 @@ mod tests {
         let options = ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,
+            update_generation: true,
         };
         let patched: Ship = ResourceUpdater::new(&current, options)
             .apply_patch(
@@ -703,6 +747,13 @@ mod tests {
         );
         assert_eq!(
             patched
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.generation),
+            Some(4)
+        );
+        assert_eq!(
+            patched
                 .status
                 .as_ref()
                 .map(|status| status.conditions.len()),
@@ -724,6 +775,7 @@ mod tests {
         let options = ReplaceOptions {
             preserve_status: false,
             use_client_resource_version: true,
+            update_generation: true,
         };
         let patched: Ship = ResourceUpdater::new(&current, options)
             .apply_patch(
@@ -744,6 +796,66 @@ mod tests {
                 .as_ref()
                 .and_then(|meta| meta.resource_version.as_deref()),
             Some("rv-9")
+        );
+        assert_eq!(
+            patched
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.generation),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn merge_patch_bumps_generation_when_content_changes() {
+        let current = ship();
+        let options = ReplaceOptions {
+            preserve_status: true,
+            use_client_resource_version: false,
+            update_generation: true,
+        };
+        let patched: Ship = ResourceUpdater::new(&current, options)
+            .apply_patch(
+                serde_json::json!({
+                    "spec": {
+                        "image": "registry.example.com/vm:v2"
+                    }
+                })
+                .as_object()
+                .cloned()
+                .expect("patch should be object"),
+            )
+            .expect("patch should merge");
+
+        assert_eq!(
+            patched
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.generation),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn status_updates_preserve_generation() {
+        let current = ship();
+        let updated: Ship = ResourceUpdater::new(&current, ReplaceOptions::default())
+            .apply_status_update(serde_json::json!({
+                "conditions": [
+                    {
+                        "status": "NotReady",
+                        "message": "maintenance"
+                    }
+                ]
+            }))
+            .expect("status update should merge");
+
+        assert_eq!(
+            updated
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.generation),
+            Some(3)
         );
     }
 

@@ -23,6 +23,7 @@ pub struct MigrateCancelArgs {
 }
 
 pub async fn migrate_cancel(config: QemuVmConfig, args: MigrateCancelArgs) -> crate::Result<()> {
+    crate::validate::validate_safe_id(&args.id, "vm id")?;
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&args.id))
         .await
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;

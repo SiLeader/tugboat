@@ -27,7 +27,7 @@ async fn ship_watch_emits_added_events() -> Result<(), DynError> {
     )
     .await?;
 
-    create_resource(
+    let created = create_resource(
         &client,
         &ctx.base_url,
         "/api/v1/namespaces/test-ns/ships",
@@ -44,6 +44,14 @@ async fn ship_watch_emits_added_events() -> Result<(), DynError> {
     assert_eq!(event["type"], "ADDED");
     assert_eq!(event["object"]["metadata"]["name"], "watched-ship");
     assert_eq!(
+        event["object"]["metadata"]["resourceVersion"],
+        created["metadata"]["resourceVersion"]
+    );
+    assert_eq!(
+        event["object"]["metadata"]["generation"],
+        created["metadata"]["generation"]
+    );
+    assert_eq!(
         event["object"]["spec"]["image"],
         "registry.example.com/demo:v1"
     );
@@ -59,7 +67,7 @@ async fn ship_watch_emits_modified_events() -> Result<(), DynError> {
 
     let client = Client::new();
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
-    create_resource(
+    let created = create_resource(
         &client,
         &ctx.base_url,
         "/api/v1/namespaces/test-ns/ships",
@@ -103,6 +111,14 @@ async fn ship_watch_emits_modified_events() -> Result<(), DynError> {
     assert_eq!(
         event["object"]["metadata"]["annotations"]["example.com/owner"],
         "watch-test"
+    );
+    assert_ne!(
+        event["object"]["metadata"]["resourceVersion"],
+        created["metadata"]["resourceVersion"]
+    );
+    assert_eq!(
+        event["object"]["metadata"]["generation"],
+        created["metadata"]["generation"]
     );
 
     Ok(())

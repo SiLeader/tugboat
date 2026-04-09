@@ -188,6 +188,7 @@ pub(super) async fn handle_ship_replace(
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: true,
+            update_generation: true,
         },
     )
     .apply_replacement(&replacement)?;
@@ -236,6 +237,7 @@ pub(super) async fn handle_ship_patch(
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: true,
+            update_generation: true,
         },
     )
     .apply_patch(patch.into_inner())?;
@@ -375,6 +377,7 @@ fn abort_ship_migration(mut ship: Ship) -> Result<Ship, Box<StatusResponse>> {
     if let Some(spec) = ship.spec.as_mut() {
         spec.target_node_name = None;
     }
+    resource_handlers::bump_generation(&mut ship);
 
     let status = ship.status.get_or_insert_with(ShipStatus::default);
     let mut migration = status.migration.take().unwrap_or_default();
@@ -469,6 +472,7 @@ mod tests {
     };
     use actix_web::ResponseError;
     use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
+    use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
     const PHASE_PENDING: &str = "Pending";
     const PHASE_READY: &str = "Ready";
@@ -558,6 +562,31 @@ mod tests {
                 .as_ref()
                 .map(|status| status.conditions.len()),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn abort_ship_migration_bumps_generation() {
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                generation: Some(5),
+                ..Default::default()
+            }),
+            spec: Some(ShipSpec {
+                target_node_name: Some("node-b".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let updated = abort_ship_migration(ship).expect("abort should succeed");
+
+        assert_eq!(
+            updated
+                .object_meta
+                .as_ref()
+                .and_then(|meta| meta.generation),
+            Some(6)
         );
     }
 

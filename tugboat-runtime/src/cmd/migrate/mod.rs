@@ -36,6 +36,7 @@ pub struct MigrateArgs {
 
 pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<()> {
     let req: VmMigrateRequest = load_config_or_panic(args.config);
+    crate::validate::validate_safe_id(&req.id, "vm id")?;
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
         .await
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;

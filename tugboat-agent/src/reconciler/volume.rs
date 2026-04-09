@@ -88,6 +88,29 @@ pub(crate) fn ship_references_materialized_resource(
         }))
 }
 
+pub(crate) fn materialized_volume_names_for_resource(
+    ship_spec: &ShipSpec,
+    kind: MaterializedVolumeSourceKind,
+    resource_name: &str,
+) -> Result<Vec<String>, ReconcileError> {
+    Ok(normalized_ship_volumes(ship_spec)?
+        .into_iter()
+        .filter_map(|volume| match volume.source {
+            NormalizedVolumeSource::ConfigMap { name, .. }
+                if kind == MaterializedVolumeSourceKind::ConfigMap && name == resource_name =>
+            {
+                Some(volume.name)
+            }
+            NormalizedVolumeSource::Secret { secret_name, .. }
+                if kind == MaterializedVolumeSourceKind::Secret && secret_name == resource_name =>
+            {
+                Some(volume.name)
+            }
+            _ => None,
+        })
+        .collect())
+}
+
 impl ShipReconciler {
     pub(crate) async fn get_related_volumes(
         &self,

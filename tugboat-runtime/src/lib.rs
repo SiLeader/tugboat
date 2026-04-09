@@ -26,6 +26,7 @@ mod config;
 mod execute;
 mod pre;
 mod utils;
+mod validate;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -39,6 +40,8 @@ pub enum Error {
     Qmp(String),
     #[error("Action failed: {0}")]
     ActionFailed(String),
+    #[error("Validation error: {0}")]
+    Validation(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

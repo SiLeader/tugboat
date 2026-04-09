@@ -115,6 +115,7 @@ async fn execute_rollback(qmp: &mut QmpClient, actions: Vec<HotplugRollback>) {
 
 pub async fn run(config: QemuVmConfig, args: HotplugArgs) -> crate::Result<()> {
     let req: VmHotplugRequest = load_config_or_panic(args.config);
+    crate::validate::validate_safe_id(&req.id, "vm id")?;
     let mut qmp = QmpClient::connect(config.get_uds_path(&req.id)).await?;
 
     let mut rollback: Vec<HotplugRollback> = Vec::new();

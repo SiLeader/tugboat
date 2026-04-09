@@ -63,6 +63,7 @@ pub struct QemuVmConfigUefi {
 
 impl QemuVmConfig {
     pub fn get_uds_path(&self, id: &str) -> String {
+        // Safety: ID is validated upstream in run_vm() before any path construction.
         format!("{}/{id}.qmp.sock", self.disk_image_location)
     }
 

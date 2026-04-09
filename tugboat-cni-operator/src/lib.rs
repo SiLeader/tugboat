@@ -72,7 +72,10 @@ impl TugboatCniOperator {
         let cni_type = config.entry_point()?.to_string();
         let config_file = self.config_dir.join(config.file_name());
         self.caller
-            .del(container_id, iface_name, &cni_type, config_file)
-            .await
+            .del(container_id, iface_name, &cni_type, &config_file)
+            .await?;
+        // Best-effort cleanup of the config file created by add().
+        let _ = std::fs::remove_file(&config_file);
+        Ok(())
     }
 }

@@ -381,20 +381,31 @@ impl CsiWrapper {
             source.read_only,
         )?;
         let access_type = access_type_from_volume_mode(volume_spec.volume_mode.as_deref())?;
+        let operator = self.operator.clone();
+        let uds_path = uds_path.to_string();
+        let volume_id = volume.volume_id.clone();
+        let volume_path = volume.target_path.clone();
+        let staging_target_path = volume.staging_target_path.clone();
+        let mount_namespace_path = volume.mount_namespace_path.clone();
+        let fs_type = filesystem_type(source, access_type);
+        let node_expand_secrets = secrets.node_expand.clone();
         Ok(Some(
-            self.operator
-                .node_expand(
-                    uds_path,
-                    volume.volume_id.clone(),
-                    volume.target_path.clone(),
-                    capacity_bytes,
-                    volume.staging_target_path.clone(),
-                    access_mode,
-                    access_type,
-                    filesystem_type(source, access_type),
-                    secrets.node_expand.clone(),
-                )
-                .await?,
+            run_in_mount_namespace(mount_namespace_path, move || async move {
+                operator
+                    .node_expand(
+                        &uds_path,
+                        volume_id,
+                        volume_path,
+                        capacity_bytes,
+                        staging_target_path,
+                        access_mode,
+                        access_type,
+                        fs_type,
+                        node_expand_secrets,
+                    )
+                    .await
+            })
+            .await?,
         ))
     }
 
@@ -567,9 +578,8 @@ fn prepare_target_path(
     create_dir_all(parent)?;
     match access_type {
         PublishedAccessType::Block => {
-            if path.is_dir() {
-                return Err(CsiError::TargetPathIsDirectory(target_path.to_string()));
-            }
+            // Directly attempt the file operation instead of a separate is_dir() check
+            // to avoid a TOCTOU race between the check and the open.
             OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -583,9 +593,9 @@ fn prepare_target_path(
 
 fn prepare_directory_path(target_path: &str) -> Result<(), CsiError> {
     let path = Path::new(target_path);
-    if path.is_file() {
-        return Err(CsiError::TargetPathIsFile(target_path.to_string()));
-    }
+    // Skip the separate is_file() check to avoid a TOCTOU race between the
+    // check and create_dir_all. If the path is a regular file, create_dir_all
+    // will return an appropriate IO error (ENOTDIR).
     create_dir_all(path)?;
     Ok(())
 }

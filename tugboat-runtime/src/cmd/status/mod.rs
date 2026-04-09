@@ -52,6 +52,7 @@ impl FromQmp<RunState> for VmStatus {
 }
 
 pub(crate) async fn status(vm: QemuVmConfig, args: StatusArgs) -> Result<(), crate::Error> {
+    crate::validate::validate_safe_id(&args.id, "vm id")?;
     let stream = QmpStreamTokio::open_uds(vm.get_uds_path(&args.id))
         .await
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;

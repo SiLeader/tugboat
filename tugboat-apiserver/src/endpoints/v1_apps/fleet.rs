@@ -164,6 +164,7 @@ pub(super) async fn handle_fleet_replace(
         ReplaceOptions {
             preserve_status: false,
             use_client_resource_version: true,
+            update_generation: true,
         },
     )
     .await
@@ -196,6 +197,7 @@ pub(super) async fn handle_fleet_patch(
         ReplaceOptions {
             preserve_status: false,
             use_client_resource_version: true,
+            update_generation: true,
         },
     )
     .await

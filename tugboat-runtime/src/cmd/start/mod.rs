@@ -22,5 +22,6 @@ pub(crate) struct StartArgs {
 }
 
 pub(crate) async fn start(args: StartArgs) -> Result<(), crate::Error> {
+    crate::validate::validate_safe_id(&args.id, "vm id")?;
     start_signal_using_fifo(&args.id)
 }

@@ -136,6 +136,7 @@ pub(super) async fn handle_persistent_volume_replace(
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,
+            update_generation: true,
         },
     )
     .await
@@ -166,6 +167,7 @@ pub(super) async fn handle_persistent_volume_patch(
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,
+            update_generation: true,
         },
     )
     .await

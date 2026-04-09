@@ -18,6 +18,7 @@ mod volume_copy;
 use crate::execute::vm::RunVm;
 use crate::execute::vm::qemu::spawner::QemuVmConfigUefi;
 use crate::execute::vm::qemu::volume_copy::BootDisk;
+use crate::validate::{validate_qemu_option_value, validate_safe_id};
 use async_trait::async_trait;
 pub use spawner::{QemuVmBuilder, QemuVmConfig};
 use std::os::unix::process::CommandExt;
@@ -55,6 +56,21 @@ impl<'a> QemuVm<'a> {
         }
         Ok(())
     }
+
+    /// Validates all user-controlled fields that will be interpolated into QEMU
+    /// option strings, rejecting values containing QEMU delimiters.
+    fn validate_qemu_inputs(&self) -> crate::Result<()> {
+        for (idx, net) in self.args.networks.iter().enumerate() {
+            validate_qemu_option_value(&net.iface_name, &format!("networks[{idx}].iface_name"))?;
+            validate_qemu_option_value(&net.mac_address, &format!("networks[{idx}].mac_address"))?;
+        }
+        for (idx, vol) in self.args.volumes.iter().enumerate() {
+            validate_qemu_option_value(&vol.host_path, &format!("volumes[{idx}].host_path"))?;
+            validate_qemu_option_value(&vol.format, &format!("volumes[{idx}].format"))?;
+            validate_qemu_option_value(&vol.mount_tag, &format!("volumes[{idx}].mount_tag"))?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -62,6 +78,8 @@ impl RunVm for QemuVm<'_> {
     async fn run_vm(&self) -> crate::Result<()> {
         info!("Starting QEMU VM");
         debug!("QemuVm = {self:?}");
+        validate_safe_id(&self.args.id, "vm id")?;
+        self.validate_qemu_inputs()?;
         let img = self.create_boot_disk().await?;
         self.prepare_uefi().await?;
 

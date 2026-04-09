@@ -1,11 +1,15 @@
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
-use crate::reconciler::volume::MaterializedVolumeInfo;
+use crate::reconciler::volume::{
+    MaterializedVolumeInfo, MaterializedVolumeSourceKind, materialized_volume_names_for_resource,
+};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use tugboat_resources::ObjectMetaResource;
+use tugboat_resources::manifests::core::v1::Ship;
 
 impl ShipReconciler {
     pub(crate) fn materialize_volume(
@@ -73,6 +77,47 @@ impl ShipReconciler {
         }
     }
 
+    pub(crate) fn clear_materialized_volume(
+        &self,
+        ship_id: &str,
+        volume_name: &str,
+    ) -> Result<(), ReconcileError> {
+        let root = self.materialized_volume_dir(ship_id, volume_name);
+        clear_directory_contents(&root)
+            .map_err(|err| materialized_io_error(volume_name, &root, err.to_string()))
+    }
+
+    pub(crate) fn clear_materialized_volumes_for_dependency(
+        &self,
+        ship: &Ship,
+        kind: MaterializedVolumeSourceKind,
+        resource_name: &str,
+    ) -> Result<(), ReconcileError> {
+        let Some(metadata) = ship.object_meta() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata".to_string(),
+            ));
+        };
+        let Some(ship_id) = metadata.uid.as_deref() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "metadata.uid".to_string(),
+            ));
+        };
+        let Some(ship_spec) = ship.spec.as_ref() else {
+            return Err(ReconcileError::FieldMissing(
+                "v1.Ship".to_string(),
+                "spec".to_string(),
+            ));
+        };
+
+        for volume_name in materialized_volume_names_for_resource(ship_spec, kind, resource_name)? {
+            self.clear_materialized_volume(ship_id, &volume_name)?;
+        }
+        Ok(())
+    }
+
     fn materialized_ship_dir(&self, ship_id: &str) -> PathBuf {
         self.volume_data_dir.join(ship_id).join(".materialized")
     }
@@ -112,6 +157,24 @@ fn write_file_atomically(path: &Path, contents: &[u8], mode: u32) -> io::Result<
     Ok(())
 }
 
+fn clear_directory_contents(path: &Path) -> io::Result<()> {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+
+    for entry in entries {
+        let path = entry?.path();
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
+
 fn materialized_io_error(volume: &str, path: &Path, reason: String) -> ReconcileError {
     ReconcileError::MaterializedVolumeIo {
         volume: volume.to_string(),
@@ -122,7 +185,7 @@ fn materialized_io_error(volume: &str, path: &Path, reason: String) -> Reconcile
 
 #[cfg(test)]
 mod tests {
-    use super::{create_dir_with_mode, write_file_atomically};
+    use super::{clear_directory_contents, create_dir_with_mode, write_file_atomically};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -165,6 +228,33 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&path).expect("file should be readable"),
             "top-secret"
+        );
+        fs::remove_dir_all(root).expect("temporary directory should be removed");
+    }
+
+    #[test]
+    fn clears_directory_contents_but_keeps_volume_root() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "tugboat-agent-materialized-clear-test-{}-{unique}",
+            std::process::id()
+        ));
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).expect("nested directory should be created");
+        fs::write(root.join("config.toml"), "key = 'value'").expect("file should be written");
+        fs::write(nested.join("secret.txt"), "top-secret").expect("nested file should be written");
+
+        clear_directory_contents(&root).expect("directory contents should be cleared");
+
+        assert!(root.exists());
+        assert!(
+            fs::read_dir(&root)
+                .expect("volume root should remain readable")
+                .next()
+                .is_none()
         );
         fs::remove_dir_all(root).expect("temporary directory should be removed");
     }

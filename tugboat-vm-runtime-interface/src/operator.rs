@@ -86,7 +86,13 @@ impl VmRuntimeOperator {
 
     pub async fn create(&self, args: VmRunRequest) -> Result<u32, Error> {
         let child = self.call("create", &args).await?;
-        let pid = child.id().ok_or(Error::PidMissing)?;
+        let pid = match child.id() {
+            Some(p) => p,
+            None => {
+                kill_impl(child).await?;
+                return Err(Error::PidMissing);
+            }
+        };
         handle_command_response(child).await?;
         Ok(pid)
     }

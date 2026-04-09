@@ -23,12 +23,19 @@ use tugboat_client::{Api, TugboatClient, WatchParams};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{ConfigMap, Secret, Ship};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DependencyChangeKind {
+    Applied,
+    Deleted,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum DependencyEvent {
     ResourceChanged {
         kind: MaterializedVolumeSourceKind,
         namespace: String,
         name: String,
+        change: DependencyChangeKind,
     },
 }
 
@@ -66,9 +73,9 @@ impl DependencyTracker {
         &self,
         event: ReconcileEvent<ConfigMap>,
     ) -> Result<Action, ReconcileError> {
-        let config_map = match event {
-            ReconcileEvent::Applied(cm) => cm,
-            ReconcileEvent::Deleted(_) => return Ok(Action::await_change()),
+        let (config_map, change) = match event {
+            ReconcileEvent::Applied(cm) => (cm, DependencyChangeKind::Applied),
+            ReconcileEvent::Deleted(cm) => (cm, DependencyChangeKind::Deleted),
         };
 
         let name = config_map.name().ok_or_else(|| {
@@ -82,6 +89,7 @@ impl DependencyTracker {
                 kind: MaterializedVolumeSourceKind::ConfigMap,
                 namespace,
                 name: name.to_string(),
+                change,
             })
             .await;
 
@@ -92,9 +100,9 @@ impl DependencyTracker {
         &self,
         event: ReconcileEvent<Secret>,
     ) -> Result<Action, ReconcileError> {
-        let secret = match event {
-            ReconcileEvent::Applied(s) => s,
-            ReconcileEvent::Deleted(_) => return Ok(Action::await_change()),
+        let (secret, change) = match event {
+            ReconcileEvent::Applied(s) => (s, DependencyChangeKind::Applied),
+            ReconcileEvent::Deleted(s) => (s, DependencyChangeKind::Deleted),
         };
 
         let name = secret.name().ok_or_else(|| {
@@ -108,6 +116,7 @@ impl DependencyTracker {
                 kind: MaterializedVolumeSourceKind::Secret,
                 namespace,
                 name: name.to_string(),
+                change,
             })
             .await;
 
@@ -177,5 +186,78 @@ impl DependencyTracker {
         }
 
         Ok(matched)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DependencyChangeKind, DependencyEvent, DependencyTracker};
+    use tugboat_client::TugboatClient;
+    use tugboat_client::runtime::ReconcileEvent;
+    use tugboat_resources::manifests::core::v1::{ConfigMap, Secret};
+    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+
+    fn tracker(event_tx: tokio::sync::mpsc::Sender<DependencyEvent>) -> DependencyTracker {
+        DependencyTracker::new(
+            "node-a".to_string(),
+            TugboatClient::new("http://127.0.0.1:8080"),
+            event_tx,
+        )
+    }
+
+    #[tokio::test]
+    async fn config_map_delete_events_are_forwarded() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let tracker = tracker(tx);
+
+        tracker
+            .handle_config_map_event(ReconcileEvent::Deleted(ConfigMap {
+                object_meta: Some(ObjectMeta {
+                    name: Some("app-config".to_string()),
+                    namespace: Some("workloads".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+            .await
+            .expect("delete handling should succeed");
+
+        assert_eq!(
+            rx.recv().await,
+            Some(DependencyEvent::ResourceChanged {
+                kind: crate::reconciler::volume::MaterializedVolumeSourceKind::ConfigMap,
+                namespace: "workloads".to_string(),
+                name: "app-config".to_string(),
+                change: DependencyChangeKind::Deleted,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn secret_delete_events_are_forwarded() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let tracker = tracker(tx);
+
+        tracker
+            .handle_secret_event(ReconcileEvent::Deleted(Secret {
+                object_meta: Some(ObjectMeta {
+                    name: Some("app-secret".to_string()),
+                    namespace: Some("workloads".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+            .await
+            .expect("delete handling should succeed");
+
+        assert_eq!(
+            rx.recv().await,
+            Some(DependencyEvent::ResourceChanged {
+                kind: crate::reconciler::volume::MaterializedVolumeSourceKind::Secret,
+                namespace: "workloads".to_string(),
+                name: "app-secret".to_string(),
+                change: DependencyChangeKind::Deleted,
+            })
+        );
     }
 }

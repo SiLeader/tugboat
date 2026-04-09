@@ -43,10 +43,7 @@ pub(crate) enum CsiError {
     TargetPathHasNoParent(String),
     #[error("Target path '{0}' has no file stem")]
     TargetPathHasNoFileStem(String),
-    #[error("Target path '{0}' is a directory")]
-    TargetPathIsDirectory(String),
-    #[error("Target path '{0}' is a file")]
-    TargetPathIsFile(String),
+
     #[error(
         "PersistentVolumeClaim access modes '{claim_access_modes}' are incompatible with PersistentVolume access modes '{volume_access_modes}'"
     )]

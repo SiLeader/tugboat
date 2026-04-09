@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::reconciler::ShipReconciler;
-use crate::reconciler::dependency::{DependencyEvent, DependencyTracker};
+use crate::reconciler::dependency::{DependencyChangeKind, DependencyEvent, DependencyTracker};
 use tokio::select;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -110,8 +110,8 @@ impl ReconcilerRunner {
                     select! {
                         Some(event) = rx.recv() => {
                             match event {
-                                DependencyEvent::ResourceChanged { kind, namespace, name } => {
-                                    if let Err(err) = handle_dependency_change(&reconciler, &tracker, &namespace, kind, &name).await {
+                                DependencyEvent::ResourceChanged { kind, namespace, name, change } => {
+                                    if let Err(err) = handle_dependency_change(&reconciler, &tracker, &namespace, kind, &name, change).await {
                                         warn!("Failed to handle dependency change for {} '{}/{}': {}", kind.as_str(), namespace, name, err);
                                     }
                                 }
@@ -142,6 +142,7 @@ async fn handle_dependency_change(
     namespace: &str,
     kind: crate::reconciler::volume::MaterializedVolumeSourceKind,
     name: &str,
+    change: DependencyChangeKind,
 ) -> Result<(), crate::reconciler::error::ReconcileError> {
     let ships = tracker
         .ships_referencing_resource(namespace, kind, name)
@@ -161,6 +162,24 @@ async fn handle_dependency_change(
     let mut first_error = None;
     for ship in ships {
         let ship_name = ship.name().unwrap_or("<unknown>").to_string();
+        if change == DependencyChangeKind::Deleted
+            && let Err(err) =
+                reconciler.clear_materialized_volumes_for_dependency(&ship, kind, name)
+        {
+            warn!(
+                "Failed to clear stale materialized volumes for Ship '{}/{}' after {} '{}/{}' was deleted: {}",
+                namespace,
+                ship_name,
+                kind.as_str(),
+                namespace,
+                name,
+                err
+            );
+            if first_error.is_none() {
+                first_error = Some(err);
+            }
+            continue;
+        }
         if let Err(err) = reconciler.refresh_materialized_volumes_for_ship(ship).await {
             warn!(
                 "Failed to refresh materialized volumes for Ship '{}/{}' after {} '{}/{}' changed: {}",
