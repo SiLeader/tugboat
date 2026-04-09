@@ -230,6 +230,49 @@ fn detects_secret_materialized_volume_references() {
 }
 
 #[test]
+fn collects_materialized_volume_names_for_matching_resource() {
+    let spec = ShipSpec {
+        volumes: vec![
+            ShipVolume {
+                name: "cfg".to_string(),
+                config_map: Some(ConfigMapVolumeSource {
+                    name: "app-config".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ShipVolume {
+                name: "cfg-copy".to_string(),
+                config_map: Some(ConfigMapVolumeSource {
+                    name: "app-config".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ShipVolume {
+                name: "secret".to_string(),
+                secret: Some(SecretVolumeSource {
+                    secret_name: "app-secret".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    assert_eq!(
+        super::materialized_volume_names_for_resource(
+            &spec,
+            MaterializedVolumeSourceKind::ConfigMap,
+            "app-config",
+        )
+        .expect("config map volume names should resolve"),
+        vec!["cfg".to_string(), "cfg-copy".to_string()]
+    );
+}
+
+#[test]
 fn ignores_persistent_volume_claims_when_matching_materialized_references() {
     let spec = ShipSpec {
         volume_claim_ref: vec![ShipVolumeClaimReference {

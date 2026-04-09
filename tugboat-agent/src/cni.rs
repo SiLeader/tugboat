@@ -273,10 +273,10 @@ fn mac_address(namespace: &Option<String>, name: &str, ship_id: &str) -> String 
         Some(ns) => format!("NetworkClass/{ns}/{name}/{ship_id}"),
         None => format!("ClusterNetworkClass/{name}/{ship_id}"),
     };
-    let digest = &sha2::Sha256::digest(ident.as_bytes());
+    let digest = sha2::Sha256::digest(ident.as_bytes());
     format!(
-        "52:54:00:{digest:02x}:{digest:02x}:{digest:02x}",
-        digest = digest
+        "52:54:00:{:02x}:{:02x}:{:02x}",
+        digest[0], digest[1], digest[2]
     )
 }
 
@@ -421,6 +421,20 @@ mod tests {
         let second = mac_address(&namespace, "frontend", "ship-123");
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn mac_address_uses_six_hex_octets() {
+        let mac = mac_address(&Some("default".to_string()), "frontend", "ship-123");
+        let parts = mac.split(':').collect::<Vec<_>>();
+
+        assert_eq!(parts, ["52", "54", "00", parts[3], parts[4], parts[5]]);
+        assert_eq!(parts.len(), 6);
+        assert!(
+            parts
+                .iter()
+                .all(|part| part.len() == 2 && part.chars().all(|ch| ch.is_ascii_hexdigit()))
+        );
     }
 
     #[test]
