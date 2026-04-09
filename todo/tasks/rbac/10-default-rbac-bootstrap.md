@@ -25,7 +25,7 @@ rules:
   - apiGroups: ["core", "apps"]
     resources: ["*"]
     verbs: ["*"]
-  - apiGroups: ["rbac.authorization"]
+  - apiGroups: ["authorization"]
     resources: ["roles", "rolebindings"]
     verbs: ["*"]
 ```
@@ -38,7 +38,7 @@ rules:
   - apiGroups: ["core", "apps"]
     resources: ["*"]
     verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
-  - apiGroups: ["rbac.authorization"]
+  - apiGroups: ["authorization"]
     resources: ["roles", "rolebindings"]
     verbs: ["get", "list", "watch"]
 ```
@@ -61,9 +61,9 @@ rules:
 subjects:
   - kind: Group
     name: system:masters
-    apiGroup: rbac.authorization
+    apiGroup: authorization
 roleRef:
-  apiGroup: rbac.authorization
+  apiGroup: authorization
   kind: ClusterRole
   name: cluster-admin
 ```

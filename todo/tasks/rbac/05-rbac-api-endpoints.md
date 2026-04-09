@@ -2,14 +2,14 @@
 
 ## 概要
 
-`rbac.authorization/v1` APIグループの4リソース (Role, ClusterRole, RoleBinding, ClusterRoleBinding) に対するCRUDエンドポイントを実装する。
+`authorization/v1` APIグループの4リソース (Role, ClusterRole, RoleBinding, ClusterRoleBinding) に対するCRUDエンドポイントを実装する。
 
 ## 作業内容
 
 ### ディレクトリ構成
 
 ```
-tugboat-apiserver/src/endpoints/v1_rbac_authorization/
+tugboat-apiserver/src/endpoints/v1_authorization/
 ├── mod.rs
 ├── role.rs
 ├── cluster_role.rs
@@ -20,21 +20,21 @@ tugboat-apiserver/src/endpoints/v1_rbac_authorization/
 ### 各リソースのエンドポイント
 
 **ClusterRole, ClusterRoleBinding (cluster-scoped)**:
-- `GET    /apis/rbac.authorization/v1/{plural}` - list
-- `POST   /apis/rbac.authorization/v1/{plural}` - create
-- `GET    /apis/rbac.authorization/v1/{plural}/{name}` - read
-- `PUT    /apis/rbac.authorization/v1/{plural}/{name}` - update
-- `PATCH  /apis/rbac.authorization/v1/{plural}/{name}` - patch
-- `DELETE /apis/rbac.authorization/v1/{plural}/{name}` - delete
+- `GET    /apis/authorization/v1/{plural}` - list
+- `POST   /apis/authorization/v1/{plural}` - create
+- `GET    /apis/authorization/v1/{plural}/{name}` - read
+- `PUT    /apis/authorization/v1/{plural}/{name}` - update
+- `PATCH  /apis/authorization/v1/{plural}/{name}` - patch
+- `DELETE /apis/authorization/v1/{plural}/{name}` - delete
 
 **Role, RoleBinding (namespaced)**:
-- `GET    /apis/rbac.authorization/v1/{plural}` - list-all
-- `GET    /apis/rbac.authorization/v1/namespaces/{namespace}/{plural}` - list
-- `POST   /apis/rbac.authorization/v1/namespaces/{namespace}/{plural}` - create
-- `GET    /apis/rbac.authorization/v1/namespaces/{namespace}/{plural}/{name}` - read
-- `PUT    /apis/rbac.authorization/v1/namespaces/{namespace}/{plural}/{name}` - update
-- `PATCH  /apis/rbac.authorization/v1/namespaces/{namespace}/{plural}/{name}` - patch
-- `DELETE /apis/rbac.authorization/v1/namespaces/{namespace}/{plural}/{name}` - delete
+- `GET    /apis/authorization/v1/{plural}` - list-all
+- `GET    /apis/authorization/v1/namespaces/{namespace}/{plural}` - list
+- `POST   /apis/authorization/v1/namespaces/{namespace}/{plural}` - create
+- `GET    /apis/authorization/v1/namespaces/{namespace}/{plural}/{name}` - read
+- `PUT    /apis/authorization/v1/namespaces/{namespace}/{plural}/{name}` - update
+- `PATCH  /apis/authorization/v1/namespaces/{namespace}/{plural}/{name}` - patch
+- `DELETE /apis/authorization/v1/namespaces/{namespace}/{plural}/{name}` - delete
 
 ### resource_registry.rs への登録
 
@@ -43,7 +43,7 @@ tugboat-apiserver/src/endpoints/v1_rbac_authorization/
 
 ### endpoints/mod.rs への登録
 
-- `v1_rbac_authorization` モジュールを追加
+- `v1_authorization` モジュールを追加
 - `register_endpoints` にrbacルートを追加
 - OpenAPIドキュメントに追加
 

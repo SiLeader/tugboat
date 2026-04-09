@@ -2,7 +2,7 @@
 
 ## 概要
 
-`rbac.authorization/v1` APIグループのProtobufメッセージを定義する。
+`authorization/v1` APIグループのProtobufメッセージを定義する。
 
 ## 対象リソース
 
@@ -62,13 +62,13 @@ message PolicyRule {
 
 message Subject {
   string kind = 1;       // "User", "Group", "ServiceAccount"
-  string api_group = 2;  // "rbac.authorization" or ""(core)
+  string api_group = 2;  // "authorization" or ""(core)
   string name = 3;
   string namespace = 4;  // ServiceAccountの場合のみ
 }
 
 message RoleRef {
-  string api_group = 1;  // "rbac.authorization"
+  string api_group = 1;  // "authorization"
   string kind = 2;       // "Role" or "ClusterRole"
   string name = 3;
 }
@@ -76,7 +76,7 @@ message RoleRef {
 
 ## 作業内容
 
-1. `tugboat-resources/proto/rbac_authorization/v1/` ディレクトリを作成
+1. `tugboat-resources/proto/authorization/v1/` ディレクトリを作成
 2. 以下のprotoファイルを作成:
    - `policy_rule.proto` (PolicyRule, Subject, RoleRef)
    - `role.proto` (Role)
@@ -90,4 +90,4 @@ message RoleRef {
 
 - 既存のproto定義: `tugboat-resources/proto/core/v1/`, `tugboat-resources/proto/apps/v1/`
 - build.rs: serde属性やcamelCase変換の適用パターンを踏襲する
-- Kubernetes対応: `rbac.authorization.k8s.io/v1` → `rbac.authorization/v1`
+- Kubernetes対応: `rbac.authorization.k8s.io/v1` → `authorization/v1`

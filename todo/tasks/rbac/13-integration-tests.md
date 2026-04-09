@@ -37,7 +37,7 @@ RBAC機能全体の統合テストを実装する。
 
 ### APIディスカバリーテスト
 
-18. **RBAC API discovery**: `/apis/rbac.authorization/v1` でリソース一覧が返る
+18. **RBAC API discovery**: `/apis/authorization/v1` でリソース一覧が返る
 
 ## 作業内容
 

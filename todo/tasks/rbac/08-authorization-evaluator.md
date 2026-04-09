@@ -12,7 +12,7 @@ RBAC policyに基づいてリクエストの認可判定を行うエバリュエ
 pub struct AuthorizationRequest {
     pub user: UserInfo,
     pub verb: String,          // "create", "get", "list", "update", "patch", "delete", "watch"
-    pub api_group: String,     // "core", "apps", "rbac.authorization"
+    pub api_group: String,     // "core", "apps", "authorization"
     pub resource: String,      // "ships", "deployments", "roles"
     pub resource_name: Option<String>,
     pub namespace: Option<String>,

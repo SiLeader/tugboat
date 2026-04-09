@@ -8,17 +8,17 @@
 
 ### tugboat-resources/src/manifests/mod.rs
 
-1. `rbac_authorization/v1` モジュールのincludeを追加
+1. `authorization/v1` モジュールのincludeを追加
 2. 以下のリソースに `apply_resource!` マクロを適用:
 
 ```rust
-// rbac.authorization/v1 - cluster-scoped
-apply_resource!(ClusterRole, "rbac.authorization", "v1", "clusterroles", "clusterrole", cluster);
-apply_resource!(ClusterRoleBinding, "rbac.authorization", "v1", "clusterrolebindings", "clusterrolebinding", cluster);
+// authorization/v1 - cluster-scoped
+apply_resource!(ClusterRole, "authorization", "v1", "clusterroles", "clusterrole", cluster);
+apply_resource!(ClusterRoleBinding, "authorization", "v1", "clusterrolebindings", "clusterrolebinding", cluster);
 
-// rbac.authorization/v1 - namespaced
-apply_resource!(Role, "rbac.authorization", "v1", "roles", "role", namespaced);
-apply_resource!(RoleBinding, "rbac.authorization", "v1", "rolebindings", "rolebinding", namespaced);
+// authorization/v1 - namespaced
+apply_resource!(Role, "authorization", "v1", "roles", "role", namespaced);
+apply_resource!(RoleBinding, "authorization", "v1", "rolebindings", "rolebinding", namespaced);
 ```
 
 3. 以下のリソースに `apply_validators!` マクロを適用:
