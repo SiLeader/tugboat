@@ -38,20 +38,24 @@ pub struct ContentData<T> {
     pub revision: i64,
 }
 
+pub struct PutRequest {
+    key: String,
+    bytes: Vec<u8>,
+    expected_revision: Option<i64>,
+}
+
 impl<T: ObjectMetaResource> ContentData<T> {
     pub fn apply_revision(mut self) -> T {
-        let rev = self.revision;
+        let rev = self.revision.to_string();
         self.data.modify_object_meta(|meta| match meta {
             None => {
                 let _ = meta.insert(ObjectMeta {
-                    generation: Some(rev),
-                    resource_version: Some(rev.to_string()),
+                    resource_version: Some(rev.clone()),
                     ..Default::default()
                 });
             }
             Some(meta) => {
-                meta.generation = Some(rev);
-                meta.resource_version = Some(rev.to_string());
+                meta.resource_version = Some(rev.clone());
             }
         });
         self.data
@@ -59,6 +63,35 @@ impl<T: ObjectMetaResource> ContentData<T> {
 }
 
 impl ResourceStore {
+    fn prepare_put_inner<T: StaticSerializable + ObjectMetaResource>(
+        value: &T,
+    ) -> Result<PutRequest, Error> {
+        let Some(meta) = value.object_meta() else {
+            info!("Resource metadata is missing");
+            return Err(Error::FieldMissing("metadata".to_string()));
+        };
+        let Some(name) = &meta.name else {
+            info!("Resource metadata.name is missing");
+            return Err(Error::FieldMissing("metadata.name".to_string()));
+        };
+        let expected_revision = meta
+            .resource_version
+            .as_ref()
+            .and_then(|v| v.parse::<i64>().ok());
+        let key = Self::create_key::<T>(meta.namespace.clone(), name);
+        let bytes = value.serialize()?;
+        debug!(
+            "Prepared put request key = {key}, value = {} bytes",
+            bytes.len()
+        );
+
+        Ok(PutRequest {
+            key,
+            bytes,
+            expected_revision,
+        })
+    }
+
     pub async fn new(endpoints: &[String]) -> Result<Self, Error> {
         info!("Creating etcd client: endpoints: {endpoints:?}");
         let client = Client::connect(endpoints, None).await?;
@@ -85,90 +118,76 @@ impl ResourceStore {
         }
     }
 
+    pub fn prepare_put<T: StaticSerializable + ObjectMetaResource>(
+        &self,
+        value: &T,
+    ) -> Result<PutRequest, Error> {
+        Self::prepare_put_inner(value)
+    }
+
+    pub async fn put_many(&self, requests: Vec<PutRequest>) -> Result<i64, Error> {
+        if requests.is_empty() {
+            return Ok(0);
+        }
+
+        info!("Put multiple resources: count = {}", requests.len());
+        let first_expected_revision = requests
+            .iter()
+            .find_map(|request| request.expected_revision)
+            .unwrap_or(0);
+        let compares = requests
+            .iter()
+            .filter_map(|request| {
+                request.expected_revision.map(|revision| {
+                    Compare::mod_revision(request.key.as_str(), CompareOp::Equal, revision)
+                })
+            })
+            .collect::<Vec<_>>();
+        let puts = requests
+            .iter()
+            .map(|request| TxnOp::put(request.key.as_str(), request.bytes.clone(), None))
+            .collect::<Vec<_>>();
+
+        let mut txn = Txn::new();
+        if !compares.is_empty() {
+            txn = txn.when(compares);
+        }
+        txn = txn.and_then(puts);
+        if requests
+            .iter()
+            .any(|request| request.expected_revision.is_some())
+        {
+            let conflict_reads = requests
+                .iter()
+                .filter(|request| request.expected_revision.is_some())
+                .map(|request| TxnOp::get(request.key.as_str(), None))
+                .collect::<Vec<_>>();
+            txn = txn.or_else(conflict_reads);
+        }
+
+        let mut client = self.etcd.clone();
+        let response = client.txn(txn).await?;
+        if !response.succeeded() {
+            return Err(Error::OptimisticLockFailed(first_expected_revision));
+        }
+
+        Ok(response
+            .header()
+            .map(|header| header.revision())
+            .unwrap_or(0))
+    }
+
     pub async fn put<T: StaticSerializable + ObjectMetaResource>(
         &self,
         value: T,
     ) -> Result<ContentData<T>, Error> {
         info!("Put resource");
-        let Some(meta) = value.object_meta() else {
-            info!("Resource metadata is missing");
-            return Err(Error::FieldMissing("metadata".to_string()));
-        };
-        let Some(name) = &meta.name else {
-            info!("Resource metadata.name is missing");
-            return Err(Error::FieldMissing("metadata.name".to_string()));
-        };
-        let resource_version = meta
-            .resource_version
-            .as_ref()
-            .and_then(|v| v.parse::<i64>().ok());
-        let key = Self::create_key::<T>(meta.namespace.clone(), name);
-        let bytes = value.serialize()?;
-        debug!("Put resource key = {key}, value = {} bytes", bytes.len());
-
-        let mut client = self.etcd.clone();
-
-        let res = match resource_version {
-            Some(rv) => {
-                debug!("Attempting conditional update for {key} with rv={rv}");
-                let txn = Txn::new()
-                    .when(vec![Compare::mod_revision(
-                        key.as_str(),
-                        CompareOp::Equal,
-                        rv,
-                    )])
-                    .and_then(vec![TxnOp::put(key.as_str(), bytes, None)])
-                    .or_else(vec![TxnOp::get(key.as_str(), None)]);
-
-                let res = client.txn(txn).await?;
-
-                if !res.succeeded() {
-                    let header_rev = res.header().map(|h| h.revision()).unwrap_or(-1);
-                    // Extract current mod_revision from the get response in or_else
-                    let mut current_mod_rev = -1;
-                    if let Some(op_resp) = res.op_responses().first()
-                        && let TxnOpResponse::Get(range_resp) = op_resp
-                        && let Some(kv) = range_resp.kvs().first()
-                    {
-                        current_mod_rev = kv.mod_revision();
-                    }
-
-                    info!(
-                        "Optimistic lock failed for key {key}: expected rv {rv}, actual mod_revision {current_mod_rev}, global rev {header_rev}"
-                    );
-                    return Err(Error::OptimisticLockFailed(rv));
-                }
-
-                if let TxnOpResponse::Put(p) = res
-                    .op_responses()
-                    .first()
-                    .ok_or(Error::OptimisticLockFailed(rv))?
-                    .clone()
-                {
-                    // For PUT, we don't get the new mod_revision directly in the response unless we ask for it.
-                    // But the header revision is the global revision, which is NOT the mod_revision (unless it's the only change).
-                    // Actually, mod_revision = global revision at the time of modification.
-                    // So using header.revision() IS correct for the NEW revision of this key.
-
-                    // Wait, if header.revision() is 100, and this key was modified, its mod_revision will be 100.
-                    // So for PUT response, header.revision() matches the new mod_revision of the key.
-                    // BUT for GET, we were reading header.revision() which was global revision (e.g. 105),
-                    // while the key might have been last modified at 100.
-                    // So we were comparing 100 (from key) vs 105 (from header).
-
-                    // So, in PUT response, using header.revision() is likely correct as it represents the revision of the transaction.
-                    p
-                } else {
-                    return Err(Error::OptimisticLockFailed(rv));
-                }
-            }
-            None => client.put(key, bytes, None).await?,
-        };
+        let request = Self::prepare_put_inner(&value)?;
+        let revision = self.put_many(vec![request]).await?;
 
         Ok(ContentData {
             data: value,
-            // For simple PUT, header.revision() is the revision of this modification.
-            revision: res.header().map(|h| h.revision()).unwrap_or(0),
+            revision,
         })
     }
 
@@ -293,5 +312,43 @@ impl ResourceStore {
             data: value,
             revision: kv.mod_revision(),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContentData;
+    use tugboat_resources::ObjectMetaResource;
+    use tugboat_resources::manifests::core::v1::Ship;
+    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+
+    #[test]
+    fn apply_revision_preserves_generation() {
+        let ship = Ship {
+            object_meta: Some(ObjectMeta {
+                name: Some("demo".to_string()),
+                namespace: Some("default".to_string()),
+                generation: Some(7),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let ship = ContentData {
+            data: ship,
+            revision: 42,
+        }
+        .apply_revision();
+
+        assert_eq!(
+            ship.object_meta()
+                .as_ref()
+                .and_then(|meta| meta.resource_version.as_deref()),
+            Some("42")
+        );
+        assert_eq!(
+            ship.object_meta().as_ref().and_then(|meta| meta.generation),
+            Some(7)
+        );
     }
 }

@@ -19,6 +19,7 @@ use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use serde::Serialize;
+use tugboat_resource_store::{ContentData, PutRequest};
 use tugboat_resources::ShipMigrationExt;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, NetworkClass, Node, NodeSpec, PersistentVolume, PersistentVolumeClaim,
@@ -189,6 +190,7 @@ pub(super) async fn handle_node_replace(
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,
+            update_generation: true,
         },
     )
     .await
@@ -219,6 +221,7 @@ pub(super) async fn handle_node_patch(
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,
+            update_generation: true,
         },
     )
     .await
@@ -245,14 +248,25 @@ pub(super) async fn handle_node_drain(
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<NodeDrainResponse>, Box<StatusResponse>> {
     let node_name = path.into_inner().name;
-    let node = get_current_node(&operator, node_name.clone()).await?;
-    let node = mark_node_unschedulable(&operator, node).await?;
+    let (mut node, node_changed) =
+        prepare_node_unschedulable(get_current_node(&operator, node_name.clone()).await?);
 
-    let resources = load_drain_resources(&operator).await?;
+    let mut resources = load_drain_resources(&operator).await?;
+    apply_drain_node_state(&mut resources, &node_name, &node);
     let framework = build_drain_framework();
     let plan = plan_node_drain(&node_name, &resources, &framework);
 
     let mut started_ships = Vec::with_capacity(plan.started.len());
+    let mut put_requests: Vec<PutRequest> =
+        Vec::with_capacity(plan.started.len() + usize::from(node_changed));
+    if node_changed {
+        put_requests.push(
+            operator
+                .store
+                .prepare_put(&node)
+                .map_err(Box::<StatusResponse>::from)?,
+        );
+    }
     for started in &plan.started {
         let current = get_current_ship(
             &operator,
@@ -260,15 +274,28 @@ pub(super) async fn handle_node_drain(
             started.ship_name.clone(),
         )
         .await?;
-        let mut updated = current.clone();
-        let spec = updated.spec.get_or_insert_with(Default::default);
-        spec.target_node_name = Some(started.target_node_name.clone());
-        operator
+        let updated = prepare_ship_for_drain(current, &started.target_node_name);
+        put_requests.push(
+            operator
+                .store
+                .prepare_put(&updated)
+                .map_err(Box::<StatusResponse>::from)?,
+        );
+        started_ships.push(started.ship_key.clone());
+    }
+    if !put_requests.is_empty() {
+        let revision = operator
             .store
-            .put(updated)
+            .put_many(put_requests)
             .await
             .map_err(Box::<StatusResponse>::from)?;
-        started_ships.push(started.ship_key.clone());
+        if node_changed {
+            node = ContentData {
+                data: node,
+                revision,
+            }
+            .apply_revision();
+        }
     }
 
     Ok(ReadResponse::new(NodeDrainResponse {
@@ -349,6 +376,20 @@ fn build_drain_framework() -> Framework {
         }
     }
     framework
+}
+
+fn apply_drain_node_state(resources: &mut DrainPlanningResources, node_name: &str, node: &Node) {
+    if let Some(existing) = resources.nodes.iter_mut().find(|candidate| {
+        candidate
+            .object_meta
+            .as_ref()
+            .and_then(|meta| meta.name.as_deref())
+            == Some(node_name)
+    }) {
+        *existing = node.clone();
+    } else {
+        resources.nodes.push(node.clone());
+    }
 }
 
 fn plan_node_drain(
@@ -658,22 +699,22 @@ async fn get_current_node(
     Ok(current.apply_revision())
 }
 
-async fn mark_node_unschedulable(
-    operator: &ApiOperator,
-    mut node: Node,
-) -> Result<Node, Box<StatusResponse>> {
+fn prepare_node_unschedulable(mut node: Node) -> (Node, bool) {
     let spec = node.spec.get_or_insert_with(NodeSpec::default);
     if spec.unschedulable == Some(true) {
-        return Ok(node);
+        return (node, false);
     }
 
     spec.unschedulable = Some(true);
-    operator
-        .store
-        .put(node)
-        .await
-        .map_err(Box::<StatusResponse>::from)
-        .map(|item| item.apply_revision())
+    resource_handlers::bump_generation(&mut node);
+    (node, true)
+}
+
+fn prepare_ship_for_drain(mut ship: Ship, target_node_name: &str) -> Ship {
+    let spec = ship.spec.get_or_insert_with(Default::default);
+    spec.target_node_name = Some(target_node_name.to_string());
+    resource_handlers::bump_generation(&mut ship);
+    ship
 }
 
 async fn get_current_ship(
@@ -865,5 +906,49 @@ mod tests {
         assert!(plan.warnings.iter().any(
             |warning| warning.ship == "default/rwo" && warning.reason.contains("ReadWriteMany")
         ));
+    }
+
+    #[test]
+    fn prepare_node_unschedulable_bumps_generation() {
+        let mut current = node("node-a", 8, 8 * 1024 * 1024 * 1024, false);
+        current.object_meta.as_mut().unwrap().generation = Some(2);
+
+        let (updated, changed) = prepare_node_unschedulable(current);
+
+        assert!(changed);
+        assert_eq!(
+            updated.spec.as_ref().and_then(|spec| spec.unschedulable),
+            Some(true)
+        );
+        assert_eq!(
+            updated
+                .object_meta
+                .as_ref()
+                .and_then(|meta| meta.generation),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn prepare_ship_for_drain_bumps_generation() {
+        let mut current = ship("ship-a", "node-a", "small");
+        current.object_meta.as_mut().unwrap().generation = Some(4);
+
+        let updated = prepare_ship_for_drain(current, "node-b");
+
+        assert_eq!(
+            updated
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.target_node_name.as_deref()),
+            Some("node-b")
+        );
+        assert_eq!(
+            updated
+                .object_meta
+                .as_ref()
+                .and_then(|meta| meta.generation),
+            Some(5)
+        );
     }
 }

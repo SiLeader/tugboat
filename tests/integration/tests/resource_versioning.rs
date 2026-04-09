@@ -194,6 +194,56 @@ async fn ship_spec_updates_bump_generation() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn ship_status_updates_do_not_bump_generation() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let client = Client::new();
+    create_namespace(&client, &ctx.base_url, "test-ns").await?;
+
+    let created = create_resource(
+        &client,
+        &ctx.base_url,
+        "/api/v1/namespaces/test-ns/ships",
+        &ship_manifest(
+            "test-ns",
+            "status-generation-ship",
+            "small",
+            "registry.example.com/demo:v1",
+        ),
+    )
+    .await?;
+    let initial_generation = integer_field(&created, &["metadata", "generation"])?;
+
+    let patched = request_json(
+        &client,
+        Method::PATCH,
+        &format!(
+            "{}/api/v1/namespaces/test-ns/ships/status-generation-ship/status",
+            ctx.base_url
+        ),
+        StatusCode::OK,
+        Some(json!({
+            "status": {
+                "conditions": [
+                    {
+                        "status": "Ready",
+                        "message": "running"
+                    }
+                ]
+            }
+        })),
+    )
+    .await?;
+    let updated_generation = integer_field(&patched, &["metadata", "generation"])?;
+
+    assert_eq!(updated_generation, initial_generation);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn recreating_ship_with_same_name_gets_new_uid() -> Result<(), DynError> {
     let Some(ctx) = setup_or_skip().await? else {
         return Ok(());

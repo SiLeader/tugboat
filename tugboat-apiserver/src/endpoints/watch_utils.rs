@@ -20,6 +20,7 @@ use actix_web::HttpResponse;
 use actix_web_lab::respond::NdJson;
 use async_stream::stream;
 use serde::Serialize;
+use tugboat_resource_store::ContentData;
 use tugboat_resource_store::serializer::StaticSerializable;
 use tugboat_resources::ObjectMetaResource;
 
@@ -120,25 +121,37 @@ where
 
 impl<T> TryFrom<tugboat_resource_store::watch::WatchEvent> for WatchEvent<T>
 where
-    T: StaticSerializable,
+    T: StaticSerializable + ObjectMetaResource,
 {
     type Error = Box<StatusResponse>;
 
     fn try_from(value: tugboat_resource_store::watch::WatchEvent) -> Result<Self, Self::Error> {
         match value {
-            tugboat_resource_store::watch::WatchEvent::Added(value) => {
-                let value =
-                    T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+            tugboat_resource_store::watch::WatchEvent::Added(kv) => {
+                let value = T::deserialize(kv.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+                let value = ContentData {
+                    data: value,
+                    revision: kv.revision,
+                }
+                .apply_revision();
                 Ok(WatchEvent::Added(value))
             }
-            tugboat_resource_store::watch::WatchEvent::Modified(value) => {
-                let value =
-                    T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+            tugboat_resource_store::watch::WatchEvent::Modified(kv) => {
+                let value = T::deserialize(kv.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+                let value = ContentData {
+                    data: value,
+                    revision: kv.revision,
+                }
+                .apply_revision();
                 Ok(WatchEvent::Modifed(value))
             }
-            tugboat_resource_store::watch::WatchEvent::Deleted(value) => {
-                let value =
-                    T::deserialize(value.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+            tugboat_resource_store::watch::WatchEvent::Deleted(kv) => {
+                let value = T::deserialize(kv.value.as_slice()).map_err(|e| Box::new(e.into()))?;
+                let value = ContentData {
+                    data: value,
+                    revision: kv.revision,
+                }
+                .apply_revision();
                 Ok(WatchEvent::Deleted(value))
             }
         }

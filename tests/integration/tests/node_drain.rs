@@ -22,13 +22,16 @@ async fn node_drain_marks_node_unschedulable_and_starts_ship_evacuation() -> Res
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
-    create_resource(
+    let created_node = create_resource(
         &client,
         &ctx.base_url,
         "/api/v1/nodes",
         &node_manifest("drain-node", 4, 8 * 1024 * 1024 * 1024),
     )
     .await?;
+    let initial_node_generation = created_node["metadata"]["generation"]
+        .as_i64()
+        .ok_or("created node is missing metadata.generation")?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -43,7 +46,7 @@ async fn node_drain_marks_node_unschedulable_and_starts_ship_evacuation() -> Res
         &shipclass_manifest("small", 1, "1Gi"),
     )
     .await?;
-    create_resource(
+    let created_ship = create_resource(
         &client,
         &ctx.base_url,
         "/api/v1/namespaces/test-ns/ships",
@@ -56,6 +59,9 @@ async fn node_drain_marks_node_unschedulable_and_starts_ship_evacuation() -> Res
         ),
     )
     .await?;
+    let initial_ship_generation = created_ship["metadata"]["generation"]
+        .as_i64()
+        .ok_or("created ship is missing metadata.generation")?;
 
     let drain_response = request_json(
         &client,
@@ -78,6 +84,11 @@ async fn node_drain_marks_node_unschedulable_and_starts_ship_evacuation() -> Res
 
     let drained_node = get_json(&client, &ctx.base_url, "/api/v1/nodes/drain-node").await?;
     assert_eq!(drained_node["spec"]["unschedulable"], true);
+    assert!(
+        drained_node["metadata"]["generation"]
+            .as_i64()
+            .is_some_and(|generation| generation > initial_node_generation)
+    );
 
     let ship = wait_for_ship(
         &client,
@@ -90,6 +101,11 @@ async fn node_drain_marks_node_unschedulable_and_starts_ship_evacuation() -> Res
     .await?;
     assert_eq!(ship["spec"]["nodeName"], "drain-node");
     assert_eq!(ship["spec"]["targetNodeName"], "other-node");
+    assert!(
+        ship["metadata"]["generation"]
+            .as_i64()
+            .is_some_and(|generation| generation > initial_ship_generation)
+    );
 
     Ok(())
 }

@@ -42,6 +42,8 @@ impl ApiOperator {
     pub(crate) fn apply_uid(&self, mut object_meta: ObjectMeta) -> ObjectMeta {
         object_meta.uid = Some(Uuid::new_v4().to_string());
         object_meta.creation_timestamp = Some(Time::now());
+        object_meta.generation = Some(1);
+        object_meta.resource_version = None;
         object_meta
     }
 }

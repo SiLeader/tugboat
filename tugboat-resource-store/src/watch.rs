@@ -26,6 +26,7 @@ use tracing::{debug, error};
 pub struct KeyValue {
     pub key: String,
     pub value: Vec<u8>,
+    pub revision: i64,
 }
 
 #[derive(Clone)]
@@ -123,6 +124,7 @@ fn transform_event(event: &etcd_client::Event) -> Option<WatchEvent> {
             let kv = KeyValue {
                 key,
                 value: kv.value().to_vec(),
+                revision: kv.mod_revision(),
             };
             Some(if is_added {
                 WatchEvent::Added(kv)
@@ -136,6 +138,7 @@ fn transform_event(event: &etcd_client::Event) -> Option<WatchEvent> {
             Some(WatchEvent::Deleted(KeyValue {
                 key,
                 value: kv.value().to_vec(),
+                revision: kv.mod_revision(),
             }))
         }
     }
