@@ -82,7 +82,7 @@ impl TugboatClient {
 }
 
 fn build_http_client(auth: ClientAuth, tls: ClientTlsConfig) -> Result<reqwest::Client, Error> {
-    let mut builder = reqwest::Client::builder();
+    let mut builder = reqwest::Client::builder().https_only(true);
     match auth {
         ClientAuth::None => {}
         ClientAuth::BearerToken { token } => {
