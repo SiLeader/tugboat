@@ -3373,6 +3373,8 @@ dependencies = [
 name = "tugboat-integration-tests"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "openssl",
  "reqwest 0.13.2",
  "serde_json",
  "tokio",
@@ -3380,6 +3382,7 @@ dependencies = [
  "tugboat-apiserver",
  "tugboat-client",
  "tugboat-controller-manager",
+ "tugboat-resource-store",
  "tugboat-resources",
  "tugboat-scheduler",
 ]
