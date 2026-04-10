@@ -13,7 +13,9 @@ use openssl::asn1::Asn1Time;
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
-use openssl::x509::extension::{BasicConstraints, ExtendedKeyUsage, KeyUsage};
+use openssl::x509::extension::{
+    BasicConstraints, ExtendedKeyUsage, KeyUsage, SubjectAlternativeName,
+};
 use openssl::x509::{X509, X509NameBuilder};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use tokio::process::Command;
@@ -47,7 +49,8 @@ pub struct TestContext {
     pub base_url: String,
     pub client: TugboatClient,
     pub admin_token: Option<String>,
-    has_tls: bool,
+    ca_cert_pem: Option<Vec<u8>>,
+    ca_cert_path: Option<PathBuf>,
     masters_identity_pem: Option<Vec<u8>>,
     _guard: TestGuard,
 }
@@ -83,17 +86,24 @@ enum AuthorizationModeSetting {
 }
 
 #[derive(Clone, Copy)]
+enum TlsMode {
+    ServerOnly,
+    Mtls,
+}
+
+#[derive(Clone, Copy)]
 struct SetupOptions {
     authorization_mode: AuthorizationModeSetting,
     seed_admin_token: bool,
-    enable_mtls: bool,
+    tls_mode: TlsMode,
 }
 
 struct GeneratedTlsAssets {
     server_cert_path: PathBuf,
     server_key_path: PathBuf,
-    client_ca_path: PathBuf,
-    masters_identity_pem: Vec<u8>,
+    ca_cert_path: PathBuf,
+    ca_cert_pem: Vec<u8>,
+    masters_identity_pem: Option<Vec<u8>>,
     temp_paths: Vec<PathBuf>,
 }
 
@@ -102,7 +112,7 @@ impl TestContext {
         Self::setup_with_options(SetupOptions {
             authorization_mode: AuthorizationModeSetting::AlwaysAllow,
             seed_admin_token: false,
-            enable_mtls: false,
+            tls_mode: TlsMode::ServerOnly,
         })
         .await
     }
@@ -111,7 +121,7 @@ impl TestContext {
         Self::setup_with_options(SetupOptions {
             authorization_mode: AuthorizationModeSetting::Rbac,
             seed_admin_token: true,
-            enable_mtls: false,
+            tls_mode: TlsMode::ServerOnly,
         })
         .await
     }
@@ -120,7 +130,7 @@ impl TestContext {
         Self::setup_with_options(SetupOptions {
             authorization_mode: AuthorizationModeSetting::Rbac,
             seed_admin_token: true,
-            enable_mtls: true,
+            tls_mode: TlsMode::Mtls,
         })
         .await
     }
@@ -128,17 +138,20 @@ impl TestContext {
     async fn setup_with_options(options: SetupOptions) -> Result<Option<Self>, DynError> {
         init_test_tracing();
 
-        if matches!(options.authorization_mode, AuthorizationModeSetting::AlwaysAllow)
-            && !options.enable_mtls
+        if matches!(
+            options.authorization_mode,
+            AuthorizationModeSetting::AlwaysAllow
+        ) && matches!(options.tls_mode, TlsMode::ServerOnly)
             && let Some(base_url) = std::env::var_os(APISERVER_URL_ENV)
         {
             let base_url = base_url.to_string_lossy().into_owned();
-            wait_for_healthz(&base_url, None).await?;
+            wait_for_healthz(&base_url, None, None).await?;
             return Ok(Some(Self {
                 client: TugboatClient::new(base_url.clone()),
                 base_url,
                 admin_token: None,
-                has_tls: false,
+                ca_cert_pem: None,
+                ca_cert_path: None,
                 masters_identity_pem: None,
                 _guard: TestGuard::External,
             }));
@@ -157,49 +170,27 @@ impl TestContext {
         } else {
             None
         };
-        let tls_assets = if options.enable_mtls {
-            Some(generate_mtls_assets()?)
-        } else {
-            None
-        };
+        let tls_assets = generate_tls_assets(options.tls_mode)?;
 
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
-        let base_url = if options.enable_mtls {
-            format!("https://127.0.0.1:{port}")
-        } else {
-            format!("http://127.0.0.1:{port}")
-        };
+        let base_url = format!("https://127.0.0.1:{port}");
 
         let mut temp_paths = Vec::new();
-        let server = if matches!(options.authorization_mode, AuthorizationModeSetting::AlwaysAllow)
-            && !options.enable_mtls
+        let config_path = write_apiserver_config(port, &etcd.0, options, Some(&tls_assets))?;
+        temp_paths.push(config_path.clone());
+        let server =
+            ApiServer::from_config(ApiServerConfig::load_from_file_or_panic(config_path)).await?;
+
+        temp_paths.extend(tls_assets.temp_paths.clone());
+
+        // Drop the pre-bound listener so the server can bind to the same port with TLS.
+        drop(listener);
+        let apiserver = tokio::spawn(server.run());
+        let healthz_identity = tls_assets.masters_identity_pem.as_deref();
+        if let Err(err) =
+            wait_for_healthz(&base_url, healthz_identity, Some(&tls_assets.ca_cert_pem)).await
         {
-            ApiServer::from_config(ApiServerConfig::new(
-                format!("127.0.0.1:{port}"),
-                vec![etcd.0.clone()],
-            ))
-            .await?
-        } else {
-            let config_path = write_apiserver_config(port, &etcd.0, options, tls_assets.as_ref())?;
-            temp_paths.push(config_path.clone());
-            ApiServer::from_config(ApiServerConfig::load_from_file_or_panic(config_path)).await?
-        };
-
-        if let Some(tls_assets) = tls_assets.as_ref() {
-            temp_paths.extend(tls_assets.temp_paths.clone());
-        }
-
-        let apiserver = if options.enable_mtls {
-            drop(listener);
-            tokio::spawn(server.run())
-        } else {
-            tokio::spawn(server.run_with_listener(listener))
-        };
-        let healthz_identity = tls_assets
-            .as_ref()
-            .map(|assets| assets.masters_identity_pem.as_slice());
-        if let Err(err) = wait_for_healthz(&base_url, healthz_identity).await {
             apiserver.abort();
             let _ = apiserver.await;
             return Err(err);
@@ -209,8 +200,9 @@ impl TestContext {
             client: TugboatClient::new(base_url.clone()),
             base_url,
             admin_token,
-            has_tls: options.enable_mtls,
-            masters_identity_pem: tls_assets.map(|assets| assets.masters_identity_pem),
+            ca_cert_pem: Some(tls_assets.ca_cert_pem.clone()),
+            ca_cert_path: Some(tls_assets.ca_cert_path.clone()),
+            masters_identity_pem: tls_assets.masters_identity_pem,
             _guard: TestGuard::Managed {
                 apiserver,
                 etcd: etcd.1,
@@ -254,10 +246,14 @@ impl TestContext {
             .map_err(Into::into)
     }
 
+    pub fn ca_cert_pem(&self) -> Option<&[u8]> {
+        self.ca_cert_pem.as_deref()
+    }
+
     fn client_builder(&self) -> Result<reqwest::ClientBuilder, DynError> {
         let mut builder = reqwest::Client::builder();
-        if self.has_tls {
-            builder = builder.danger_accept_invalid_certs(true);
+        if let Some(ca_pem) = &self.ca_cert_pem {
+            builder = builder.add_root_certificate(reqwest::Certificate::from_pem(ca_pem)?);
         }
         Ok(builder)
     }
@@ -268,10 +264,15 @@ impl TestContext {
             std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
         ));
+        let tls_section = self
+            .ca_cert_path
+            .as_ref()
+            .map(|p| format!("\n[apiserver.tls]\nca_cert_path = \"{}\"\n", p.display()))
+            .unwrap_or_default();
         std::fs::write(
             &config_path,
             format!(
-                "[apiserver]\nurl = \"{}\"\n\n[scheduler]\nname = \"default-scheduler\"\nlease_duration_seconds = 15\nrenew_interval_seconds = 1\nscheduling_interval_seconds = 1\n",
+                "[apiserver]\nurl = \"{}\"\n{tls_section}\n[scheduler]\nname = \"default-scheduler\"\nlease_duration_seconds = 15\nrenew_interval_seconds = 1\nscheduling_interval_seconds = 1\n",
                 self.base_url
             ),
         )?;
@@ -292,10 +293,15 @@ impl TestContext {
             std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
         ));
+        let tls_section = self
+            .ca_cert_path
+            .as_ref()
+            .map(|p| format!("\n[apiserver.tls]\nca_cert_path = \"{}\"\n", p.display()))
+            .unwrap_or_default();
         std::fs::write(
             &config_path,
             format!(
-                "[apiserver]\nurl = \"{}\"\n\n[csi]\nrequeue_interval_seconds = 1\n\n[network]\nrequeue_interval_seconds = 1\n",
+                "[apiserver]\nurl = \"{}\"\n{tls_section}\n[csi]\nrequeue_interval_seconds = 1\n\n[network]\nrequeue_interval_seconds = 1\n",
                 self.base_url
             ),
         )?;
@@ -364,9 +370,15 @@ impl Drop for TestGuard {
     }
 }
 
-async fn wait_for_healthz(base_url: &str, identity_pem: Option<&[u8]>) -> Result<(), DynError> {
-    let mut builder = reqwest::Client::builder()
-        .danger_accept_invalid_certs(base_url.starts_with("https://"));
+async fn wait_for_healthz(
+    base_url: &str,
+    identity_pem: Option<&[u8]>,
+    ca_cert_pem: Option<&[u8]>,
+) -> Result<(), DynError> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(ca_pem) = ca_cert_pem {
+        builder = builder.add_root_certificate(reqwest::Certificate::from_pem(ca_pem)?);
+    }
     if let Some(identity_pem) = identity_pem {
         builder = builder.identity(reqwest::Identity::from_pem(identity_pem)?);
     }
@@ -507,10 +519,7 @@ async fn seed_admin_service_account(etcd_endpoint: &str) -> Result<String, DynEr
                 )]),
                 ..Default::default()
             }),
-            data: HashMap::from([(
-                TOKEN_DATA_KEY.to_string(),
-                BASE64_STANDARD.encode(&token),
-            )]),
+            data: HashMap::from([(TOKEN_DATA_KEY.to_string(), BASE64_STANDARD.encode(&token))]),
             r#type: SERVICE_ACCOUNT_TOKEN_SECRET_TYPE.to_string(),
             ..Default::default()
         })
@@ -553,12 +562,20 @@ fn write_apiserver_config(
         }
     );
     if let Some(tls_assets) = tls_assets {
-        config.push_str(&format!(
-            "\n[http.tls]\ncert_file = \"{}\"\nkey_file = \"{}\"\nclient_cert_file = \"{}\"\n",
-            tls_assets.server_cert_path.display(),
-            tls_assets.server_key_path.display(),
-            tls_assets.client_ca_path.display(),
-        ));
+        if matches!(options.tls_mode, TlsMode::Mtls) {
+            config.push_str(&format!(
+                "\n[http.tls]\ncert_file = \"{}\"\nkey_file = \"{}\"\nclient_cert_file = \"{}\"\n",
+                tls_assets.server_cert_path.display(),
+                tls_assets.server_key_path.display(),
+                tls_assets.ca_cert_path.display(),
+            ));
+        } else {
+            config.push_str(&format!(
+                "\n[http.tls]\ncert_file = \"{}\"\nkey_file = \"{}\"\n",
+                tls_assets.server_cert_path.display(),
+                tls_assets.server_key_path.display(),
+            ));
+        }
     }
 
     let path = std::env::temp_dir().join(format!(
@@ -570,30 +587,45 @@ fn write_apiserver_config(
     Ok(path)
 }
 
-fn generate_mtls_assets() -> Result<GeneratedTlsAssets, DynError> {
+fn generate_tls_assets(tls_mode: TlsMode) -> Result<GeneratedTlsAssets, DynError> {
     let ca_key = generate_private_key()?;
     let ca_cert = build_ca_certificate(&ca_key)?;
+    let ca_cert_pem = ca_cert.to_pem()?;
     let server_key = generate_private_key()?;
-    let server_cert =
-        build_signed_certificate(&ca_cert, &ca_key, &server_key, "127.0.0.1", false)?;
-    let client_key = generate_private_key()?;
-    let client_cert =
-        build_signed_certificate(&ca_cert, &ca_key, &client_key, "masters-user", true)?;
+    let server_cert = build_signed_certificate(&ca_cert, &ca_key, &server_key, "127.0.0.1", false)?;
 
     let server_cert_path = write_temp_file("tugboat-it-server-cert", &server_cert.to_pem()?)?;
-    let server_key_path =
-        write_temp_file("tugboat-it-server-key", &server_key.private_key_to_pem_pkcs8()?)?;
-    let client_ca_path = write_temp_file("tugboat-it-client-ca", &ca_cert.to_pem()?)?;
+    let server_key_path = write_temp_file(
+        "tugboat-it-server-key",
+        &server_key.private_key_to_pem_pkcs8()?,
+    )?;
+    let ca_cert_path = write_temp_file("tugboat-it-ca-cert", &ca_cert_pem)?;
 
-    let mut masters_identity_pem = client_cert.to_pem()?;
-    masters_identity_pem.extend(client_key.private_key_to_pem_pkcs8()?);
+    let (masters_identity_pem, extra_paths) = if matches!(tls_mode, TlsMode::Mtls) {
+        let client_key = generate_private_key()?;
+        let client_cert =
+            build_signed_certificate(&ca_cert, &ca_key, &client_key, "masters-user", true)?;
+        let mut identity_pem = client_cert.to_pem()?;
+        identity_pem.extend(client_key.private_key_to_pem_pkcs8()?);
+        (Some(identity_pem), vec![])
+    } else {
+        (None, vec![])
+    };
+
+    let mut temp_paths = vec![
+        server_cert_path.clone(),
+        server_key_path.clone(),
+        ca_cert_path.clone(),
+    ];
+    temp_paths.extend(extra_paths);
 
     Ok(GeneratedTlsAssets {
-        server_cert_path: server_cert_path.clone(),
-        server_key_path: server_key_path.clone(),
-        client_ca_path: client_ca_path.clone(),
+        server_cert_path,
+        server_key_path,
+        ca_cert_path,
+        ca_cert_pem,
         masters_identity_pem,
-        temp_paths: vec![server_cert_path, server_key_path, client_ca_path],
+        temp_paths,
     })
 }
 
@@ -614,7 +646,13 @@ fn build_ca_certificate(key: &PKey<Private>) -> Result<X509, DynError> {
     builder.set_not_before(Asn1Time::days_from_now(0)?.as_ref())?;
     builder.set_not_after(Asn1Time::days_from_now(30)?.as_ref())?;
     builder.append_extension(BasicConstraints::new().critical().ca().build()?)?;
-    builder.append_extension(KeyUsage::new().critical().key_cert_sign().crl_sign().build()?)?;
+    builder.append_extension(
+        KeyUsage::new()
+            .critical()
+            .key_cert_sign()
+            .crl_sign()
+            .build()?,
+    )?;
     builder.sign(key, MessageDigest::sha256())?;
     Ok(builder.build())
 }
@@ -645,6 +683,11 @@ fn build_signed_certificate(
         builder.append_extension(ExtendedKeyUsage::new().client_auth().build()?)?;
     } else {
         builder.append_extension(ExtendedKeyUsage::new().server_auth().build()?)?;
+        // Add IP SAN so rustls can verify the server certificate against the IP address.
+        let san = SubjectAlternativeName::new()
+            .ip(common_name)
+            .build(&builder.x509v3_context(Some(ca_cert), None))?;
+        builder.append_extension(san)?;
     }
     builder.append_extension(
         KeyUsage::new()

@@ -21,7 +21,10 @@ async fn role_supports_crud_operations() -> Result<(), DynError> {
     let created = request_json(
         &client,
         Method::POST,
-        &format!("{}/apis/authorization/v1/namespaces/rbac-ns/roles", ctx.base_url),
+        &format!(
+            "{}/apis/authorization/v1/namespaces/rbac-ns/roles",
+            ctx.base_url
+        ),
         StatusCode::OK,
         Some(role_manifest("rbac-ns", "configmap-reader", "get")),
     )
@@ -115,7 +118,10 @@ async fn cluster_role_supports_crud_operations() -> Result<(), DynError> {
     let patched = request_json(
         &client,
         Method::PATCH,
-        &format!("{}/apis/authorization/v1/clusterroles/fleet-reader", ctx.base_url),
+        &format!(
+            "{}/apis/authorization/v1/clusterroles/fleet-reader",
+            ctx.base_url
+        ),
         StatusCode::OK,
         Some(json!({
             "metadata": {
@@ -134,7 +140,10 @@ async fn cluster_role_supports_crud_operations() -> Result<(), DynError> {
     let replaced = request_json(
         &client,
         Method::PUT,
-        &format!("{}/apis/authorization/v1/clusterroles/fleet-reader", ctx.base_url),
+        &format!(
+            "{}/apis/authorization/v1/clusterroles/fleet-reader",
+            ctx.base_url
+        ),
         StatusCode::OK,
         Some(cluster_role_manifest("fleet-reader", "fleets", "list")),
     )
@@ -144,7 +153,10 @@ async fn cluster_role_supports_crud_operations() -> Result<(), DynError> {
     let deleted = request_json(
         &client,
         Method::DELETE,
-        &format!("{}/apis/authorization/v1/clusterroles/fleet-reader", ctx.base_url),
+        &format!(
+            "{}/apis/authorization/v1/clusterroles/fleet-reader",
+            ctx.base_url
+        ),
         StatusCode::OK,
         None,
     )
@@ -165,7 +177,10 @@ async fn role_binding_supports_crud_operations() -> Result<(), DynError> {
     request_json(
         &client,
         Method::POST,
-        &format!("{}/apis/authorization/v1/namespaces/bindings-ns/roles", ctx.base_url),
+        &format!(
+            "{}/apis/authorization/v1/namespaces/bindings-ns/roles",
+            ctx.base_url
+        ),
         StatusCode::OK,
         Some(role_manifest("bindings-ns", "reader", "get")),
     )
@@ -263,7 +278,11 @@ async fn cluster_role_binding_supports_crud_operations() -> Result<(), DynError>
         Method::POST,
         &format!("{}/apis/authorization/v1/clusterroles", ctx.base_url),
         StatusCode::OK,
-        Some(cluster_role_manifest("cluster-reader", "namespaces", "list")),
+        Some(cluster_role_manifest(
+            "cluster-reader",
+            "namespaces",
+            "list",
+        )),
     )
     .await?;
 
@@ -428,7 +447,11 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     Ok(Some(ctx))
 }
 
-async fn create_namespace(client: &Client, base_url: &str, namespace: &str) -> Result<(), DynError> {
+async fn create_namespace(
+    client: &Client,
+    base_url: &str,
+    namespace: &str,
+) -> Result<(), DynError> {
     request_json_with_statuses(
         client,
         Method::POST,
@@ -448,7 +471,11 @@ async fn create_namespace(client: &Client, base_url: &str, namespace: &str) -> R
 
 async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, DynError> {
     let response = client.get(format!("{base_url}{path}")).send().await?;
-    assert_eq!(response.status(), StatusCode::OK, "unexpected status for {path}");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "unexpected status for {path}"
+    );
     Ok(response.json().await?)
 }
 

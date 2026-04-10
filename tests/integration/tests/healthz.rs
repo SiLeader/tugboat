@@ -15,7 +15,11 @@ async fn healthz_is_available() -> Result<(), Box<dyn Error + Send + Sync>> {
         return Ok(());
     };
 
-    let response = reqwest::get(format!("{}/healthz", ctx.base_url)).await?;
+    let response = ctx
+        .http_client()?
+        .get(format!("{}/healthz", ctx.base_url))
+        .send()
+        .await?;
     assert!(response.status().is_success());
     let _client = ctx.client.clone();
     Ok(())

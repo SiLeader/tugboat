@@ -15,7 +15,7 @@ async fn shipclass_can_be_created_read_and_listed() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let small = create_resource(
         &client,
         &ctx.base_url,
@@ -62,7 +62,7 @@ async fn node_supports_crud_and_status_updates() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -187,7 +187,7 @@ async fn storageclass_can_be_created_and_deleted() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -227,7 +227,7 @@ async fn clusternetworkclass_supports_status_updates() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,

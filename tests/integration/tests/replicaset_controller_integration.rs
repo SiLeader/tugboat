@@ -18,7 +18,7 @@ async fn replicaset_controller_creates_ships_for_desired_replicas() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -71,7 +71,7 @@ async fn replicaset_controller_scales_up_and_down() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -159,7 +159,7 @@ async fn replicaset_controller_recreates_deleted_ship() -> Result<(), DynError> 
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -225,7 +225,7 @@ async fn replicaset_controller_deletes_owned_ships_when_replicaset_is_deleted()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 

@@ -15,7 +15,7 @@ async fn namespace_can_be_created_and_read_back() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let created = create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     assert_eq!(created["kind"], "Namespace");
@@ -41,7 +41,7 @@ async fn namespace_list_includes_created_namespaces() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     for namespace in ["ns-a", "ns-b", "ns-c"] {
         create_namespace(&client, &ctx.base_url, namespace).await?;
     }
@@ -70,7 +70,7 @@ async fn duplicate_namespace_creation_is_rejected() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "dup-ns").await?;
 
     let response = client
@@ -89,7 +89,7 @@ async fn reading_missing_namespace_returns_not_found() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let response = client
         .get(format!("{}/api/v1/namespaces/nonexistent", ctx.base_url))
         .send()

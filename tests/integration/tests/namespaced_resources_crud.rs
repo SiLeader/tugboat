@@ -15,7 +15,7 @@ async fn ship_supports_crud_operations() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -121,7 +121,7 @@ async fn ship_supports_status_patch_and_replace() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_resource(
         &client,
@@ -219,7 +219,7 @@ async fn configmap_supports_crud_operations() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -284,7 +284,7 @@ async fn secret_supports_create_read_and_delete() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     create_resource(
@@ -335,7 +335,7 @@ async fn persistent_volume_claim_supports_crud_and_status_updates() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -405,7 +405,7 @@ async fn networkclass_supports_crud_and_status_updates() -> Result<(), DynError>
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -474,7 +474,7 @@ async fn ship_list_all_returns_resources_from_multiple_namespaces() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     for namespace in ["ns-a", "ns-b"] {
         create_namespace(&client, &ctx.base_url, namespace).await?;
     }

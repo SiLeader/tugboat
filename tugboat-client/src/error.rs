@@ -18,6 +18,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("credentials must not be sent over insecure URL: {0}")]
+    InsecureUrl(String),
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
     #[error("API error: {0}")]

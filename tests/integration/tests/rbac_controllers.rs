@@ -23,7 +23,10 @@ async fn service_account_creation_generates_token_secret() -> Result<(), DynErro
     request_json(
         &client,
         Method::POST,
-        &format!("{}/api/v1/namespaces/controller-ns/serviceaccounts", ctx.base_url),
+        &format!(
+            "{}/api/v1/namespaces/controller-ns/serviceaccounts",
+            ctx.base_url
+        ),
         StatusCode::OK,
         Some(json!({
             "apiVersion": "v1",
@@ -42,7 +45,11 @@ async fn service_account_creation_generates_token_secret() -> Result<(), DynErro
             "{}/api/v1/namespaces/controller-ns/serviceaccounts/builder",
             ctx.base_url
         ),
-        |body| body["secrets"].as_array().is_some_and(|secrets| !secrets.is_empty()),
+        |body| {
+            body["secrets"]
+                .as_array()
+                .is_some_and(|secrets| !secrets.is_empty())
+        },
     )
     .await?;
     let secret_name = service_account["secrets"][0]["name"]
@@ -107,7 +114,11 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     Ok(Some(ctx))
 }
 
-async fn create_namespace(client: &Client, base_url: &str, namespace: &str) -> Result<(), DynError> {
+async fn create_namespace(
+    client: &Client,
+    base_url: &str,
+    namespace: &str,
+) -> Result<(), DynError> {
     request_json_with_statuses(
         client,
         Method::POST,

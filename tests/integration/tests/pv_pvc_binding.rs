@@ -15,7 +15,7 @@ async fn persistent_volume_supports_status_updates() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -84,7 +84,7 @@ async fn persistent_volume_claim_supports_binding_status_updates() -> Result<(),
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -185,7 +185,7 @@ async fn persistent_volume_can_be_deleted() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -229,7 +229,7 @@ async fn persistent_volume_claim_can_be_deleted() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,

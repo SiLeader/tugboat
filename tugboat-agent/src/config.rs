@@ -16,7 +16,7 @@ use crate::runtime::RuntimeConfig;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
-use tugboat_client::ClientAuth;
+use tugboat_client::{ClientAuth, ClientTlsConfig};
 use tugboat_cni_operator::CniOperatorConfig;
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +44,8 @@ pub(crate) struct ApiserverConfig {
     pub url: String,
     #[serde(default)]
     pub auth: ClientAuth,
+    #[serde(default)]
+    pub tls: ClientTlsConfig,
 }
 
 #[derive(Debug, Deserialize)]

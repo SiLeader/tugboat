@@ -15,7 +15,7 @@ async fn rejects_invalid_resource_name() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let response = client
@@ -55,7 +55,7 @@ async fn rejects_request_without_metadata() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let response = client
@@ -87,7 +87,7 @@ async fn rejects_namespaced_create_for_missing_namespace() -> Result<(), DynErro
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let response = client
         .post(format!(
             "{}/api/v1/namespaces/missing-ns/ships",
@@ -120,7 +120,7 @@ async fn rejects_invalid_json_body_with_status_response() -> Result<(), DynError
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let response = client
@@ -151,7 +151,7 @@ async fn rejects_url_and_body_name_mismatch() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_resource(
         &client,
@@ -198,7 +198,7 @@ async fn rejects_namespace_on_cluster_scoped_resource_create() -> Result<(), Dyn
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let response = client
         .post(format!("{}/api/v1/shipclasses", ctx.base_url))
         .json(&json!({

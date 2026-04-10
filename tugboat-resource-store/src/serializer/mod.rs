@@ -16,10 +16,10 @@ mod protobuf;
 
 use crate::error::Error;
 use crate::serializer::protobuf::ProtobufSerializer;
+use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::authorization::v1::{
     ClusterRole, ClusterRoleBinding, Role, RoleBinding,
 };
-use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,

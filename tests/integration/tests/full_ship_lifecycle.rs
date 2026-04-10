@@ -18,7 +18,7 @@ async fn ship_lifecycle_covers_scheduling_status_and_deletion() -> Result<(), Dy
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _scheduler = ctx.start_scheduler()?;
@@ -183,7 +183,7 @@ async fn deployment_lifecycle_covers_rollout_and_cleanup() -> Result<(), DynErro
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_resource(
@@ -372,7 +372,7 @@ async fn fleet_lifecycle_covers_managed_ships_and_cleanup() -> Result<(), DynErr
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;

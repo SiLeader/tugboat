@@ -15,7 +15,7 @@ async fn lease_supports_crud_operations() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -121,7 +121,7 @@ async fn lease_lists_include_namespace_and_cluster_scopes() -> Result<(), DynErr
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     for namespace in ["ns-a", "ns-b"] {
         create_namespace(&client, &ctx.base_url, namespace).await?;
     }

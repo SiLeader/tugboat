@@ -18,7 +18,7 @@ async fn fleet_controller_creates_replicasets_and_ships_for_components() -> Resu
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -109,7 +109,7 @@ async fn fleet_controller_injects_shared_network_and_reports_status() -> Result<
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -184,7 +184,7 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -340,7 +340,7 @@ async fn fleet_controller_preserves_migrating_ship_during_rollout() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -550,7 +550,7 @@ async fn fleet_controller_deletes_managed_replicasets_and_ships_on_deletion() ->
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;

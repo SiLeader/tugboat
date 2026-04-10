@@ -18,7 +18,7 @@ async fn deployment_controller_creates_owned_replicaset() -> Result<(), DynError
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -74,7 +74,7 @@ async fn deployment_controller_scales_managed_replicaset() -> Result<(), DynErro
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -143,7 +143,7 @@ async fn deployment_controller_performs_rolling_update() -> Result<(), DynError>
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -281,7 +281,7 @@ async fn deployment_controller_deletes_managed_replicasets_on_deletion() -> Resu
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 

@@ -18,7 +18,7 @@ async fn node_drain_marks_node_unschedulable_and_starts_ship_evacuation() -> Res
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
@@ -117,7 +117,7 @@ async fn scheduler_does_not_place_new_ships_on_drained_node() -> Result<(), DynE
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _scheduler = ctx.start_scheduler()?;

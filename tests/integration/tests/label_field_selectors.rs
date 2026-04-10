@@ -15,7 +15,7 @@ async fn ship_list_supports_label_selectors() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     create_resource(
@@ -103,7 +103,7 @@ async fn ship_list_supports_field_selectors() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     for namespace in ["ns-a", "ns-b"] {
         create_namespace(&client, &ctx.base_url, namespace).await?;
     }
@@ -163,7 +163,7 @@ async fn node_list_supports_label_selectors() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -213,7 +213,7 @@ async fn ship_list_all_supports_label_selectors_across_namespaces() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     for namespace in ["team-a", "team-b"] {
         create_namespace(&client, &ctx.base_url, namespace).await?;
     }

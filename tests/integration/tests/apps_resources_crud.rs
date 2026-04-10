@@ -15,7 +15,7 @@ async fn replicaset_supports_crud_operations() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -93,7 +93,7 @@ async fn deployment_supports_crud_operations() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -186,7 +186,7 @@ async fn fleet_supports_crud_operations() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -278,7 +278,7 @@ async fn apps_list_all_returns_resources_from_multiple_namespaces() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     for namespace in ["ns-a", "ns-b"] {
         create_namespace(&client, &ctx.base_url, namespace).await?;
     }

@@ -18,7 +18,7 @@ async fn scheduler_assigns_unscheduled_ship_to_available_node() -> Result<(), Dy
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _scheduler = ctx.start_scheduler()?;
@@ -71,7 +71,7 @@ async fn scheduler_prefers_node_with_more_remaining_capacity() -> Result<(), Dyn
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _scheduler = ctx.start_scheduler()?;
@@ -151,7 +151,7 @@ async fn scheduler_skips_nodes_marked_unschedulable() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _scheduler = ctx.start_scheduler()?;
@@ -211,7 +211,7 @@ async fn scheduler_leaves_ship_pending_when_no_node_can_fit() -> Result<(), DynE
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _scheduler = ctx.start_scheduler()?;

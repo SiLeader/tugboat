@@ -16,7 +16,7 @@ async fn ship_watch_emits_added_events() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let mut watch = start_watch(
@@ -65,7 +65,7 @@ async fn ship_watch_emits_modified_events() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let created = create_resource(
         &client,
@@ -130,7 +130,7 @@ async fn ship_watch_emits_deleted_events() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_resource(
         &client,
@@ -178,7 +178,7 @@ async fn ship_watch_respects_resource_version() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -244,7 +244,7 @@ async fn ship_watch_respects_label_selectors() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let mut watch = start_watch(
@@ -302,7 +302,7 @@ async fn ship_watch_supports_ndjson_mode() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let mut watch = start_watch(

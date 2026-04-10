@@ -50,8 +50,12 @@ pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
 }
 
 async fn run_with_loaded_config(config: config::SchedulerConfig) {
-    let client = TugboatClient::try_new(&config.apiserver.url, config.apiserver.auth)
-        .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
+    let client = TugboatClient::try_new(
+        &config.apiserver.url,
+        config.apiserver.auth,
+        config.apiserver.tls,
+    )
+    .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
 
     let mut fw = framework::Framework::new();
     for name in &config.scheduler.plugins.filter {

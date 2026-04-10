@@ -17,11 +17,11 @@ use crate::auth::constants::{
 };
 use tugboat_resource_store::ResourceStore;
 use tugboat_resource_store::error::Error;
+use tugboat_resources::Resource;
 use tugboat_resources::manifests::authorization::v1::{
     ClusterRole, ClusterRoleBinding, PolicyRule, RoleRef, Subject,
 };
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
-use tugboat_resources::Resource;
 use uuid::Uuid;
 const CLUSTER_ADMIN_ROLE: &str = "cluster-admin";
 const ADMIN_ROLE: &str = "admin";

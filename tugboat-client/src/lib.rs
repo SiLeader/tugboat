@@ -48,6 +48,11 @@ pub enum ClientAuth {
     },
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ClientTlsConfig {
+    pub ca_cert_path: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct TugboatClient {
     base_url: String,
@@ -56,19 +61,27 @@ pub struct TugboatClient {
 
 impl TugboatClient {
     pub fn new(base_url: impl Into<String>) -> Self {
-        Self::try_new(base_url, ClientAuth::None)
+        Self::try_new(base_url, ClientAuth::None, ClientTlsConfig::default())
             .expect("default tugboat client configuration should be valid")
     }
 
-    pub fn try_new(base_url: impl Into<String>, auth: ClientAuth) -> Result<Self, Error> {
+    pub fn try_new(
+        base_url: impl Into<String>,
+        auth: ClientAuth,
+        tls: ClientTlsConfig,
+    ) -> Result<Self, Error> {
+        let base_url = base_url.into();
+        if !matches!(auth, ClientAuth::None) && !base_url.starts_with("https://") {
+            return Err(Error::InsecureUrl(base_url));
+        }
         Ok(Self {
-            base_url: base_url.into(),
-            client: build_http_client(auth)?,
+            client: build_http_client(auth, tls)?,
+            base_url,
         })
     }
 }
 
-fn build_http_client(auth: ClientAuth) -> Result<reqwest::Client, Error> {
+fn build_http_client(auth: ClientAuth, tls: ClientTlsConfig) -> Result<reqwest::Client, Error> {
     let mut builder = reqwest::Client::builder();
     match auth {
         ClientAuth::None => {}
@@ -90,6 +103,11 @@ fn build_http_client(auth: ClientAuth) -> Result<reqwest::Client, Error> {
             let identity = Identity::from_pem(&pem)?;
             builder = builder.identity(identity);
         }
+    }
+    if let Some(ca_cert_path) = tls.ca_cert_path {
+        let ca_cert = fs::read(ca_cert_path)?;
+        let cert = reqwest::Certificate::from_pem(&ca_cert)?;
+        builder = builder.add_root_certificate(cert);
     }
     Ok(builder.build()?)
 }

@@ -15,7 +15,7 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
 
     let api_versions = get_json(&client, &ctx.base_url, "/api").await?;
     assert_eq!(api_versions["kind"], "APIVersions");
@@ -100,11 +100,19 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
 
     let authorization_v1_resources =
         get_json(&client, &ctx.base_url, "/apis/authorization/v1").await?;
-    assert_eq!(authorization_v1_resources["groupVersion"], "authorization/v1");
+    assert_eq!(
+        authorization_v1_resources["groupVersion"],
+        "authorization/v1"
+    );
     let authorization_resources = authorization_v1_resources["resources"]
         .as_array()
         .ok_or("authorization/v1 discovery response is missing resources")?;
-    for resource_name in ["roles", "rolebindings", "clusterroles", "clusterrolebindings"] {
+    for resource_name in [
+        "roles",
+        "rolebindings",
+        "clusterroles",
+        "clusterrolebindings",
+    ] {
         let resource = find_resource(authorization_resources, resource_name)?;
         assert_has_verbs(resource, &["create", "list", "get", "delete"])?;
     }
@@ -136,7 +144,7 @@ async fn openapi_core_schema_includes_core_resource_definitions() -> Result<(), 
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let schema = get_json(&client, &ctx.base_url, "/openapi/v3/api/v1").await?;
 
     assert!(schema["paths"]["/api/v1/nodes"].is_object());
@@ -154,7 +162,7 @@ async fn openapi_authorization_schema_includes_rbac_resource_definitions() -> Re
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let schema = get_json(&client, &ctx.base_url, "/openapi/v3/apis/authorization/v1").await?;
 
     assert!(schema["paths"]["/apis/authorization/v1/clusterroles"].is_object());

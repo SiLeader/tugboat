@@ -74,9 +74,7 @@ impl DefaultAuthenticator {
         let secret = self
             .find_service_account_token_secret(token)
             .await?
-            .ok_or_else(|| {
-                Box::new(StatusResponse::unauthorized("Invalid bearer token", None))
-            })?;
+            .ok_or_else(|| Box::new(StatusResponse::unauthorized("Invalid bearer token", None)))?;
 
         let namespace = secret.namespace().ok_or_else(|| {
             Box::new(StatusResponse::unauthorized(

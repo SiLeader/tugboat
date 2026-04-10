@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 type DynError = Box<dyn Error + Send + Sync>;
 
 #[tokio::test]
-async fn bearer_token_authentication_succeeds_and_invalid_token_is_rejected() -> Result<(), DynError> {
+async fn bearer_token_authentication_succeeds_and_invalid_token_is_rejected() -> Result<(), DynError>
+{
     let Some(ctx) = setup_or_skip().await? else {
         return Ok(());
     };
@@ -33,7 +34,8 @@ async fn bearer_token_authentication_succeeds_and_invalid_token_is_rejected() ->
 }
 
 #[tokio::test]
-async fn anonymous_requests_are_processed_as_anonymous_and_denied_by_rbac() -> Result<(), DynError> {
+async fn anonymous_requests_are_processed_as_anonymous_and_denied_by_rbac() -> Result<(), DynError>
+{
     let Some(ctx) = setup_or_skip().await? else {
         return Ok(());
     };
@@ -58,9 +60,22 @@ async fn role_binding_grants_namespaced_access_only_to_bound_subjects() -> Resul
     create_namespace(&admin, &ctx.base_url, "team-a").await?;
     create_configmap(&admin, &ctx.base_url, "team-a", "app-config").await?;
 
-    let reader = create_service_account_with_token(&admin, &ctx.base_url, "team-a", "reader").await?;
-    let outsider =
-        create_service_account_with_token(&admin, &ctx.base_url, "team-a", "outsider").await?;
+    let reader = create_service_account_with_token(
+        &admin,
+        &ctx.base_url,
+        "team-a",
+        "reader",
+        ctx.ca_cert_pem(),
+    )
+    .await?;
+    let outsider = create_service_account_with_token(
+        &admin,
+        &ctx.base_url,
+        "team-a",
+        "outsider",
+        ctx.ca_cert_pem(),
+    )
+    .await?;
 
     let denied = reader
         .get(format!(
@@ -82,8 +97,17 @@ async fn role_binding_grants_namespaced_access_only_to_bound_subjects() -> Resul
         None,
     )
     .await?;
-    create_role_binding(&admin, &ctx.base_url, "team-a", "reader-binding", "Role", "config-reader", "team-a", "reader")
-        .await?;
+    create_role_binding(
+        &admin,
+        &ctx.base_url,
+        "team-a",
+        "reader-binding",
+        "Role",
+        "config-reader",
+        "team-a",
+        "reader",
+    )
+    .await?;
 
     let allowed = reader
         .get(format!(
@@ -118,8 +142,14 @@ async fn cluster_role_binding_grants_access_across_namespaces() -> Result<(), Dy
         create_configmap(&admin, &ctx.base_url, namespace, "shared").await?;
     }
 
-    let reader =
-        create_service_account_with_token(&admin, &ctx.base_url, "ns-a", "cluster-reader").await?;
+    let reader = create_service_account_with_token(
+        &admin,
+        &ctx.base_url,
+        "ns-a",
+        "cluster-reader",
+        ctx.ca_cert_pem(),
+    )
+    .await?;
     create_cluster_role(
         &admin,
         &ctx.base_url,
@@ -166,8 +196,14 @@ async fn role_binding_to_cluster_role_is_limited_to_its_namespace() -> Result<()
         create_configmap(&admin, &ctx.base_url, namespace, "shared").await?;
     }
 
-    let reader =
-        create_service_account_with_token(&admin, &ctx.base_url, "blue", "ns-reader").await?;
+    let reader = create_service_account_with_token(
+        &admin,
+        &ctx.base_url,
+        "blue",
+        "ns-reader",
+        ctx.ca_cert_pem(),
+    )
+    .await?;
     create_cluster_role(
         &admin,
         &ctx.base_url,
@@ -223,8 +259,14 @@ async fn wildcard_and_resource_name_rules_are_enforced() -> Result<(), DynError>
     create_configmap(&admin, &ctx.base_url, "wild", "blocked").await?;
     create_secret(&admin, &ctx.base_url, "wild", "allowed-secret").await?;
 
-    let wildcard_user =
-        create_service_account_with_token(&admin, &ctx.base_url, "wild", "wildcard").await?;
+    let wildcard_user = create_service_account_with_token(
+        &admin,
+        &ctx.base_url,
+        "wild",
+        "wildcard",
+        ctx.ca_cert_pem(),
+    )
+    .await?;
     create_role(
         &admin,
         &ctx.base_url,
@@ -257,8 +299,14 @@ async fn wildcard_and_resource_name_rules_are_enforced() -> Result<(), DynError>
         .await?;
     assert_eq!(secret_read.status(), StatusCode::OK);
 
-    let named_user =
-        create_service_account_with_token(&admin, &ctx.base_url, "wild", "named-reader").await?;
+    let named_user = create_service_account_with_token(
+        &admin,
+        &ctx.base_url,
+        "wild",
+        "named-reader",
+        ctx.ca_cert_pem(),
+    )
+    .await?;
     create_role(
         &admin,
         &ctx.base_url,
@@ -313,9 +361,14 @@ async fn get_only_role_denies_create_update_and_delete_operations() -> Result<()
     create_namespace(&admin, &ctx.base_url, "write-deny").await?;
     create_configmap(&admin, &ctx.base_url, "write-deny", "existing").await?;
 
-    let reader =
-        create_service_account_with_token(&admin, &ctx.base_url, "write-deny", "reader-only")
-            .await?;
+    let reader = create_service_account_with_token(
+        &admin,
+        &ctx.base_url,
+        "write-deny",
+        "reader-only",
+        ctx.ca_cert_pem(),
+    )
+    .await?;
     create_role(
         &admin,
         &ctx.base_url,
@@ -403,8 +456,14 @@ async fn write_role_allows_create_but_still_denies_delete() -> Result<(), DynErr
     let admin = ctx.admin_client()?;
     create_namespace(&admin, &ctx.base_url, "write-allow").await?;
 
-    let writer =
-        create_service_account_with_token(&admin, &ctx.base_url, "write-allow", "writer").await?;
+    let writer = create_service_account_with_token(
+        &admin,
+        &ctx.base_url,
+        "write-allow",
+        "writer",
+        ctx.ca_cert_pem(),
+    )
+    .await?;
     create_role(
         &admin,
         &ctx.base_url,
@@ -500,7 +559,11 @@ async fn setup_mtls_or_skip() -> Result<Option<TestContext>, DynError> {
     Ok(Some(ctx))
 }
 
-async fn create_namespace(client: &Client, base_url: &str, namespace: &str) -> Result<(), DynError> {
+async fn create_namespace(
+    client: &Client,
+    base_url: &str,
+    namespace: &str,
+) -> Result<(), DynError> {
     request_json_with_statuses(
         client,
         Method::POST,
@@ -545,7 +608,12 @@ async fn create_configmap(
     Ok(())
 }
 
-async fn create_secret(client: &Client, base_url: &str, namespace: &str, name: &str) -> Result<(), DynError> {
+async fn create_secret(
+    client: &Client,
+    base_url: &str,
+    namespace: &str,
+    name: &str,
+) -> Result<(), DynError> {
     request_json(
         client,
         Method::POST,
@@ -572,6 +640,7 @@ async fn create_service_account_with_token(
     base_url: &str,
     namespace: &str,
     name: &str,
+    ca_cert_pem: Option<&[u8]>,
 ) -> Result<Client, DynError> {
     request_json(
         admin,
@@ -618,7 +687,11 @@ async fn create_service_account_with_token(
         reqwest::header::AUTHORIZATION,
         reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
     );
-    Ok(reqwest::Client::builder().default_headers(headers).build()?)
+    let mut builder = reqwest::Client::builder().default_headers(headers);
+    if let Some(ca_pem) = ca_cert_pem {
+        builder = builder.add_root_certificate(reqwest::Certificate::from_pem(ca_pem)?);
+    }
+    Ok(builder.build()?)
 }
 
 async fn create_role(

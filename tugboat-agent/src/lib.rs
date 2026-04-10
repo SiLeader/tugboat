@@ -44,8 +44,12 @@ pub async fn run() {
     let runtime_class = config.node.runtime_class.clone();
     let network_probe_interval = config.node.network_probe_interval();
     let cni_config = config.cni.clone();
-    let client = TugboatClient::try_new(config.apiserver.url, config.apiserver.auth)
-        .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
+    let client = TugboatClient::try_new(
+        config.apiserver.url,
+        config.apiserver.auth,
+        config.apiserver.tls,
+    )
+    .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
     node_registration::ensure_node_exists(client.clone(), node_name.clone(), runtime_class)
         .await
         .unwrap_or_else(|e| panic!("Failed to ensure node resource exists: {e}"));

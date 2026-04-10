@@ -138,6 +138,41 @@ impl ApiServer {
         .await
         .expect("Failed to run server");
     }
+
+    pub async fn run_with_tls_listener(self, listener: TcpListener, tls: TlsConfig) {
+        crate::auth::bootstrap::bootstrap_default_rbac(&self.operator.store)
+            .await
+            .expect("Failed to bootstrap default RBAC resources");
+        let data = Data::new(self.operator);
+        let authentication = self.authentication.clone();
+        let authorization = self.authorization.clone();
+        let builder = build_tls_acceptor(tls);
+        HttpServer::new(move || {
+            App::new()
+                .wrap(Logger::default().exclude("/healthz"))
+                .wrap(AuthorizationMiddleware::new(
+                    data.clone(),
+                    authorization.clone(),
+                ))
+                .wrap(AuthenticationMiddleware::new(
+                    data.clone(),
+                    authentication.clone(),
+                ))
+                .app_data(data.clone())
+                .app_data(json_config())
+                .service(health_check)
+                .configure(endpoints::register_openapi_endpoints)
+                .into_utoipa_app()
+                .configure(endpoints::register_endpoints)
+                .into_app()
+        })
+        .on_connect(store_client_certificate_info)
+        .listen_openssl(listener, builder)
+        .expect("Failed to listen on provided socket with TLS")
+        .run()
+        .await
+        .expect("Failed to run server");
+    }
 }
 
 fn json_config() -> JsonConfig {
