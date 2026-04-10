@@ -575,7 +575,7 @@ async fn wait_for_missing(
         }
         if tokio::time::Instant::now() >= deadline {
             let body = response.text().await?;
-            return Err(format!("timed out waiting for deletion: {body}").into());
+            return Err(format!("timed out waiting for deletion at {url}: {body}").into());
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -1028,9 +1028,13 @@ async fn request_json(
 }
 
 async fn assert_status(response: Response, expected_status: StatusCode) -> Result<Value, DynError> {
+    let url = response.url().clone();
     let status = response.status();
     let text = response.text().await?;
-    assert_eq!(status, expected_status, "unexpected status: {text}");
+    assert_eq!(
+        status, expected_status,
+        "unexpected status for {url}: {text}"
+    );
     Ok(serde_json::from_str(&text)?)
 }
 

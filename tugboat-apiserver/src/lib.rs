@@ -210,14 +210,21 @@ fn build_tls_acceptor(tls: TlsConfig) -> SslAcceptorBuilder {
 fn configure_client_certificate_auth(builder: &mut SslAcceptorBuilder, client_ca_file: &str) {
     let file = std::fs::read(client_ca_file).expect("Failed to read client CA file");
     let certs = X509::stack_from_pem(file.as_slice()).expect("Failed to parse client CA file");
+    // set_ca_file sets the trust store used to verify the client certificate chain.
     builder
         .set_ca_file(client_ca_file)
         .expect("Failed to set client CA file");
+    // add_client_ca populates the list of acceptable CAs sent to the client
+    // in the TLS CertificateRequest message, allowing it to select the right
+    // certificate to present. Both calls are needed for full mTLS support.
     for cert in certs {
         builder
             .add_client_ca(cert.as_ref())
             .expect("Failed to add client CA");
     }
+    // Require a client certificate; connections without one are rejected at the
+    // TLS handshake level. This makes bearer-token auth incompatible with mTLS
+    // mode — choose one or the other in [http.tls].
     builder.set_verify(SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT);
 }
 

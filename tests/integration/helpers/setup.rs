@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::TcpListener;
@@ -60,30 +58,35 @@ impl SecureClient {
         self.inner.get(url)
     }
 
+    #[allow(dead_code)]
     pub fn post(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
         let url = url.as_ref();
         Self::assert_https(url);
         self.inner.post(url)
     }
 
+    #[allow(dead_code)]
     pub fn put(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
         let url = url.as_ref();
         Self::assert_https(url);
         self.inner.put(url)
     }
 
+    #[allow(dead_code)]
     pub fn delete(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
         let url = url.as_ref();
         Self::assert_https(url);
         self.inner.delete(url)
     }
 
+    #[allow(dead_code)]
     pub fn patch(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
         let url = url.as_ref();
         Self::assert_https(url);
         self.inner.patch(url)
     }
 
+    #[allow(dead_code)]
     pub fn request(
         &self,
         method: reqwest::Method,
@@ -178,6 +181,7 @@ impl TestContext {
         .await
     }
 
+    #[allow(dead_code)]
     pub async fn setup_rbac() -> Result<Option<Self>, DynError> {
         Self::setup_with_options(SetupOptions {
             authorization_mode: AuthorizationModeSetting::Rbac,
@@ -187,6 +191,7 @@ impl TestContext {
         .await
     }
 
+    #[allow(dead_code)]
     pub async fn setup_rbac_with_mtls() -> Result<Option<Self>, DynError> {
         Self::setup_with_options(SetupOptions {
             authorization_mode: AuthorizationModeSetting::Rbac,
@@ -288,6 +293,7 @@ impl TestContext {
         Ok(SecureClient::new(self.client_builder()?.build()?))
     }
 
+    #[allow(dead_code)]
     pub fn bearer_client(&self, token: &str) -> Result<SecureClient, DynError> {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -299,6 +305,7 @@ impl TestContext {
         ))
     }
 
+    #[allow(dead_code)]
     pub fn admin_client(&self) -> Result<SecureClient, DynError> {
         let token = self
             .admin_token
@@ -307,6 +314,7 @@ impl TestContext {
         self.bearer_client(token)
     }
 
+    #[allow(dead_code)]
     pub fn masters_client(&self) -> Result<SecureClient, DynError> {
         let identity = self
             .masters_identity_pem
@@ -319,6 +327,7 @@ impl TestContext {
         ))
     }
 
+    #[allow(dead_code)]
     pub fn ca_cert_pem(&self) -> Option<&[u8]> {
         self.ca_cert_pem.as_deref()
     }

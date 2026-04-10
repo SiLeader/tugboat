@@ -24,9 +24,4 @@ message ClusterRole {
   tugboat.meta.v1.TypeMeta type_meta = 1;
   tugboat.meta.v1.ObjectMeta object_meta = 2;
   repeated PolicyRule rules = 3;
-  optional AggregationRule aggregation_rule = 4;
-}
-
-message AggregationRule {
-  map<string, string> cluster_role_selector = 1;
 }

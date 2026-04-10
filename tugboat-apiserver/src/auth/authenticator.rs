@@ -25,9 +25,39 @@ use base64::prelude::BASE64_STANDARD;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::RwLock;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
 use tugboat_resources::{SERVICE_ACCOUNT_NAME_ANNOTATION, SERVICE_ACCOUNT_TOKEN_SECRET_TYPE};
+
+/// How long the token→secret mapping cache is considered fresh. After this
+/// period the cache is rebuilt from a full etcd scan on the next cache miss.
+const TOKEN_CACHE_TTL_SECS: u64 = 60;
+
+/// Index that maps a base64-encoded bearer token to the (namespace, name) of
+/// the service-account-token Secret that holds it.
+///
+/// The full-secret scan is O(n) in the number of Secrets; caching allows
+/// established service accounts to be authenticated in O(1) via a direct etcd
+/// get. The cache is rebuilt from scratch whenever it is stale (TTL expired)
+/// or when a token is not found in the current snapshot (to pick up newly
+/// created secrets without waiting for the TTL to expire).
+#[derive(Default)]
+struct TokenCacheState {
+    /// base64-encoded token value → (namespace, secret name)
+    map: HashMap<String, (String, String)>,
+    built_at: Option<Instant>,
+}
+
+impl TokenCacheState {
+    fn is_stale(&self) -> bool {
+        self.built_at
+            .map(|t| t.elapsed().as_secs() > TOKEN_CACHE_TTL_SECS)
+            .unwrap_or(true)
+    }
+}
 
 type AuthResult<'a> =
     Pin<Box<dyn Future<Output = Result<Option<UserInfo>, Box<StatusResponse>>> + 'a>>;
@@ -43,6 +73,8 @@ pub(crate) trait Authenticator: Clone + 'static {
 pub(crate) struct DefaultAuthenticator {
     operator: Data<ApiOperator>,
     anonymous_enabled: bool,
+    /// Shared cache across all cloned instances of this authenticator.
+    token_cache: Arc<RwLock<TokenCacheState>>,
 }
 
 impl DefaultAuthenticator {
@@ -50,6 +82,7 @@ impl DefaultAuthenticator {
         Self {
             operator,
             anonymous_enabled: config.anonymous_enabled,
+            token_cache: Arc::new(RwLock::new(TokenCacheState::default())),
         }
     }
 
@@ -135,21 +168,70 @@ impl DefaultAuthenticator {
         &self,
         token: &str,
     ) -> Result<Option<Secret>, tugboat_resource_store::error::Error> {
+        let encoded = BASE64_STANDARD.encode(token);
+
+        // --- Fast path: cache hit ---
+        // The cache stores base64-encoded token → (namespace, secret name).
+        // On a hit, perform a single direct etcd GET instead of a full scan.
+        {
+            let cache = self.token_cache.read().await;
+            if !cache.is_stale()
+                && let Some((namespace, name)) = cache.map.get(&encoded)
+            {
+                // Direct O(1) lookup; verify the secret still exists and
+                // still contains the expected token (handles deletion / rotation).
+                if let Some(data) = self
+                    .operator
+                    .store
+                    .get::<Secret>(Some(namespace.clone()), name)
+                    .await?
+                {
+                    let secret = data.apply_revision();
+                    if secret_contains_token(&secret, token) {
+                        return Ok(Some(secret));
+                    }
+                }
+                // Secret was deleted or token rotated — fall through to rebuild.
+            }
+            // Token not in current cache snapshot → fall through to rebuild so
+            // newly created service-account tokens are picked up immediately.
+        }
+
+        // --- Slow path: full scan ---
+        // Rebuild the cache from all secrets currently in etcd and locate the
+        // matching secret while we have the data in hand.
         let secrets = self.operator.store.list::<Secret>(None, None).await?;
-        for secret in secrets {
-            let secret = secret.apply_revision();
+        let mut new_map = HashMap::new();
+        let mut found: Option<Secret> = None;
+
+        for secret_data in secrets {
+            let secret = secret_data.apply_revision();
             if !is_service_account_token_secret(&secret) {
                 continue;
             }
             if service_account_name(&secret).is_none() {
                 continue;
             }
-            if !secret_contains_token(&secret, token) {
+            let (Some(ns), Some(name)) = (secret.namespace(), secret.name()) else {
                 continue;
+            };
+            if let Some(stored_encoded) = secret.data.get(TOKEN_DATA_KEY) {
+                new_map.insert(stored_encoded.clone(), (ns.to_string(), name.to_string()));
+                if stored_encoded == &encoded && found.is_none() {
+                    found = Some(secret);
+                }
             }
-            return Ok(Some(secret));
         }
-        Ok(None)
+
+        // Replace the entire cache with the fresh snapshot so that deleted
+        // secrets are automatically evicted.
+        {
+            let mut cache = self.token_cache.write().await;
+            cache.map = new_map;
+            cache.built_at = Some(Instant::now());
+        }
+
+        Ok(found)
     }
 }
 

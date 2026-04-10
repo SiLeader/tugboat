@@ -52,7 +52,6 @@ mod role_binding;
         role_binding::handle_role_binding_replace,
     ),
     components(schemas(
-        tugboat_resources::manifests::authorization::v1::AggregationRule,
         tugboat_resources::manifests::authorization::v1::ClusterRole,
         tugboat_resources::manifests::authorization::v1::ClusterRoleBinding,
         tugboat_resources::manifests::authorization::v1::PolicyRule,

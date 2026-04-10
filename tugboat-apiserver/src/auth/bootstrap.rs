@@ -95,7 +95,6 @@ fn cluster_role(name: &str, rules: Vec<PolicyRule>) -> ClusterRole {
         type_meta: Some(ClusterRole::type_meta()),
         object_meta: Some(cluster_object_meta(name)),
         rules,
-        aggregation_rule: None,
     }
 }
 

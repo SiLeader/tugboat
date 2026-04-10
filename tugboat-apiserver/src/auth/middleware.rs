@@ -323,6 +323,11 @@ fn request_verb(method: &Method, query: &str, resource_name_present: bool) -> Op
         Method::PUT => "update",
         Method::PATCH => "patch",
         Method::DELETE => "delete",
+        // HEAD, OPTIONS, and other methods return None, which causes
+        // build_authorization_request to return None and the request to pass
+        // through without an authorization check. This is intentional: these
+        // methods are used for discovery and CORS preflight and do not access
+        // or mutate resource data.
         _ => return None,
     };
     Some(verb.to_string())
