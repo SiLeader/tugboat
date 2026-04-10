@@ -54,8 +54,12 @@ impl Reconciler<ServiceAccount> for ServiceAccountTokenReconciler {
         event: ReconcileEvent<ServiceAccount>,
     ) -> Result<Action, Self::Error> {
         match event {
-            ReconcileEvent::Applied(service_account) => self.reconcile_applied(service_account).await,
-            ReconcileEvent::Deleted(service_account) => self.reconcile_deleted(service_account).await,
+            ReconcileEvent::Applied(service_account) => {
+                self.reconcile_applied(service_account).await
+            }
+            ReconcileEvent::Deleted(service_account) => {
+                self.reconcile_deleted(service_account).await
+            }
         }
     }
 }
@@ -87,7 +91,10 @@ impl ServiceAccountTokenReconciler {
 
         let token_secret = match owned_secrets.into_iter().next() {
             Some(secret) => self.ensure_token_secret(secret_api.clone(), secret).await?,
-            None => self.create_token_secret(secret_api.clone(), &namespace, &name).await?,
+            None => {
+                self.create_token_secret(secret_api.clone(), &namespace, &name)
+                    .await?
+            }
         };
 
         self.ensure_secret_reference(service_account, &token_secret)
@@ -200,7 +207,8 @@ impl ServiceAccountTokenReconciler {
             return Ok(());
         }
 
-        let service_account_api: Api<ServiceAccount> = Api::namespaced(self.client.clone(), &namespace);
+        let service_account_api: Api<ServiceAccount> =
+            Api::namespaced(self.client.clone(), &namespace);
         let Some(mut latest) = service_account_api.get(&service_account_name).await? else {
             return Ok(());
         };
@@ -224,7 +232,9 @@ impl ServiceAccountTokenReconciler {
                 .unwrap_or_default(),
             api_version: "v1".to_string(),
         });
-        service_account_api.replace(&service_account_name, latest).await?;
+        service_account_api
+            .replace(&service_account_name, latest)
+            .await?;
         Ok(())
     }
 }
@@ -249,7 +259,9 @@ async fn delete_secret_ignore_not_found(
 }
 
 fn generate_suffix() -> String {
-    Alphanumeric.sample_string(&mut rng(), 5).to_ascii_lowercase()
+    Alphanumeric
+        .sample_string(&mut rng(), 5)
+        .to_ascii_lowercase()
 }
 
 fn generate_token() -> String {
@@ -290,12 +302,19 @@ mod tests {
 
         assert_eq!(token.len(), 32);
         assert_eq!(suffix.len(), 5);
-        assert!(suffix.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(
+            suffix
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        );
     }
 
     #[test]
     fn secret_type_and_token_key_constants_match_task_contract() {
-        assert_eq!(SERVICE_ACCOUNT_TOKEN_SECRET_TYPE, "tugboat.io/service-account-token");
+        assert_eq!(
+            SERVICE_ACCOUNT_TOKEN_SECRET_TYPE,
+            "tugboat.io/service-account-token"
+        );
         assert_eq!(TOKEN_DATA_KEY, "token");
     }
 }
