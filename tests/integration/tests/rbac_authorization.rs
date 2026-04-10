@@ -69,10 +69,10 @@ async fn unreferenced_service_account_token_secret_is_rejected() -> Result<(), D
                 "name": "reader-token",
                 "namespace": "forged",
                 "annotations": {
-                    "tugboat.io/service-account.name": "reader"
+                    "tugboat.cloud/service-account.name": "reader"
                 }
             },
-            "type": "tugboat.io/service-account-token",
+            "type": "tugboat.cloud/service-account-token",
             "stringData": {
                 "token": "forged-reader-token"
             }
@@ -728,10 +728,10 @@ async fn create_service_account_with_token(
                 "name": format!("{name}-token"),
                 "namespace": namespace,
                 "annotations": {
-                    "tugboat.io/service-account.name": name
+                    "tugboat.cloud/service-account.name": name
                 }
             },
-            "type": "tugboat.io/service-account-token",
+            "type": "tugboat.cloud/service-account-token",
             "stringData": {
                 "token": token
             }

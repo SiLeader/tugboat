@@ -30,7 +30,7 @@ ca_cert_path = "/etc/tugboat/pki/ca.crt"
 
 # [apiserver.auth]
 # type = "service-account"
-# token_path = "/var/run/secrets/tugboat.io/serviceaccount/token"
+# token_path = "/var/run/secrets/tugboat.cloud/serviceaccount/token"
 
 [image]
 cache_dir = "/tmp"

@@ -66,9 +66,9 @@ async fn service_account_creation_generates_token_secret() -> Result<(), DynErro
         |body| body["data"]["token"].as_str().is_some(),
     )
     .await?;
-    assert_eq!(secret["type"], "tugboat.io/service-account-token");
+    assert_eq!(secret["type"], "tugboat.cloud/service-account-token");
     assert_eq!(
-        secret["metadata"]["annotations"]["tugboat.io/service-account.name"],
+        secret["metadata"]["annotations"]["tugboat.cloud/service-account.name"],
         "builder"
     );
     assert!(

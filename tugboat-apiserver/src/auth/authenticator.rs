@@ -303,7 +303,7 @@ mod tests {
         let secret = Secret {
             object_meta: Some(ObjectMeta {
                 annotations: HashMap::from([(
-                    "tugboat.io/service-account.name".to_string(),
+                    "tugboat.cloud/service-account.name".to_string(),
                     "builder".to_string(),
                 )]),
                 ..Default::default()

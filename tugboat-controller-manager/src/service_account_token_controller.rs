@@ -426,7 +426,7 @@ mod tests {
     fn secret_type_and_token_key_constants_match_task_contract() {
         assert_eq!(
             SERVICE_ACCOUNT_TOKEN_SECRET_TYPE,
-            "tugboat.io/service-account-token"
+            "tugboat.cloud/service-account-token"
         );
         assert_eq!(TOKEN_DATA_KEY, "token");
     }
