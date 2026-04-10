@@ -167,8 +167,7 @@ async fn request_json_with_statuses(
     let response = request.send().await?;
     assert!(
         accepted.contains(&response.status()),
-        "unexpected status for {url}: expected one of {accepted:?}, got {}",
-        response.status()
+        "unexpected HTTP status"
     );
     Ok(response.json().await?)
 }
@@ -191,5 +190,5 @@ async fn wait_for_json(
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-    Err(format!("condition was not satisfied for {url}: last_body={last_body:?}").into())
+    Err("condition was not satisfied before timeout".into())
 }
