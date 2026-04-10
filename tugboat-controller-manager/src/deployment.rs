@@ -749,8 +749,16 @@ impl DeploymentReconciler {
                     .into_iter()
                     .chain(previous_replicasets.iter().copied())
                     .collect();
+                // When no existing ReplicaSets are managed (fresh deployment), create the
+                // initial RS with the desired replica count directly. For a rotation from an
+                // existing RS, start at 0 and scale up incrementally via the rolling logic.
+                let initial_replicas = if managed_replicasets.is_empty() {
+                    dep_spec.replicas
+                } else {
+                    Some(0)
+                };
                 let Some(active_rs) = self
-                    .ensure_rotation_replicaset(dep, rs_api, &managed_replicasets, Some(0))
+                    .ensure_rotation_replicaset(dep, rs_api, &managed_replicasets, initial_replicas)
                     .await?
                 else {
                     return Ok(Action::requeue(Duration::from_secs(2)));
