@@ -19,7 +19,6 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 use tokio_util::io::StreamReader;
-use url::Url;
 
 #[derive(Clone, Debug, Default)]
 pub struct WatchParams {
@@ -53,27 +52,19 @@ impl TugboatClient {
         path: String,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
-        let path = {
-            let p = format!("{}/{path}", self.base_url);
-            let path = Url::parse_with_params(
-                &p,
-                [
-                    params
-                        .label_selector
-                        .as_ref()
-                        .map(|l| ("labelSelector".to_string(), l)),
-                    params
-                        .field_selector
-                        .as_ref()
-                        .map(|f| ("fieldSelector".to_string(), f)),
-                ]
-                .into_iter()
-                .flatten(),
-            )?;
-            path.to_string()
-        };
+        let mut url = self.build_url(&path);
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs.append_pair("watch", "true");
+            if let Some(l) = &params.label_selector {
+                pairs.append_pair("labelSelector", l);
+            }
+            if let Some(f) = &params.field_selector {
+                pairs.append_pair("fieldSelector", f);
+            }
+        }
 
-        let res = self.client.get(path).send().await?;
+        let res = self.client.get(url).send().await?;
         let stream = res.bytes_stream().map_err(std::io::Error::other);
         let reader = StreamReader::new(stream);
         let mut lines = FramedRead::new(reader, LinesCodec::new());
