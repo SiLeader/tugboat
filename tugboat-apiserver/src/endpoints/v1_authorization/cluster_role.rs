@@ -39,7 +39,17 @@ pub(super) async fn handle_cluster_role_create(
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct ClusterRolePathParams {
+pub(super) struct ClusterRoleDeletePathParams {
+    name: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct ClusterRoleReadPathParams {
+    name: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct ClusterRoleReplacePathParams {
     name: String,
 }
 
@@ -55,7 +65,7 @@ pub(super) struct ClusterRolePathParams {
     )]
 #[delete("/apis/authorization/v1/clusterroles/{name}")]
 pub(super) async fn handle_cluster_role_delete(
-    path: Path<ClusterRolePathParams>,
+    path: Path<ClusterRoleDeletePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ClusterRole>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<ClusterRole>(&operator, None, path.into_inner().name).await
@@ -93,7 +103,7 @@ pub(super) async fn handle_cluster_role_list(
     )]
 #[get("/apis/authorization/v1/clusterroles/{name}")]
 pub(super) async fn handle_cluster_role_read(
-    path: Path<ClusterRolePathParams>,
+    path: Path<ClusterRoleReadPathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ClusterRole>, Box<StatusResponse>> {
     resource_handlers::read_resource::<ClusterRole>(&operator, None, path.into_inner().name).await
@@ -112,7 +122,7 @@ pub(super) async fn handle_cluster_role_read(
     )]
 #[put("/apis/authorization/v1/clusterroles/{name}")]
 pub(super) async fn handle_cluster_role_replace(
-    path: Path<ClusterRolePathParams>,
+    path: Path<ClusterRoleReplacePathParams>,
     replacement: Json<ClusterRole>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ClusterRole>, Box<StatusResponse>> {
@@ -143,7 +153,7 @@ pub(super) async fn handle_cluster_role_replace(
     )]
 #[patch("/apis/authorization/v1/clusterroles/{name}")]
 pub(super) async fn handle_cluster_role_patch(
-    path: Path<ClusterRolePathParams>,
+    path: Path<ClusterRoleReplacePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ClusterRole>, Box<StatusResponse>> {

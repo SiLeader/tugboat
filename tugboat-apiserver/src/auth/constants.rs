@@ -12,20 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::user_info::UserInfo;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AuthorizationRequest {
-    pub(crate) user: UserInfo,
-    pub(crate) verb: String,
-    pub(crate) api_group: String,
-    pub(crate) resource: String,
-    pub(crate) resource_name: Option<String>,
-    pub(crate) namespace: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AuthorizationDecision {
-    Allowed,
-    Denied { reason: String },
-}
+pub(crate) const RBAC_API_GROUP: &str = "authorization";
+pub(crate) const SYSTEM_MASTERS_GROUP: &str = "system:masters";
+pub(crate) const GROUP_SUBJECT_KIND: &str = "Group";
+pub(crate) const CLUSTER_ROLE_KIND: &str = "ClusterRole";
+pub(crate) const ROLE_KIND: &str = "Role";

@@ -49,7 +49,7 @@ pub struct AuthenticationConfig {
     pub(crate) anonymous_enabled: bool,
 }
 
-#[derive(Clone, serde::Deserialize)]
+#[derive(Clone, Default, serde::Deserialize)]
 pub struct AuthorizationConfig {
     #[serde(default)]
     pub(crate) mode: AuthorizationMode,
@@ -71,14 +71,6 @@ impl Default for AuthenticationConfig {
     fn default() -> Self {
         Self {
             anonymous_enabled: default_anonymous_enabled(),
-        }
-    }
-}
-
-impl Default for AuthorizationConfig {
-    fn default() -> Self {
-        Self {
-            mode: AuthorizationMode::default(),
         }
     }
 }

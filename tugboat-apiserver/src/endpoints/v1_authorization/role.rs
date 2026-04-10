@@ -44,7 +44,19 @@ pub(super) async fn handle_role_create(
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct RolePathParams {
+pub(super) struct RoleDeletePathParams {
+    namespace: String,
+    name: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct RoleReadPathParams {
+    namespace: String,
+    name: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct RoleReplacePathParams {
     namespace: String,
     name: String,
 }
@@ -62,7 +74,7 @@ pub(super) struct RolePathParams {
     )]
 #[delete("/apis/authorization/v1/namespaces/{namespace}/roles/{name}")]
 pub(super) async fn handle_role_delete(
-    path: Path<RolePathParams>,
+    path: Path<RoleDeletePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Role>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -129,7 +141,7 @@ pub(super) async fn handle_role_list_all(
     )]
 #[get("/apis/authorization/v1/namespaces/{namespace}/roles/{name}")]
 pub(super) async fn handle_role_read(
-    path: Path<RolePathParams>,
+    path: Path<RoleReadPathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Role>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -150,7 +162,7 @@ pub(super) async fn handle_role_read(
     )]
 #[put("/apis/authorization/v1/namespaces/{namespace}/roles/{name}")]
 pub(super) async fn handle_role_replace(
-    path: Path<RolePathParams>,
+    path: Path<RoleReplacePathParams>,
     replacement: Json<Role>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Role>, Box<StatusResponse>> {
@@ -183,7 +195,7 @@ pub(super) async fn handle_role_replace(
     )]
 #[patch("/apis/authorization/v1/namespaces/{namespace}/roles/{name}")]
 pub(super) async fn handle_role_patch(
-    path: Path<RolePathParams>,
+    path: Path<RoleReplacePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Role>, Box<StatusResponse>> {

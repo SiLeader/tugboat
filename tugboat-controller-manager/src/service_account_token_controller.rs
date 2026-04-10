@@ -7,9 +7,7 @@ use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, ObjectReference};
-use tugboat_resources::{ObjectMetaResource, Resource};
-
-const SERVICE_ACCOUNT_NAME_ANNOTATION: &str = "tugboat.io/service-account.name";
+use tugboat_resources::{ObjectMetaResource, Resource, SERVICE_ACCOUNT_NAME_ANNOTATION};
 const SERVICE_ACCOUNT_TOKEN_SECRET_TYPE: &str = "tugboat.io/service-account-token";
 const TOKEN_DATA_KEY: &str = "token";
 
@@ -97,7 +95,7 @@ impl ServiceAccountTokenReconciler {
             }
         };
 
-        self.ensure_secret_reference(service_account, &token_secret)
+        self.ensure_secret_reference(&service_account, &token_secret)
             .await?;
         Ok(Action::await_change())
     }
@@ -183,7 +181,7 @@ impl ServiceAccountTokenReconciler {
 
     async fn ensure_secret_reference(
         &self,
-        service_account: ServiceAccount,
+        service_account: &ServiceAccount,
         secret: &Secret,
     ) -> Result<(), ControllerError> {
         let namespace = service_account
@@ -198,14 +196,6 @@ impl ServiceAccountTokenReconciler {
             .name()
             .ok_or(ControllerError::MissingName("Secret"))?
             .to_string();
-
-        if service_account.secrets.iter().any(|reference| {
-            reference.kind == "Secret"
-                && reference.name == secret_name
-                && reference.namespace.as_deref() == Some(namespace.as_str())
-        }) {
-            return Ok(());
-        }
 
         let service_account_api: Api<ServiceAccount> =
             Api::namespaced(self.client.clone(), &namespace);

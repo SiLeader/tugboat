@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::auth::constants::{
+    CLUSTER_ROLE_KIND, GROUP_SUBJECT_KIND, RBAC_API_GROUP, SYSTEM_MASTERS_GROUP,
+};
 use tugboat_resource_store::ResourceStore;
 use tugboat_resource_store::error::Error;
 use tugboat_resources::manifests::authorization::v1::{
@@ -20,11 +23,6 @@ use tugboat_resources::manifests::authorization::v1::{
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
 use tugboat_resources::Resource;
 use uuid::Uuid;
-
-const RBAC_API_GROUP: &str = "authorization";
-const GROUP_SUBJECT_KIND: &str = "Group";
-const CLUSTER_ROLE_KIND: &str = "ClusterRole";
-const SYSTEM_MASTERS_GROUP: &str = "system:masters";
 const CLUSTER_ADMIN_ROLE: &str = "cluster-admin";
 const ADMIN_ROLE: &str = "admin";
 const EDIT_ROLE: &str = "edit";

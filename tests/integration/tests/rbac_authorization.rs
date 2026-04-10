@@ -304,6 +304,165 @@ async fn wildcard_and_resource_name_rules_are_enforced() -> Result<(), DynError>
 }
 
 #[tokio::test]
+async fn get_only_role_denies_create_update_and_delete_operations() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let admin = ctx.admin_client()?;
+    create_namespace(&admin, &ctx.base_url, "write-deny").await?;
+    create_configmap(&admin, &ctx.base_url, "write-deny", "existing").await?;
+
+    let reader =
+        create_service_account_with_token(&admin, &ctx.base_url, "write-deny", "reader-only")
+            .await?;
+    create_role(
+        &admin,
+        &ctx.base_url,
+        "write-deny",
+        "read-only",
+        json!(["core"]),
+        json!(["configmaps"]),
+        json!(["get", "list"]),
+        None,
+    )
+    .await?;
+    create_role_binding(
+        &admin,
+        &ctx.base_url,
+        "write-deny",
+        "read-only-binding",
+        "Role",
+        "read-only",
+        "write-deny",
+        "reader-only",
+    )
+    .await?;
+
+    // GET should succeed
+    let get_response = reader
+        .get(format!(
+            "{}/api/v1/namespaces/write-deny/configmaps/existing",
+            ctx.base_url
+        ))
+        .send()
+        .await?;
+    assert_eq!(get_response.status(), StatusCode::OK);
+
+    // POST (create) should be denied
+    let create_response = reader
+        .post(format!(
+            "{}/api/v1/namespaces/write-deny/configmaps",
+            ctx.base_url
+        ))
+        .json(&json!({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": { "name": "new-map", "namespace": "write-deny" },
+            "data": { "key": "value" }
+        }))
+        .send()
+        .await?;
+    assert_eq!(create_response.status(), StatusCode::FORBIDDEN);
+
+    // PUT (update) should be denied
+    let update_response = reader
+        .put(format!(
+            "{}/api/v1/namespaces/write-deny/configmaps/existing",
+            ctx.base_url
+        ))
+        .json(&json!({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": { "name": "existing", "namespace": "write-deny" },
+            "data": { "key": "updated" }
+        }))
+        .send()
+        .await?;
+    assert_eq!(update_response.status(), StatusCode::FORBIDDEN);
+
+    // DELETE should be denied
+    let delete_response = reader
+        .delete(format!(
+            "{}/api/v1/namespaces/write-deny/configmaps/existing",
+            ctx.base_url
+        ))
+        .send()
+        .await?;
+    assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn write_role_allows_create_but_still_denies_delete() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let admin = ctx.admin_client()?;
+    create_namespace(&admin, &ctx.base_url, "write-allow").await?;
+
+    let writer =
+        create_service_account_with_token(&admin, &ctx.base_url, "write-allow", "writer").await?;
+    create_role(
+        &admin,
+        &ctx.base_url,
+        "write-allow",
+        "create-only",
+        json!(["core"]),
+        json!(["configmaps"]),
+        json!(["create", "get"]),
+        None,
+    )
+    .await?;
+    create_role_binding(
+        &admin,
+        &ctx.base_url,
+        "write-allow",
+        "create-only-binding",
+        "Role",
+        "create-only",
+        "write-allow",
+        "writer",
+    )
+    .await?;
+
+    // POST (create) should succeed
+    let create_response = writer
+        .post(format!(
+            "{}/api/v1/namespaces/write-allow/configmaps",
+            ctx.base_url
+        ))
+        .json(&json!({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": { "name": "writer-map", "namespace": "write-allow" },
+            "data": { "key": "value" }
+        }))
+        .send()
+        .await?;
+    assert!(
+        create_response.status() == StatusCode::OK
+            || create_response.status() == StatusCode::CREATED,
+        "expected 200 or 201, got {}",
+        create_response.status()
+    );
+
+    // DELETE should be denied
+    let delete_response = writer
+        .delete(format!(
+            "{}/api/v1/namespaces/write-allow/configmaps/writer-map",
+            ctx.base_url
+        ))
+        .send()
+        .await?;
+    assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn system_masters_client_certificate_bypasses_rbac_checks() -> Result<(), DynError> {
     let Some(ctx) = setup_mtls_or_skip().await? else {
         return Ok(());

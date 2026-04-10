@@ -12,33 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(dead_code)]
-
-use crate::auth::authorization::{AuthorizationDecision, AuthorizationRequest, Authorizer};
+use crate::auth::authorization::{AuthorizationDecision, AuthorizationRequest};
+use crate::auth::constants::{
+    CLUSTER_ROLE_KIND, GROUP_SUBJECT_KIND, RBAC_API_GROUP, ROLE_KIND, SYSTEM_MASTERS_GROUP,
+};
 use crate::auth::user_info::UserInfo;
-use async_trait::async_trait;
 use tugboat_resource_store::ResourceStore;
 use tugboat_resources::manifests::authorization::v1::{
     ClusterRole, ClusterRoleBinding, PolicyRule, Role, RoleBinding, RoleRef, Subject,
 };
 
-const RBAC_API_GROUP: &str = "authorization";
-const SYSTEM_MASTERS_GROUP: &str = "system:masters";
 const USER_SUBJECT_KIND: &str = "User";
-const GROUP_SUBJECT_KIND: &str = "Group";
 const SERVICE_ACCOUNT_SUBJECT_KIND: &str = "ServiceAccount";
-const ROLE_KIND: &str = "Role";
-const CLUSTER_ROLE_KIND: &str = "ClusterRole";
 
-pub(crate) struct RbacAuthorizer {
-    store: ResourceStore,
-}
+pub(crate) struct RbacAuthorizer;
 
 impl RbacAuthorizer {
-    pub(crate) fn new(store: ResourceStore) -> Self {
-        Self { store }
-    }
-
     pub(crate) async fn authorize_with_store(
         store: &ResourceStore,
         request: &AuthorizationRequest,
@@ -49,13 +38,6 @@ impl RbacAuthorizer {
                 reason: format!("Failed to evaluate RBAC policy: {err}"),
             },
         }
-    }
-
-    async fn authorize_impl(
-        &self,
-        request: &AuthorizationRequest,
-    ) -> Result<AuthorizationDecision, tugboat_resource_store::error::Error> {
-        Self::authorize_impl_with_store(&self.store, request).await
     }
 
     async fn authorize_impl_with_store(
@@ -153,18 +135,6 @@ impl RbacAuthorizer {
                     .unwrap_or_default())
             }
             _ => Ok(Vec::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl Authorizer for RbacAuthorizer {
-    async fn authorize(&self, request: &AuthorizationRequest) -> AuthorizationDecision {
-        match self.authorize_impl(request).await {
-            Ok(decision) => decision,
-            Err(err) => AuthorizationDecision::Denied {
-                reason: format!("Failed to evaluate RBAC policy: {err}"),
-            },
         }
     }
 }

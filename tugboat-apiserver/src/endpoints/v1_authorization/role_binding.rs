@@ -44,7 +44,19 @@ pub(super) async fn handle_role_binding_create(
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct RoleBindingPathParams {
+pub(super) struct RoleBindingDeletePathParams {
+    namespace: String,
+    name: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct RoleBindingReadPathParams {
+    namespace: String,
+    name: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct RoleBindingReplacePathParams {
     namespace: String,
     name: String,
 }
@@ -62,7 +74,7 @@ pub(super) struct RoleBindingPathParams {
     )]
 #[delete("/apis/authorization/v1/namespaces/{namespace}/rolebindings/{name}")]
 pub(super) async fn handle_role_binding_delete(
-    path: Path<RoleBindingPathParams>,
+    path: Path<RoleBindingDeletePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<RoleBinding>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -130,7 +142,7 @@ pub(super) async fn handle_role_binding_list_all(
     )]
 #[get("/apis/authorization/v1/namespaces/{namespace}/rolebindings/{name}")]
 pub(super) async fn handle_role_binding_read(
-    path: Path<RoleBindingPathParams>,
+    path: Path<RoleBindingReadPathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<RoleBinding>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -152,7 +164,7 @@ pub(super) async fn handle_role_binding_read(
     )]
 #[put("/apis/authorization/v1/namespaces/{namespace}/rolebindings/{name}")]
 pub(super) async fn handle_role_binding_replace(
-    path: Path<RoleBindingPathParams>,
+    path: Path<RoleBindingReplacePathParams>,
     replacement: Json<RoleBinding>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<RoleBinding>, Box<StatusResponse>> {
@@ -185,7 +197,7 @@ pub(super) async fn handle_role_binding_replace(
     )]
 #[patch("/apis/authorization/v1/namespaces/{namespace}/rolebindings/{name}")]
 pub(super) async fn handle_role_binding_patch(
-    path: Path<RoleBindingPathParams>,
+    path: Path<RoleBindingReplacePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<RoleBinding>, Box<StatusResponse>> {

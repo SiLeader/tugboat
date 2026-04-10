@@ -26,15 +26,14 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use tugboat_resources::ObjectMetaResource;
+use tugboat_resources::SERVICE_ACCOUNT_NAME_ANNOTATION;
 use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
 
-const SERVICE_ACCOUNT_NAME_ANNOTATION: &str = "tugboat.io/service-account.name";
+type AuthResult<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<UserInfo>, Box<StatusResponse>>> + 'a>>;
 
 pub(crate) trait Authenticator: Clone + 'static {
-    fn authenticate<'a>(
-        &'a self,
-        req: &'a HttpRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<UserInfo>, StatusResponse>> + 'a>>;
+    fn authenticate<'a>(&'a self, req: &'a HttpRequest) -> AuthResult<'a>;
 
     fn anonymous_enabled(&self) -> bool;
 }
@@ -56,7 +55,7 @@ impl DefaultAuthenticator {
     async fn authenticate_impl(
         &self,
         req: &HttpRequest,
-    ) -> Result<Option<UserInfo>, StatusResponse> {
+    ) -> Result<Option<UserInfo>, Box<StatusResponse>> {
         if let Some(token) = bearer_token(req)? {
             let user = self.authenticate_service_account_token(&token).await?;
             return Ok(Some(user));
@@ -71,31 +70,43 @@ impl DefaultAuthenticator {
     async fn authenticate_service_account_token(
         &self,
         token: &str,
-    ) -> Result<UserInfo, StatusResponse> {
+    ) -> Result<UserInfo, Box<StatusResponse>> {
         let secret = self
             .find_service_account_token_secret(token)
-            .await
-            .map_err(StatusResponse::from)?
-            .ok_or_else(|| StatusResponse::unauthorized("Invalid bearer token", None))?;
+            .await?
+            .ok_or_else(|| {
+                Box::new(StatusResponse::unauthorized("Invalid bearer token", None))
+            })?;
 
         let namespace = secret.namespace().ok_or_else(|| {
-            StatusResponse::unauthorized("Service account token secret is missing namespace", None)
+            Box::new(StatusResponse::unauthorized(
+                "Service account token secret is missing namespace",
+                None,
+            ))
         })?;
         let service_account_name = service_account_name(&secret).ok_or_else(|| {
-            StatusResponse::unauthorized("Service account token secret is missing annotation", None)
+            Box::new(StatusResponse::unauthorized(
+                "Service account token secret is missing annotation",
+                None,
+            ))
         })?;
         let service_account = self
             .operator
             .store
             .get::<ServiceAccount>(Some(namespace.to_string()), &service_account_name)
-            .await
-            .map_err(StatusResponse::from)?
+            .await?
             .map(|resource| resource.apply_revision())
             .ok_or_else(|| {
-                StatusResponse::unauthorized("Service account for bearer token was not found", None)
+                Box::new(StatusResponse::unauthorized(
+                    "Service account for bearer token was not found",
+                    None,
+                ))
             })?;
         let service_account_name = service_account.name().ok_or_else(|| {
-            StatusResponse::unauthorized("Service account is missing metadata.name", None)
+            Box::new(StatusResponse::unauthorized(
+                "Service account is missing metadata.name",
+                None,
+            ))
         })?;
 
         let mut extra = HashMap::new();
@@ -134,10 +145,7 @@ impl DefaultAuthenticator {
 }
 
 impl Authenticator for DefaultAuthenticator {
-    fn authenticate<'a>(
-        &'a self,
-        req: &'a HttpRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<UserInfo>, StatusResponse>> + 'a>> {
+    fn authenticate<'a>(&'a self, req: &'a HttpRequest) -> AuthResult<'a> {
         Box::pin(self.authenticate_impl(req))
     }
 
@@ -146,33 +154,39 @@ impl Authenticator for DefaultAuthenticator {
     }
 }
 
-fn bearer_token(req: &HttpRequest) -> Result<Option<String>, StatusResponse> {
+fn bearer_token(req: &HttpRequest) -> Result<Option<String>, Box<StatusResponse>> {
     let Some(value) = req.headers().get(AUTHORIZATION) else {
         return Ok(None);
     };
     let value = value.to_str().map_err(|_| {
-        StatusResponse::unauthorized("Authorization header is not valid ASCII", None)
+        Box::new(StatusResponse::unauthorized(
+            "Authorization header is not valid ASCII",
+            None,
+        ))
     })?;
     let Some((scheme, token)) = value.split_once(' ') else {
-        return Err(StatusResponse::unauthorized(
+        return Err(Box::new(StatusResponse::unauthorized(
             "Authorization header must use the format 'Bearer <token>'",
             None,
-        ));
+        )));
     };
     if scheme != "Bearer" || token.is_empty() {
-        return Err(StatusResponse::unauthorized(
+        return Err(Box::new(StatusResponse::unauthorized(
             "Authorization header must use the Bearer scheme",
             None,
-        ));
+        )));
     }
     Ok(Some(token.to_string()))
 }
 
 fn authenticate_client_certificate(
     cert: &ClientCertificateInfo,
-) -> Result<UserInfo, StatusResponse> {
+) -> Result<UserInfo, Box<StatusResponse>> {
     let username = cert.common_name.clone().ok_or_else(|| {
-        StatusResponse::unauthorized("Client certificate is missing Common Name", None)
+        Box::new(StatusResponse::unauthorized(
+            "Client certificate is missing Common Name",
+            None,
+        ))
     })?;
     let mut extra = HashMap::new();
     extra.insert(

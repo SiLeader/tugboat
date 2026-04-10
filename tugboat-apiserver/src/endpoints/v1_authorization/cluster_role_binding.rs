@@ -39,7 +39,17 @@ pub(super) async fn handle_cluster_role_binding_create(
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(super) struct ClusterRoleBindingPathParams {
+pub(super) struct ClusterRoleBindingDeletePathParams {
+    name: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct ClusterRoleBindingReadPathParams {
+    name: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(super) struct ClusterRoleBindingReplacePathParams {
     name: String,
 }
 
@@ -55,7 +65,7 @@ pub(super) struct ClusterRoleBindingPathParams {
     )]
 #[delete("/apis/authorization/v1/clusterrolebindings/{name}")]
 pub(super) async fn handle_cluster_role_binding_delete(
-    path: Path<ClusterRoleBindingPathParams>,
+    path: Path<ClusterRoleBindingDeletePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ClusterRoleBinding>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<ClusterRoleBinding>(
@@ -99,7 +109,7 @@ pub(super) async fn handle_cluster_role_binding_list(
     )]
 #[get("/apis/authorization/v1/clusterrolebindings/{name}")]
 pub(super) async fn handle_cluster_role_binding_read(
-    path: Path<ClusterRoleBindingPathParams>,
+    path: Path<ClusterRoleBindingReadPathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ClusterRoleBinding>, Box<StatusResponse>> {
     resource_handlers::read_resource::<ClusterRoleBinding>(&operator, None, path.into_inner().name)
@@ -119,7 +129,7 @@ pub(super) async fn handle_cluster_role_binding_read(
     )]
 #[put("/apis/authorization/v1/clusterrolebindings/{name}")]
 pub(super) async fn handle_cluster_role_binding_replace(
-    path: Path<ClusterRoleBindingPathParams>,
+    path: Path<ClusterRoleBindingReplacePathParams>,
     replacement: Json<ClusterRoleBinding>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ClusterRoleBinding>, Box<StatusResponse>> {
@@ -150,7 +160,7 @@ pub(super) async fn handle_cluster_role_binding_replace(
     )]
 #[patch("/apis/authorization/v1/clusterrolebindings/{name}")]
 pub(super) async fn handle_cluster_role_binding_patch(
-    path: Path<ClusterRoleBindingPathParams>,
+    path: Path<ClusterRoleBindingReplacePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ClusterRoleBinding>, Box<StatusResponse>> {

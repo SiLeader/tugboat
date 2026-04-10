@@ -15,6 +15,7 @@
 pub(crate) mod authenticator;
 pub(crate) mod authorization;
 pub(crate) mod bootstrap;
+pub(crate) mod constants;
 pub(crate) mod middleware;
 pub(crate) mod rbac_authorizer;
 pub(crate) mod user_info;
