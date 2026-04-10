@@ -454,20 +454,13 @@ async fn request_json(
     }
 
     let response = request.send().await?;
-    assert_status(response, expected_status, url).await
+    assert_status(response, expected_status).await
 }
 
-async fn assert_status(
-    response: Response,
-    expected_status: StatusCode,
-    url: &str,
-) -> Result<Value, DynError> {
+async fn assert_status(response: Response, expected_status: StatusCode) -> Result<Value, DynError> {
     let status = response.status();
     let text = response.text().await?;
-    assert_eq!(
-        status, expected_status,
-        "unexpected status for {url}: {text}"
-    );
+    assert_eq!(status, expected_status, "unexpected status: {text}");
     Ok(serde_json::from_str(&text)?)
 }
 
