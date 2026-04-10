@@ -510,7 +510,7 @@ async fn request_json_with_statuses(
     let response = request.send().await?;
     assert!(
         accepted.contains(&response.status()),
-        "unexpected status for {url}: expected one of {accepted:?}, got {}",
+        "unexpected status for request: expected one of {accepted:?}, got {}",
         response.status()
     );
     Ok(response.json().await?)
