@@ -119,6 +119,14 @@ fn bearer_headers(token: String) -> Result<HeaderMap, Error> {
     Ok(headers)
 }
 
+fn require_https(path: &str) -> Result<(), Error> {
+    let url = Url::parse(path)?;
+    if url.scheme() != "https" {
+        return Err(Error::InsecureUrl(path.to_string()));
+    }
+    Ok(())
+}
+
 impl TugboatClient {
     fn api_prefix<T: StaticResource>(&self) -> String {
         let group = T::group();
@@ -134,6 +142,7 @@ impl TugboatClient {
         path: String,
         body: T,
     ) -> Result<T, Error> {
+        require_https(&path)?;
         let res = self.client.post(path).json(&body).send().await?;
         Self::parse_response(res).await
     }
@@ -142,6 +151,7 @@ impl TugboatClient {
         &self,
         path: String,
     ) -> Result<Option<T>, Error> {
+        require_https(&path)?;
         let res = self.client.get(path).send().await?;
         Self::parse_response_opt(res).await
     }
@@ -150,6 +160,7 @@ impl TugboatClient {
         &self,
         path: String,
     ) -> Result<Vec<T>, Error> {
+        require_https(&path)?;
         let res = self.client.get(path).send().await?;
         Self::parse_response_list(res).await
     }
@@ -174,6 +185,9 @@ impl TugboatClient {
             .into_iter()
             .flatten(),
         )?;
+        if url.scheme() != "https" {
+            return Err(Error::InsecureUrl(url.to_string()));
+        }
         let res = self.client.get(url.as_str()).send().await?;
         Self::parse_response_list(res).await
     }
@@ -183,6 +197,7 @@ impl TugboatClient {
         path: String,
         body: impl Serialize,
     ) -> Result<T, Error> {
+        require_https(&path)?;
         let res = self.client.patch(path).json(&body).send().await?;
         Self::parse_response(res).await
     }
@@ -192,6 +207,7 @@ impl TugboatClient {
         path: String,
         body: T,
     ) -> Result<T, Error> {
+        require_https(&path)?;
         let res = self.client.put(path).json(&body).send().await?;
         Self::parse_response(res).await
     }
@@ -200,6 +216,7 @@ impl TugboatClient {
         &self,
         path: String,
     ) -> Result<Option<T>, Error> {
+        require_https(&path)?;
         let res = self.client.delete(path).send().await?;
         Self::parse_response_opt(res).await
     }
