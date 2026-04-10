@@ -71,7 +71,7 @@ impl TugboatClient {
         tls: ClientTlsConfig,
     ) -> Result<Self, Error> {
         let base_url = base_url.into();
-        if !matches!(auth, ClientAuth::None) && !base_url.starts_with("https://") {
+        if !base_url.starts_with("https://") {
             return Err(Error::InsecureUrl(base_url));
         }
         Ok(Self {

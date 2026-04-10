@@ -424,7 +424,7 @@ mod tests {
 
     #[tokio::test]
     async fn controller_processes_single_stream() {
-        let api = Api::<Ship>::namespaced(TugboatClient::new("http://127.0.0.1:1"), "default");
+        let api = Api::<Ship>::namespaced(TugboatClient::new("https://127.0.0.1:1"), "default");
         let controller = Controller::new(api);
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let seen_clone = seen.clone();
@@ -460,7 +460,7 @@ mod tests {
     async fn duplicate_events_cancel_previous_requeue() {
         use std::time::Duration;
 
-        let api = Api::<Ship>::namespaced(TugboatClient::new("http://127.0.0.1:1"), "default");
+        let api = Api::<Ship>::namespaced(TugboatClient::new("https://127.0.0.1:1"), "default");
         let controller = Controller::new(api);
         let call_count = Arc::new(Mutex::new(0u32));
         let call_count_clone = call_count.clone();

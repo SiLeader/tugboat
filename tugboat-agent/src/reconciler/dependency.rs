@@ -200,7 +200,7 @@ mod tests {
     fn tracker(event_tx: tokio::sync::mpsc::Sender<DependencyEvent>) -> DependencyTracker {
         DependencyTracker::new(
             "node-a".to_string(),
-            TugboatClient::new("http://127.0.0.1:8080"),
+            TugboatClient::new("https://127.0.0.1:8080"),
             event_tx,
         )
     }

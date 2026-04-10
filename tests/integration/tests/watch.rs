@@ -4,8 +4,9 @@ mod helpers;
 use std::error::Error;
 use std::time::Duration;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, Response, StatusCode};
+use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -385,7 +386,7 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
 }
 
 async fn start_watch(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     query: &[(&str, &str)],
@@ -409,7 +410,11 @@ async fn start_watch(
     })
 }
 
-async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result<Value, DynError> {
+async fn create_namespace(
+    client: &SecureClient,
+    base_url: &str,
+    name: &str,
+) -> Result<Value, DynError> {
     request_json(
         client,
         Method::POST,
@@ -421,7 +426,7 @@ async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result
 }
 
 async fn create_resource(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     body: &Value,
@@ -437,7 +442,7 @@ async fn create_resource(
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,

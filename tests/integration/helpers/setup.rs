@@ -23,7 +23,7 @@ use tokio::task::JoinHandle;
 use tracing_subscriber::EnvFilter;
 use tugboat_apiserver::ApiServer;
 use tugboat_apiserver::config::ApiServerConfig;
-use tugboat_client::TugboatClient;
+use tugboat_client::{ClientAuth, ClientTlsConfig, TugboatClient};
 use tugboat_resource_store::ResourceStore;
 use tugboat_resources::Resource;
 use tugboat_resources::manifests::authorization::v1::{ClusterRoleBinding, RoleRef, Subject};
@@ -31,6 +31,68 @@ use tugboat_resources::manifests::core::v1::{Namespace, Secret, ServiceAccount};
 use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
 type DynError = Box<dyn Error + Send + Sync>;
+
+/// HTTPS-enforcing wrapper around `reqwest::Client` for integration tests.
+/// Every HTTP method asserts the URL starts with `https://` so CodeQL can
+/// statically verify that sensitive data (tokens, TLS assets) is never sent
+/// over a cleartext channel.
+#[derive(Clone)]
+pub struct SecureClient {
+    inner: reqwest::Client,
+}
+
+impl SecureClient {
+    pub fn new(inner: reqwest::Client) -> Self {
+        Self { inner }
+    }
+
+    fn assert_https(url: &str) {
+        assert!(
+            url.starts_with("https://"),
+            "SecureClient requires an HTTPS URL, got: {url}"
+        );
+    }
+
+    pub fn get(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
+        let url = url.as_ref();
+        Self::assert_https(url);
+        self.inner.get(url)
+    }
+
+    pub fn post(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
+        let url = url.as_ref();
+        Self::assert_https(url);
+        self.inner.post(url)
+    }
+
+    pub fn put(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
+        let url = url.as_ref();
+        Self::assert_https(url);
+        self.inner.put(url)
+    }
+
+    pub fn delete(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
+        let url = url.as_ref();
+        Self::assert_https(url);
+        self.inner.delete(url)
+    }
+
+    pub fn patch(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
+        let url = url.as_ref();
+        Self::assert_https(url);
+        self.inner.patch(url)
+    }
+
+    pub fn request(
+        &self,
+        method: reqwest::Method,
+        url: impl AsRef<str>,
+    ) -> reqwest::RequestBuilder {
+        let url = url.as_ref();
+        Self::assert_https(url);
+        self.inner.request(method, url)
+    }
+}
 
 const APISERVER_URL_ENV: &str = "TUGBOAT_TEST_APISERVER_URL";
 const ETCD_ENDPOINT_ENV: &str = "TUGBOAT_TEST_ETCD_ENDPOINT";
@@ -147,7 +209,12 @@ impl TestContext {
             let base_url = base_url.to_string_lossy().into_owned();
             wait_for_healthz(&base_url, None, None).await?;
             return Ok(Some(Self {
-                client: TugboatClient::new(base_url.clone()),
+                client: TugboatClient::try_new(
+                    base_url.clone(),
+                    ClientAuth::None,
+                    ClientTlsConfig::default(),
+                )
+                .expect("external apiserver URL must use HTTPS"),
                 base_url,
                 admin_token: None,
                 ca_cert_pem: None,
@@ -211,23 +278,22 @@ impl TestContext {
         }))
     }
 
-    pub fn http_client(&self) -> Result<reqwest::Client, DynError> {
-        self.client_builder()?.build().map_err(Into::into)
+    pub fn http_client(&self) -> Result<SecureClient, DynError> {
+        Ok(SecureClient::new(self.client_builder()?.build()?))
     }
 
-    pub fn bearer_client(&self, token: &str) -> Result<reqwest::Client, DynError> {
+    pub fn bearer_client(&self, token: &str) -> Result<SecureClient, DynError> {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}"))?,
         );
-        self.client_builder()?
-            .default_headers(headers)
-            .build()
-            .map_err(Into::into)
+        Ok(SecureClient::new(
+            self.client_builder()?.default_headers(headers).build()?,
+        ))
     }
 
-    pub fn admin_client(&self) -> Result<reqwest::Client, DynError> {
+    pub fn admin_client(&self) -> Result<SecureClient, DynError> {
         let token = self
             .admin_token
             .as_deref()
@@ -235,15 +301,16 @@ impl TestContext {
         self.bearer_client(token)
     }
 
-    pub fn masters_client(&self) -> Result<reqwest::Client, DynError> {
+    pub fn masters_client(&self) -> Result<SecureClient, DynError> {
         let identity = self
             .masters_identity_pem
             .as_ref()
             .ok_or("mTLS identity is not available in this test context")?;
-        self.client_builder()?
-            .identity(reqwest::Identity::from_pem(identity)?)
-            .build()
-            .map_err(Into::into)
+        Ok(SecureClient::new(
+            self.client_builder()?
+                .identity(reqwest::Identity::from_pem(identity)?)
+                .build()?,
+        ))
     }
 
     pub fn ca_cert_pem(&self) -> Option<&[u8]> {

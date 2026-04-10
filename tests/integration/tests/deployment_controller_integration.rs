@@ -5,8 +5,9 @@ use std::error::Error;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, Response, StatusCode};
+use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -371,7 +372,7 @@ fn test_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 async fn wait_for_owned_replicaset_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     deployment_name: &str,
@@ -396,7 +397,7 @@ async fn wait_for_owned_replicaset_count(
 }
 
 async fn wait_for_owned_replicaset<F>(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     deployment_name: &str,
@@ -424,7 +425,7 @@ where
 }
 
 async fn wait_for_replicaset_ready_replicas(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     replicaset_name: &str,
@@ -453,7 +454,7 @@ async fn wait_for_replicaset_ready_replicas(
 }
 
 async fn wait_for_owned_ship_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -477,7 +478,7 @@ async fn wait_for_owned_ship_count(
 }
 
 async fn list_owned_replicasets(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     deployment_name: &str,
@@ -510,7 +511,7 @@ async fn list_owned_replicasets(
 }
 
 async fn list_owned_ships(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -543,7 +544,7 @@ async fn list_owned_ships(
 }
 
 async fn mark_labeled_ships_running(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     label_key: &str,
@@ -601,7 +602,11 @@ async fn mark_labeled_ships_running(
     Ok(())
 }
 
-async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result<Value, DynError> {
+async fn create_namespace(
+    client: &SecureClient,
+    base_url: &str,
+    name: &str,
+) -> Result<Value, DynError> {
     request_json(
         client,
         Method::POST,
@@ -613,7 +618,7 @@ async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result
 }
 
 async fn create_resource(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     body: &Value,
@@ -628,7 +633,7 @@ async fn create_resource(
     .await
 }
 
-async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, DynError> {
+async fn get_json(client: &SecureClient, base_url: &str, path: &str) -> Result<Value, DynError> {
     request_json(
         client,
         Method::GET,
@@ -640,7 +645,7 @@ async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, 
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,

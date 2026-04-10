@@ -3,8 +3,9 @@ mod helpers;
 
 use std::error::Error;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -448,7 +449,7 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
 }
 
 async fn create_namespace(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
 ) -> Result<(), DynError> {
@@ -469,7 +470,7 @@ async fn create_namespace(
     Ok(())
 }
 
-async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, DynError> {
+async fn get_json(client: &SecureClient, base_url: &str, path: &str) -> Result<Value, DynError> {
     let response = client.get(format!("{base_url}{path}")).send().await?;
     assert_eq!(
         response.status(),
@@ -480,7 +481,7 @@ async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, 
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,
@@ -490,7 +491,7 @@ async fn request_json(
 }
 
 async fn request_json_with_statuses(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_statuses: &[StatusCode],
