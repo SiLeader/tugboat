@@ -24,7 +24,7 @@ use utoipa_actix_web::service_config::ServiceConfig;
 
 mod discovery;
 mod resource_handlers;
-mod resource_registry;
+pub(crate) mod resource_registry;
 mod selector;
 mod utils;
 mod v1_apps;

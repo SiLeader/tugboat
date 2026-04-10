@@ -23,6 +23,7 @@ tugboat-resource-store.workspace = true
 tugboat-resources = { workspace = true, features = ["schema"] }
 tugboat-scheduler.workspace = true
 
+actix-tls = "3.5.0"
 actix-web = { workspace = true, features = ["openssl"] }
 actix-web-lab.workspace = true
 utoipa = { workspace = true, features = ["actix_extras"] }
@@ -38,6 +39,7 @@ rand_xorshift.workspace = true
 
 tokio = { workspace = true, features = ["full"] }
 async-stream.workspace = true
+async-trait.workspace = true
 
 uuid = { workspace = true, features = ["v4"] }
 

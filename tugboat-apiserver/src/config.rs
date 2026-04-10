@@ -19,6 +19,10 @@ use tugboat_resource_store::ResourceStore;
 pub struct ApiServerConfig {
     http: HttpConfig,
     etcd: EtcdConfig,
+    #[serde(default)]
+    authentication: AuthenticationConfig,
+    #[serde(default)]
+    authorization: AuthorizationConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -39,13 +43,59 @@ pub struct TlsConfig {
     pub(crate) client_cert_file: Option<String>,
 }
 
+#[derive(Clone, serde::Deserialize)]
+pub struct AuthenticationConfig {
+    #[serde(default = "default_anonymous_enabled")]
+    pub(crate) anonymous_enabled: bool,
+}
+
+#[derive(Clone, serde::Deserialize)]
+pub struct AuthorizationConfig {
+    #[serde(default)]
+    pub(crate) mode: AuthorizationMode,
+}
+
+#[derive(Clone, Default, serde::Deserialize)]
+pub enum AuthorizationMode {
+    #[default]
+    AlwaysAllow,
+    #[serde(rename = "RBAC", alias = "Rbac", alias = "rbac")]
+    Rbac,
+}
+
+fn default_anonymous_enabled() -> bool {
+    true
+}
+
+impl Default for AuthenticationConfig {
+    fn default() -> Self {
+        Self {
+            anonymous_enabled: default_anonymous_enabled(),
+        }
+    }
+}
+
+impl Default for AuthorizationConfig {
+    fn default() -> Self {
+        Self {
+            mode: AuthorizationMode::default(),
+        }
+    }
+}
+
 impl crate::ApiServer {
     pub async fn from_config(
         value: ApiServerConfig,
     ) -> Result<Self, tugboat_resource_store::error::Error> {
         let store = ResourceStore::new(value.etcd.endpoints.as_slice()).await?;
         let operator = ApiOperator::new(store);
-        Ok(Self::new(value.http.listen, operator, value.http.tls))
+        Ok(Self::new(
+            value.http.listen,
+            operator,
+            value.http.tls,
+            value.authentication,
+            value.authorization,
+        ))
     }
 }
 
@@ -59,6 +109,8 @@ impl ApiServerConfig {
             etcd: EtcdConfig {
                 endpoints: etcd_endpoints,
             },
+            authentication: AuthenticationConfig::default(),
+            authorization: AuthorizationConfig::default(),
         }
     }
 

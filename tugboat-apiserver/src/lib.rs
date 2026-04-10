@@ -12,18 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::TlsConfig;
+use crate::auth::middleware::{
+    AuthenticationMiddleware, AuthorizationMiddleware, ClientCertificateInfo,
+};
+use crate::config::{AuthenticationConfig, AuthorizationConfig, TlsConfig};
 use crate::data::StatusResponse;
 use crate::operator::ApiOperator;
 use actix_web::error::InternalError;
 use actix_web::middleware::Logger;
 use actix_web::web::{Data, JsonConfig};
-use actix_web::{App, HttpResponse, HttpServer, get};
+use actix_web::{App, HttpResponse, HttpServer, dev::Extensions, get};
 use openssl::ssl::{SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod, SslVerifyMode};
 use openssl::x509::X509;
+use std::any::Any;
 use std::net::TcpListener;
 use utoipa_actix_web::AppExt;
 
+pub mod auth;
 pub mod config;
 mod data;
 mod endpoints;
@@ -34,22 +39,42 @@ pub struct ApiServer {
     listen: String,
     operator: ApiOperator,
     tls: Option<TlsConfig>,
+    authentication: AuthenticationConfig,
+    authorization: AuthorizationConfig,
 }
 
 impl ApiServer {
-    fn new(listen: String, operator: ApiOperator, tls: Option<TlsConfig>) -> Self {
+    fn new(
+        listen: String,
+        operator: ApiOperator,
+        tls: Option<TlsConfig>,
+        authentication: AuthenticationConfig,
+        authorization: AuthorizationConfig,
+    ) -> Self {
         Self {
             listen,
             operator,
             tls,
+            authentication,
+            authorization,
         }
     }
 
     pub async fn run(self) {
         let data = Data::new(self.operator);
+        let authentication = self.authentication.clone();
+        let authorization = self.authorization.clone();
         let server = HttpServer::new(move || {
             App::new()
                 .wrap(Logger::default().exclude("/healthz"))
+                .wrap(AuthorizationMiddleware::new(
+                    data.clone(),
+                    authorization.clone(),
+                ))
+                .wrap(AuthenticationMiddleware::new(
+                    data.clone(),
+                    authentication.clone(),
+                ))
                 .app_data(data.clone())
                 .app_data(json_config())
                 .service(health_check)
@@ -57,7 +82,8 @@ impl ApiServer {
                 .into_utoipa_app()
                 .configure(endpoints::register_endpoints)
                 .into_app()
-        });
+        })
+        .on_connect(store_client_certificate_info);
         if let Some(tls) = self.tls {
             let builder = build_tls_acceptor(tls);
             server
@@ -78,9 +104,19 @@ impl ApiServer {
 
     pub async fn run_with_listener(self, listener: TcpListener) {
         let data = Data::new(self.operator);
+        let authentication = self.authentication.clone();
+        let authorization = self.authorization.clone();
         HttpServer::new(move || {
             App::new()
                 .wrap(Logger::default().exclude("/healthz"))
+                .wrap(AuthorizationMiddleware::new(
+                    data.clone(),
+                    authorization.clone(),
+                ))
+                .wrap(AuthenticationMiddleware::new(
+                    data.clone(),
+                    authentication.clone(),
+                ))
                 .app_data(data.clone())
                 .app_data(json_config())
                 .service(health_check)
@@ -89,6 +125,7 @@ impl ApiServer {
                 .configure(endpoints::register_endpoints)
                 .into_app()
         })
+        .on_connect(store_client_certificate_info)
         .listen(listener)
         .expect("Failed to listen on provided socket")
         .run()
@@ -140,6 +177,17 @@ fn configure_client_certificate_auth(builder: &mut SslAcceptorBuilder, client_ca
             .expect("Failed to add client CA");
     }
     builder.set_verify(SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT);
+}
+
+fn store_client_certificate_info(connection: &dyn Any, data: &mut Extensions) {
+    let Some(stream) = connection
+        .downcast_ref::<actix_tls::accept::openssl::TlsStream<actix_web::rt::net::TcpStream>>()
+    else {
+        return;
+    };
+    if let Some(cert) = stream.ssl().peer_certificate() {
+        data.insert(ClientCertificateInfo::from_x509(&cert));
+    }
 }
 
 #[cfg(test)]
