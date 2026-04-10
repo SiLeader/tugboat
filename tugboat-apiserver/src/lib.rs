@@ -61,6 +61,9 @@ impl ApiServer {
     }
 
     pub async fn run(self) {
+        crate::auth::bootstrap::bootstrap_default_rbac(&self.operator.store)
+            .await
+            .expect("Failed to bootstrap default RBAC resources");
         let data = Data::new(self.operator);
         let authentication = self.authentication.clone();
         let authorization = self.authorization.clone();
@@ -103,6 +106,9 @@ impl ApiServer {
     }
 
     pub async fn run_with_listener(self, listener: TcpListener) {
+        crate::auth::bootstrap::bootstrap_default_rbac(&self.operator.store)
+            .await
+            .expect("Failed to bootstrap default RBAC resources");
         let data = Data::new(self.operator);
         let authentication = self.authentication.clone();
         let authorization = self.authorization.clone();
