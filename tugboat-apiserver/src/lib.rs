@@ -106,72 +106,73 @@ impl ApiServer {
     }
 
     pub async fn run_with_listener(self, listener: TcpListener) {
-        crate::auth::bootstrap::bootstrap_default_rbac(&self.operator.store)
-            .await
-            .expect("Failed to bootstrap default RBAC resources");
-        let data = Data::new(self.operator);
-        let authentication = self.authentication.clone();
-        let authorization = self.authorization.clone();
-        HttpServer::new(move || {
-            App::new()
-                .wrap(Logger::default().exclude("/healthz"))
-                .wrap(AuthorizationMiddleware::new(
-                    data.clone(),
-                    authorization.clone(),
-                ))
-                .wrap(AuthenticationMiddleware::new(
-                    data.clone(),
-                    authentication.clone(),
-                ))
-                .app_data(data.clone())
-                .app_data(json_config())
-                .service(health_check)
-                .configure(endpoints::register_openapi_endpoints)
-                .into_utoipa_app()
-                .configure(endpoints::register_endpoints)
-                .into_app()
-        })
-        .on_connect(store_client_certificate_info)
-        .listen(listener)
-        .expect("Failed to listen on provided socket")
-        .run()
-        .await
-        .expect("Failed to run server");
+        let Self {
+            operator,
+            tls,
+            authentication,
+            authorization,
+            ..
+        } = self;
+        run_with_bound_listener(operator, authentication, authorization, listener, tls).await;
     }
 
     pub async fn run_with_tls_listener(self, listener: TcpListener, tls: TlsConfig) {
-        crate::auth::bootstrap::bootstrap_default_rbac(&self.operator.store)
-            .await
-            .expect("Failed to bootstrap default RBAC resources");
-        let data = Data::new(self.operator);
-        let authentication = self.authentication.clone();
-        let authorization = self.authorization.clone();
-        let builder = build_tls_acceptor(tls);
-        HttpServer::new(move || {
-            App::new()
-                .wrap(Logger::default().exclude("/healthz"))
-                .wrap(AuthorizationMiddleware::new(
-                    data.clone(),
-                    authorization.clone(),
-                ))
-                .wrap(AuthenticationMiddleware::new(
-                    data.clone(),
-                    authentication.clone(),
-                ))
-                .app_data(data.clone())
-                .app_data(json_config())
-                .service(health_check)
-                .configure(endpoints::register_openapi_endpoints)
-                .into_utoipa_app()
-                .configure(endpoints::register_endpoints)
-                .into_app()
-        })
-        .on_connect(store_client_certificate_info)
-        .listen_openssl(listener, builder)
-        .expect("Failed to listen on provided socket with TLS")
-        .run()
+        let Self {
+            operator,
+            authentication,
+            authorization,
+            ..
+        } = self;
+        run_with_bound_listener(operator, authentication, authorization, listener, Some(tls)).await;
+    }
+}
+
+async fn run_with_bound_listener(
+    operator: ApiOperator,
+    authentication: AuthenticationConfig,
+    authorization: AuthorizationConfig,
+    listener: TcpListener,
+    tls: Option<TlsConfig>,
+) {
+    crate::auth::bootstrap::bootstrap_default_rbac(&operator.store)
         .await
-        .expect("Failed to run server");
+        .expect("Failed to bootstrap default RBAC resources");
+    let data = Data::new(operator);
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(Logger::default().exclude("/healthz"))
+            .wrap(AuthorizationMiddleware::new(
+                data.clone(),
+                authorization.clone(),
+            ))
+            .wrap(AuthenticationMiddleware::new(
+                data.clone(),
+                authentication.clone(),
+            ))
+            .app_data(data.clone())
+            .app_data(json_config())
+            .service(health_check)
+            .configure(endpoints::register_openapi_endpoints)
+            .into_utoipa_app()
+            .configure(endpoints::register_endpoints)
+            .into_app()
+    })
+    .on_connect(store_client_certificate_info);
+    if let Some(tls) = tls {
+        let builder = build_tls_acceptor(tls);
+        server
+            .listen_openssl(listener, builder)
+            .expect("Failed to listen on provided socket with TLS")
+            .run()
+            .await
+            .expect("Failed to run server");
+    } else {
+        server
+            .listen(listener)
+            .expect("Failed to listen on provided socket")
+            .run()
+            .await
+            .expect("Failed to run server");
     }
 }
 

@@ -13,7 +13,11 @@
 # limitations under the License.
 
 [apiserver]
-url = "http://apiserver:8080"
+url = "https://apiserver:8443"
+
+[apiserver.tls]
+# CA certificate used to verify the apiserver TLS certificate.
+ca_cert_path = "/etc/tugboat/pki/ca.crt"
 
 # [apiserver.auth]
 # type = "service-account"

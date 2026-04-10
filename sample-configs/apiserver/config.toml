@@ -13,7 +13,16 @@
 # limitations under the License.
 
 [http]
-listen = "0.0.0.0:8080"
+listen = "0.0.0.0:8443"
+
+[http.tls]
+# Use a server certificate/key signed by a CA trusted by tugboat clients.
+# Distribute that CA certificate to agents, schedulers, and controllers and set
+# their [apiserver.tls].ca_cert_path to the mounted file.
+cert_file = "/etc/tugboat/pki/apiserver.crt"
+key_file = "/etc/tugboat/pki/apiserver.key"
+# Uncomment to require mTLS client certificates signed by this CA.
+# client_cert_file = "/etc/tugboat/pki/ca.crt"
 
 [etcd]
 endpoints = ["etcd:2379"]

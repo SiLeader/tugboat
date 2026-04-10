@@ -278,14 +278,19 @@ fn parse_resource_path(
     version: &str,
     path: &[&str],
 ) -> Option<ParsedResourcePath> {
-    let (namespace, resource_index) = if matches!(path.first(), Some(&"namespaces")) {
-        (Some(path.get(1)?.to_string()), 2)
-    } else {
-        (None, 0)
+    let descriptors = resource_registry::resources_for(api_group, version);
+    let (namespace, resource_index) = match path {
+        ["namespaces", namespace, resource, ..] => {
+            match descriptors.iter().find(|entry| entry.plural == *resource) {
+                Some(descriptor) => (descriptor.namespaced.then(|| (*namespace).to_string()), 2),
+                None => (None, 0),
+            }
+        }
+        _ => (None, 0),
     };
 
     let resource = *path.get(resource_index)?;
-    let descriptor = resource_registry::resources_for(api_group, version)
+    let descriptor = descriptors
         .into_iter()
         .find(|entry| entry.plural == resource)?;
 
@@ -420,6 +425,34 @@ mod tests {
         assert_eq!(parsed.resource, "namespaces");
         assert_eq!(parsed.namespace, None);
         assert_eq!(parsed.resource_name, None);
+    }
+
+    #[test]
+    fn parses_cluster_scoped_namespace_collection() {
+        let req = TestRequest::get()
+            .uri("/api/v1/namespaces")
+            .to_http_request();
+
+        let request = build_authorization_request(&req, UserInfo::anonymous()).unwrap();
+
+        assert_eq!(request.verb, "list");
+        assert_eq!(request.resource, "namespaces");
+        assert_eq!(request.resource_name, None);
+        assert_eq!(request.namespace, None);
+    }
+
+    #[test]
+    fn parses_cluster_scoped_namespace_read() {
+        let req = TestRequest::get()
+            .uri("/api/v1/namespaces/default")
+            .to_http_request();
+
+        let request = build_authorization_request(&req, UserInfo::anonymous()).unwrap();
+
+        assert_eq!(request.verb, "get");
+        assert_eq!(request.resource, "namespaces");
+        assert_eq!(request.resource_name.as_deref(), Some("default"));
+        assert_eq!(request.namespace, None);
     }
 
     #[test]

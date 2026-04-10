@@ -2,7 +2,7 @@ use crate::base::TugboatController;
 use crate::error::ControllerError;
 use rand::distr::{Alphanumeric, SampleString};
 use rand::rng;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
@@ -87,15 +87,21 @@ impl ServiceAccountTokenReconciler {
             .filter(|secret| owned_by_service_account(secret, &name))
             .collect();
 
-        let token_secret = match owned_secrets.into_iter().next() {
+        let (authoritative_secret, redundant_secrets) =
+            split_authoritative_secret(&service_account, owned_secrets);
+        let token_secret = match authoritative_secret {
             Some(secret) => self.ensure_token_secret(secret_api.clone(), secret).await?,
             None => {
                 self.create_token_secret(secret_api.clone(), &namespace, &name)
                     .await?
             }
         };
+        let redundant_secret_names = secret_names(&redundant_secrets);
+        for secret_name in &redundant_secret_names {
+            delete_secret_ignore_not_found(&secret_api, secret_name).await?;
+        }
 
-        self.ensure_secret_reference(&service_account, &token_secret)
+        self.ensure_secret_reference(&service_account, &token_secret, &redundant_secret_names)
             .await?;
         Ok(Action::await_change())
     }
@@ -183,6 +189,7 @@ impl ServiceAccountTokenReconciler {
         &self,
         service_account: &ServiceAccount,
         secret: &Secret,
+        redundant_secret_names: &BTreeSet<String>,
     ) -> Result<(), ControllerError> {
         let namespace = service_account
             .namespace()
@@ -196,6 +203,11 @@ impl ServiceAccountTokenReconciler {
             .name()
             .ok_or(ControllerError::MissingName("Secret"))?
             .to_string();
+        let secret_uid = secret
+            .object_meta()
+            .as_ref()
+            .and_then(|meta| meta.uid.clone())
+            .unwrap_or_default();
 
         let service_account_api: Api<ServiceAccount> =
             Api::namespaced(self.client.clone(), &namespace);
@@ -203,30 +215,73 @@ impl ServiceAccountTokenReconciler {
             return Ok(());
         };
 
-        if latest.secrets.iter().any(|reference| {
-            reference.kind == "Secret"
-                && reference.name == secret_name
-                && reference.namespace.as_deref() == Some(namespace.as_str())
-        }) {
+        if !reconcile_token_secret_references(
+            &mut latest.secrets,
+            &namespace,
+            &secret_name,
+            &secret_uid,
+            redundant_secret_names,
+        ) {
             return Ok(());
         }
 
-        latest.secrets.push(ObjectReference {
-            kind: "Secret".to_string(),
-            namespace: Some(namespace),
-            name: secret_name,
-            uid: secret
-                .object_meta()
-                .as_ref()
-                .and_then(|meta| meta.uid.clone())
-                .unwrap_or_default(),
-            api_version: "v1".to_string(),
-        });
         service_account_api
             .replace(&service_account_name, latest)
             .await?;
         Ok(())
     }
+}
+
+fn split_authoritative_secret(
+    service_account: &ServiceAccount,
+    owned_secrets: Vec<Secret>,
+) -> (Option<Secret>, Vec<Secret>) {
+    let authoritative_name = choose_authoritative_secret_name(service_account, &owned_secrets);
+    let mut authoritative = None;
+    let mut redundant = Vec::new();
+
+    for secret in owned_secrets {
+        let is_authoritative = match authoritative_name.as_deref() {
+            Some(name) => secret.name() == Some(name),
+            None => authoritative.is_none(),
+        };
+        if authoritative.is_none() && is_authoritative {
+            authoritative = Some(secret);
+        } else {
+            redundant.push(secret);
+        }
+    }
+
+    (authoritative, redundant)
+}
+
+fn choose_authoritative_secret_name(
+    service_account: &ServiceAccount,
+    owned_secrets: &[Secret],
+) -> Option<String> {
+    let owned_secret_names = secret_names(owned_secrets);
+    if owned_secret_names.is_empty() {
+        return None;
+    }
+
+    service_account
+        .secrets
+        .iter()
+        .filter(|reference| {
+            reference.kind == "Secret"
+                && reference.namespace.as_deref() == service_account.namespace()
+                && owned_secret_names.contains(&reference.name)
+        })
+        .map(|reference| reference.name.clone())
+        .min()
+        .or_else(|| owned_secret_names.iter().next().cloned())
+}
+
+fn secret_names(secrets: &[Secret]) -> BTreeSet<String> {
+    secrets
+        .iter()
+        .filter_map(|secret| secret.name().map(str::to_string))
+        .collect()
 }
 
 fn owned_by_service_account(secret: &Secret, service_account_name: &str) -> bool {
@@ -235,6 +290,62 @@ fn owned_by_service_account(secret: &Secret, service_account_name: &str) -> bool
         .as_ref()
         .and_then(|meta| meta.annotations.get(SERVICE_ACCOUNT_NAME_ANNOTATION))
         .is_some_and(|name| name == service_account_name)
+}
+
+fn reconcile_token_secret_references(
+    references: &mut Vec<ObjectReference>,
+    namespace: &str,
+    secret_name: &str,
+    secret_uid: &str,
+    redundant_secret_names: &BTreeSet<String>,
+) -> bool {
+    let mut changed = false;
+    let mut kept_authoritative = false;
+
+    references.retain(|reference| {
+        if reference.kind != "Secret" || reference.namespace.as_deref() != Some(namespace) {
+            return true;
+        }
+        if reference.name == secret_name {
+            if kept_authoritative {
+                changed = true;
+                return false;
+            }
+            kept_authoritative = true;
+            return true;
+        }
+        if redundant_secret_names.contains(&reference.name) {
+            changed = true;
+            return false;
+        }
+        true
+    });
+
+    if let Some(reference) = references.iter_mut().find(|reference| {
+        reference.kind == "Secret"
+            && reference.name == secret_name
+            && reference.namespace.as_deref() == Some(namespace)
+    }) {
+        if reference.api_version != "v1" {
+            reference.api_version = "v1".to_string();
+            changed = true;
+        }
+        if reference.uid != secret_uid {
+            reference.uid = secret_uid.to_string();
+            changed = true;
+        }
+    } else {
+        references.push(ObjectReference {
+            kind: "Secret".to_string(),
+            namespace: Some(namespace.to_string()),
+            name: secret_name.to_string(),
+            uid: secret_uid.to_string(),
+            api_version: "v1".to_string(),
+        });
+        changed = true;
+    }
+
+    changed
 }
 
 async fn delete_secret_ignore_not_found(
@@ -262,11 +373,13 @@ fn generate_token() -> String {
 mod tests {
     use super::{
         SERVICE_ACCOUNT_NAME_ANNOTATION, SERVICE_ACCOUNT_TOKEN_SECRET_TYPE, TOKEN_DATA_KEY,
-        generate_suffix, generate_token, owned_by_service_account,
+        choose_authoritative_secret_name, generate_suffix, generate_token,
+        owned_by_service_account, reconcile_token_secret_references, split_authoritative_secret,
     };
-    use std::collections::HashMap;
-    use tugboat_resources::manifests::core::v1::Secret;
-    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+    use std::collections::{BTreeSet, HashMap};
+    use tugboat_resources::ObjectMetaResource;
+    use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
+    use tugboat_resources::manifests::meta::v1::{ObjectMeta, ObjectReference};
 
     #[test]
     fn matches_owned_secret_from_annotation() {
@@ -306,5 +419,129 @@ mod tests {
             "tugboat.io/service-account-token"
         );
         assert_eq!(TOKEN_DATA_KEY, "token");
+    }
+
+    #[test]
+    fn prefers_referenced_owned_secret_as_authoritative() {
+        let service_account = ServiceAccount {
+            object_meta: Some(ObjectMeta {
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            secrets: vec![ObjectReference {
+                kind: "Secret".to_string(),
+                namespace: Some("default".to_string()),
+                name: "builder-token-b".to_string(),
+                uid: String::new(),
+                api_version: "v1".to_string(),
+            }],
+            ..Default::default()
+        };
+        let owned_secrets = vec![
+            named_secret("builder-token-a"),
+            named_secret("builder-token-b"),
+            named_secret("builder-token-c"),
+        ];
+
+        let chosen =
+            choose_authoritative_secret_name(&service_account, &owned_secrets).expect("secret");
+        let (authoritative, redundant) =
+            split_authoritative_secret(&service_account, owned_secrets);
+
+        assert_eq!(chosen, "builder-token-b");
+        assert_eq!(
+            authoritative.and_then(|secret| secret.name().map(str::to_string)),
+            Some(chosen)
+        );
+        assert_eq!(
+            redundant
+                .iter()
+                .filter_map(|secret| secret.name().map(str::to_string))
+                .collect::<Vec<_>>(),
+            vec!["builder-token-a".to_string(), "builder-token-c".to_string()]
+        );
+    }
+
+    #[test]
+    fn falls_back_to_lexicographically_smallest_owned_secret() {
+        let service_account = ServiceAccount {
+            object_meta: Some(ObjectMeta {
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let owned_secrets = vec![
+            named_secret("builder-token-z"),
+            named_secret("builder-token-a"),
+        ];
+
+        let chosen =
+            choose_authoritative_secret_name(&service_account, &owned_secrets).expect("secret");
+
+        assert_eq!(chosen, "builder-token-a");
+    }
+
+    #[test]
+    fn reconciles_secret_references_to_single_authoritative_entry() {
+        let mut references = vec![
+            ObjectReference {
+                kind: "Secret".to_string(),
+                namespace: Some("default".to_string()),
+                name: "builder-token-b".to_string(),
+                uid: "old-uid".to_string(),
+                api_version: "v1beta1".to_string(),
+            },
+            ObjectReference {
+                kind: "Secret".to_string(),
+                namespace: Some("default".to_string()),
+                name: "builder-token-a".to_string(),
+                uid: String::new(),
+                api_version: "v1".to_string(),
+            },
+            ObjectReference {
+                kind: "Secret".to_string(),
+                namespace: Some("default".to_string()),
+                name: "config-secret".to_string(),
+                uid: "config".to_string(),
+                api_version: "v1".to_string(),
+            },
+        ];
+
+        let changed = reconcile_token_secret_references(
+            &mut references,
+            "default",
+            "builder-token-b",
+            "new-uid",
+            &BTreeSet::from(["builder-token-a".to_string()]),
+        );
+
+        assert!(changed);
+        assert_eq!(references.len(), 2);
+        assert!(references.iter().any(|reference| {
+            reference.name == "builder-token-b"
+                && reference.uid == "new-uid"
+                && reference.api_version == "v1"
+        }));
+        assert!(
+            references
+                .iter()
+                .any(|reference| reference.name == "config-secret")
+        );
+        assert!(
+            !references
+                .iter()
+                .any(|reference| reference.name == "builder-token-a")
+        );
+    }
+
+    fn named_secret(name: &str) -> Secret {
+        Secret {
+            object_meta: Some(ObjectMeta {
+                name: Some(name.to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
     }
 }

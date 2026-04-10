@@ -251,9 +251,7 @@ impl TestContext {
 
         temp_paths.extend(tls_assets.temp_paths.clone());
 
-        // Drop the pre-bound listener so the server can bind to the same port with TLS.
-        drop(listener);
-        let apiserver = tokio::spawn(server.run());
+        let apiserver = tokio::spawn(server.run_with_listener(listener));
         let healthz_identity = tls_assets.masters_identity_pem.as_deref();
         if let Err(err) =
             wait_for_healthz(&base_url, healthz_identity, Some(&tls_assets.ca_cert_pem)).await
@@ -263,12 +261,21 @@ impl TestContext {
             return Err(err);
         }
 
+        let ca_cert_path = tls_assets.ca_cert_path.clone();
+
         Ok(Some(Self {
-            client: TugboatClient::new(base_url.clone()),
+            client: TugboatClient::try_new(
+                base_url.clone(),
+                ClientAuth::None,
+                ClientTlsConfig {
+                    ca_cert_path: Some(ca_cert_path.to_string_lossy().into_owned()),
+                },
+            )
+            .expect("managed test apiserver URL must use HTTPS"),
             base_url,
             admin_token,
             ca_cert_pem: Some(tls_assets.ca_cert_pem.clone()),
-            ca_cert_path: Some(tls_assets.ca_cert_path.clone()),
+            ca_cert_path: Some(ca_cert_path),
             masters_identity_pem: tls_assets.masters_identity_pem,
             _guard: TestGuard::Managed {
                 apiserver,

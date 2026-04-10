@@ -18,7 +18,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("credentials must not be sent over insecure URL: {0}")]
+    #[error("tugboat client requires an HTTPS URL: {0}")]
     InsecureUrl(String),
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
@@ -34,6 +34,21 @@ pub enum Error {
     Url(#[from] url::ParseError),
     #[error("Invalid header value: {0}")]
     InvalidHeaderValue(#[from] reqwest::header::InvalidHeaderValue),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn insecure_url_error_mentions_https_requirement() {
+        let err = Error::InsecureUrl("http://apiserver:8080".to_string());
+
+        assert_eq!(
+            err.to_string(),
+            "tugboat client requires an HTTPS URL: http://apiserver:8080"
+        );
+    }
 }
 
 #[derive(Debug, Deserialize, thiserror::Error)]
