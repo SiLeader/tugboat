@@ -40,7 +40,7 @@ pub(crate) async fn bootstrap_default_rbac(store: &ResourceStore) -> Result<(), 
         .put_if_not_exists(cluster_role(
             ADMIN_ROLE,
             vec![
-                policy_rule(&["core", "apps"], &["*"], &["*"]),
+                policy_rule(&["core", "apps", "coordination"], &["*"], &["*"]),
                 policy_rule(&[RBAC_API_GROUP], &["roles", "rolebindings"], &["*"]),
             ],
         ))
@@ -50,7 +50,7 @@ pub(crate) async fn bootstrap_default_rbac(store: &ResourceStore) -> Result<(), 
             EDIT_ROLE,
             vec![
                 policy_rule(
-                    &["core", "apps"],
+                    &["core", "apps", "coordination"],
                     &["*"],
                     &[
                         "create", "get", "list", "watch", "update", "patch", "delete",
@@ -67,11 +67,18 @@ pub(crate) async fn bootstrap_default_rbac(store: &ResourceStore) -> Result<(), 
     store
         .put_if_not_exists(cluster_role(
             VIEW_ROLE,
-            vec![policy_rule(
-                &["core", "apps"],
-                &["*"],
-                &["get", "list", "watch"],
-            )],
+            vec![
+                policy_rule(
+                    &["core", "apps", "coordination"],
+                    &["*"],
+                    &["get", "list", "watch"],
+                ),
+                policy_rule(
+                    &[RBAC_API_GROUP],
+                    &["roles", "rolebindings"],
+                    &["get", "list", "watch"],
+                ),
+            ],
         ))
         .await?;
     store

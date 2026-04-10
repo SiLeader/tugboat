@@ -261,7 +261,7 @@ fn bearer_token(req: &HttpRequest) -> Result<Option<String>, Box<StatusResponse>
             None,
         )));
     };
-    if scheme != "Bearer" || token.is_empty() {
+    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() {
         return Err(Box::new(StatusResponse::unauthorized(
             "Authorization header must use the Bearer scheme",
             None,
@@ -352,6 +352,17 @@ mod tests {
     fn extracts_bearer_token() {
         let req = TestRequest::default()
             .insert_header(("Authorization", "Bearer token-value"))
+            .to_http_request();
+
+        let token = bearer_token(&req).expect("header should parse");
+
+        assert_eq!(token.as_deref(), Some("token-value"));
+    }
+
+    #[test]
+    fn extracts_bearer_token_case_insensitive() {
+        let req = TestRequest::default()
+            .insert_header(("Authorization", "bearer token-value"))
             .to_http_request();
 
         let token = bearer_token(&req).expect("header should parse");

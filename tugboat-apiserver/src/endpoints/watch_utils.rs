@@ -30,7 +30,7 @@ enum WatchEvent<T> {
     #[serde(rename = "ADDED")]
     Added(T),
     #[serde(rename = "MODIFIED")]
-    Modifed(T),
+    Modified(T),
     #[serde(rename = "DELETED")]
     Deleted(T),
 }
@@ -39,7 +39,7 @@ impl<T> WatchEvent<T> {
     fn content(&self) -> Option<&T> {
         match self {
             WatchEvent::Added(c) => Some(c),
-            WatchEvent::Modifed(c) => Some(c),
+            WatchEvent::Modified(c) => Some(c),
             WatchEvent::Deleted(c) => Some(c),
         }
     }
@@ -143,7 +143,7 @@ where
                     revision: kv.revision,
                 }
                 .apply_revision();
-                Ok(WatchEvent::Modifed(value))
+                Ok(WatchEvent::Modified(value))
             }
             tugboat_resource_store::watch::WatchEvent::Deleted(kv) => {
                 let value = T::deserialize(kv.value.as_slice()).map_err(|e| Box::new(e.into()))?;
