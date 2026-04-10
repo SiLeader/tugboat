@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use serde::Deserialize;
+use tugboat_client::ClientAuth;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SchedulerConfig {
@@ -23,6 +24,8 @@ pub(crate) struct SchedulerConfig {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ApiserverConfig {
     pub url: String,
+    #[serde(default)]
+    pub auth: ClientAuth,
 }
 
 #[derive(Debug, Clone, Deserialize)]

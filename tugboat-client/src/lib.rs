@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use serde::Serialize;
+use reqwest::Identity;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use std::fs;
 use tugboat_resources::StaticResource;
 use url::Url;
 
@@ -28,6 +31,23 @@ pub use api::*;
 pub use error::*;
 pub use watch::*;
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum ClientAuth {
+    #[default]
+    None,
+    BearerToken {
+        token: String,
+    },
+    ServiceAccount {
+        token_path: String,
+    },
+    ClientCertificate {
+        cert_path: String,
+        key_path: String,
+    },
+}
+
 #[derive(Clone)]
 pub struct TugboatClient {
     base_url: String,
@@ -36,11 +56,49 @@ pub struct TugboatClient {
 
 impl TugboatClient {
     pub fn new(base_url: impl Into<String>) -> Self {
-        Self {
+        Self::try_new(base_url, ClientAuth::None)
+            .expect("default tugboat client configuration should be valid")
+    }
+
+    pub fn try_new(base_url: impl Into<String>, auth: ClientAuth) -> Result<Self, Error> {
+        Ok(Self {
             base_url: base_url.into(),
-            client: reqwest::Client::new(),
+            client: build_http_client(auth)?,
+        })
+    }
+}
+
+fn build_http_client(auth: ClientAuth) -> Result<reqwest::Client, Error> {
+    let mut builder = reqwest::Client::builder();
+    match auth {
+        ClientAuth::None => {}
+        ClientAuth::BearerToken { token } => {
+            builder = builder.default_headers(bearer_headers(token)?);
+        }
+        ClientAuth::ServiceAccount { token_path } => {
+            let token = fs::read_to_string(token_path)?.trim().to_string();
+            builder = builder.default_headers(bearer_headers(token)?);
+        }
+        ClientAuth::ClientCertificate {
+            cert_path,
+            key_path,
+        } => {
+            let cert = fs::read(cert_path)?;
+            let key = fs::read(key_path)?;
+            let mut pem = cert;
+            pem.extend_from_slice(&key);
+            let identity = Identity::from_pem(&pem)?;
+            builder = builder.identity(identity);
         }
     }
+    Ok(builder.build()?)
+}
+
+fn bearer_headers(token: String) -> Result<HeaderMap, Error> {
+    let mut headers = HeaderMap::new();
+    let value = HeaderValue::from_str(&format!("Bearer {token}"))?;
+    headers.insert(AUTHORIZATION, value);
+    Ok(headers)
 }
 
 impl TugboatClient {

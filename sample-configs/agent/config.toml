@@ -24,6 +24,10 @@ args = ["--config", "./tugboat-runtime/sample-config.toml"]
 [apiserver]
 url = "http://apiserver:8080"
 
+# [apiserver.auth]
+# type = "service-account"
+# token_path = "/var/run/secrets/tugboat.io/serviceaccount/token"
+
 [image]
 cache_dir = "/tmp"
 

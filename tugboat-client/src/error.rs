@@ -30,6 +30,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("URL error: {0}")]
     Url(#[from] url::ParseError),
+    #[error("Invalid header value: {0}")]
+    InvalidHeaderValue(#[from] reqwest::header::InvalidHeaderValue),
 }
 
 #[derive(Debug, Deserialize, thiserror::Error)]

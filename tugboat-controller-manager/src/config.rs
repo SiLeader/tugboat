@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
+use tugboat_client::ClientAuth;
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ControllerManagerConfig {
@@ -14,6 +15,8 @@ pub(crate) struct ControllerManagerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ApiserverConfig {
     pub url: String,
+    #[serde(default)]
+    pub auth: ClientAuth,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

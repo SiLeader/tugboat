@@ -15,6 +15,10 @@
 [apiserver]
 url = "http://apiserver:8080"
 
+# [apiserver.auth]
+# type = "service-account"
+# token_path = "/var/run/secrets/tugboat.io/serviceaccount/token"
+
 [csi]
 requeue_interval_seconds = 30
 

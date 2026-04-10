@@ -28,7 +28,9 @@ mod service_account_token_controller;
 
 pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
     let config = ControllerManagerConfig::load_or_panic(path);
-    let client = TugboatClient::new(config.apiserver.url.clone());
+    let client =
+        TugboatClient::try_new(config.apiserver.url.clone(), config.apiserver.auth.clone())
+            .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
     let csi_operator = TugboatCsiOperator::default();
 
     let mut tcm = TugboatControllerManager::new();
