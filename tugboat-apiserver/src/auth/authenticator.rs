@@ -26,11 +26,12 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::SERVICE_ACCOUNT_NAME_ANNOTATION;
 use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
+use tugboat_resources::{SERVICE_ACCOUNT_NAME_ANNOTATION, SERVICE_ACCOUNT_TOKEN_SECRET_TYPE};
 
 type AuthResult<'a> =
     Pin<Box<dyn Future<Output = Result<Option<UserInfo>, Box<StatusResponse>>> + 'a>>;
+const TOKEN_DATA_KEY: &str = "token";
 
 pub(crate) trait Authenticator: Clone + 'static {
     fn authenticate<'a>(&'a self, req: &'a HttpRequest) -> AuthResult<'a>;
@@ -100,6 +101,12 @@ impl DefaultAuthenticator {
                     None,
                 ))
             })?;
+        if !service_account_references_secret(&service_account, &secret) {
+            return Err(Box::new(StatusResponse::unauthorized(
+                "Service account token secret is not referenced by the service account",
+                None,
+            )));
+        }
         let service_account_name = service_account.name().ok_or_else(|| {
             Box::new(StatusResponse::unauthorized(
                 "Service account is missing metadata.name",
@@ -131,12 +138,16 @@ impl DefaultAuthenticator {
         let secrets = self.operator.store.list::<Secret>(None, None).await?;
         for secret in secrets {
             let secret = secret.apply_revision();
+            if !is_service_account_token_secret(&secret) {
+                continue;
+            }
+            if service_account_name(&secret).is_none() {
+                continue;
+            }
             if !secret_contains_token(&secret, token) {
                 continue;
             }
-            if service_account_name(&secret).is_some() {
-                return Ok(Some(secret));
-            }
+            return Ok(Some(secret));
         }
         Ok(None)
     }
@@ -203,10 +214,38 @@ fn service_account_name(secret: &Secret) -> Option<String> {
         .cloned()
 }
 
+fn is_service_account_token_secret(secret: &Secret) -> bool {
+    secret.r#type == SERVICE_ACCOUNT_TOKEN_SECRET_TYPE
+}
+
+fn service_account_references_secret(service_account: &ServiceAccount, secret: &Secret) -> bool {
+    let Some(secret_name) = secret.name() else {
+        return false;
+    };
+    let Some(secret_namespace) = secret.namespace() else {
+        return false;
+    };
+    let secret_uid = secret
+        .object_meta()
+        .as_ref()
+        .and_then(|meta| meta.uid.as_deref());
+
+    service_account.secrets.iter().any(|reference| {
+        reference.kind == "Secret"
+            && reference.api_version == "v1"
+            && reference.name == secret_name
+            && reference.namespace.as_deref() == Some(secret_namespace)
+            && match secret_uid {
+                Some(secret_uid) => reference.uid == secret_uid,
+                None => true,
+            }
+    })
+}
+
 fn secret_contains_token(secret: &Secret, token: &str) -> bool {
     secret
         .data
-        .get("token")
+        .get(TOKEN_DATA_KEY)
         .and_then(|encoded| BASE64_STANDARD.decode(encoded).ok())
         .and_then(|decoded| String::from_utf8(decoded).ok())
         .is_some_and(|decoded| decoded == token)
@@ -215,14 +254,17 @@ fn secret_contains_token(secret: &Secret, token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        authenticate_client_certificate, bearer_token, secret_contains_token, service_account_name,
+        TOKEN_DATA_KEY, authenticate_client_certificate, bearer_token,
+        is_service_account_token_secret, secret_contains_token, service_account_name,
+        service_account_references_secret,
     };
     use crate::auth::middleware::ClientCertificateInfo;
     use actix_web::ResponseError;
     use actix_web::test::TestRequest;
     use std::collections::HashMap;
-    use tugboat_resources::manifests::core::v1::Secret;
-    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+    use tugboat_resources::SERVICE_ACCOUNT_TOKEN_SECRET_TYPE;
+    use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
+    use tugboat_resources::manifests::meta::v1::{ObjectMeta, ObjectReference};
 
     #[test]
     fn extracts_bearer_token() {
@@ -251,7 +293,7 @@ mod tests {
         let mut secret = Secret::default();
         secret
             .data
-            .insert("token".to_string(), "c2VjcmV0LXRva2Vu".to_string());
+            .insert(TOKEN_DATA_KEY.to_string(), "c2VjcmV0LXRva2Vu".to_string());
 
         assert!(secret_contains_token(&secret, "secret-token"));
     }
@@ -270,6 +312,50 @@ mod tests {
         };
 
         assert_eq!(service_account_name(&secret).as_deref(), Some("builder"));
+    }
+
+    #[test]
+    fn token_secret_requires_service_account_token_type() {
+        let secret = Secret {
+            r#type: SERVICE_ACCOUNT_TOKEN_SECRET_TYPE.to_string(),
+            ..Default::default()
+        };
+
+        assert!(is_service_account_token_secret(&secret));
+        assert!(!is_service_account_token_secret(&Secret::default()));
+    }
+
+    #[test]
+    fn service_account_reference_must_match_secret_identity() {
+        let secret = Secret {
+            object_meta: Some(ObjectMeta {
+                name: Some("builder-token".to_string()),
+                namespace: Some("default".to_string()),
+                uid: Some("secret-uid".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let service_account = ServiceAccount {
+            secrets: vec![ObjectReference {
+                kind: "Secret".to_string(),
+                namespace: Some("default".to_string()),
+                name: "builder-token".to_string(),
+                uid: "secret-uid".to_string(),
+                api_version: "v1".to_string(),
+            }],
+            ..Default::default()
+        };
+
+        assert!(service_account_references_secret(&service_account, &secret));
+
+        let mut missing_uid = service_account.clone();
+        missing_uid.secrets[0].uid.clear();
+        assert!(!service_account_references_secret(&missing_uid, &secret));
+
+        let mut wrong_version = service_account;
+        wrong_version.secrets[0].api_version = "v1beta1".to_string();
+        assert!(!service_account_references_secret(&wrong_version, &secret));
     }
 
     #[test]

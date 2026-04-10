@@ -35,6 +35,62 @@ async fn bearer_token_authentication_succeeds_and_invalid_token_is_rejected() ->
 }
 
 #[tokio::test]
+async fn unreferenced_service_account_token_secret_is_rejected() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let admin = ctx.admin_client()?;
+    create_namespace(&admin, &ctx.base_url, "forged").await?;
+    request_json(
+        &admin,
+        Method::POST,
+        &format!("{}/api/v1/namespaces/forged/serviceaccounts", ctx.base_url),
+        StatusCode::OK,
+        Some(json!({
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {
+                "name": "reader",
+                "namespace": "forged"
+            }
+        })),
+    )
+    .await?;
+    request_json(
+        &admin,
+        Method::POST,
+        &format!("{}/api/v1/namespaces/forged/secrets", ctx.base_url),
+        StatusCode::OK,
+        Some(json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "name": "reader-token",
+                "namespace": "forged",
+                "annotations": {
+                    "tugboat.io/service-account.name": "reader"
+                }
+            },
+            "type": "tugboat.io/service-account-token",
+            "stringData": {
+                "token": "forged-reader-token"
+            }
+        })),
+    )
+    .await?;
+
+    let forged = ctx.bearer_client("forged-reader-token")?;
+    let response = forged
+        .get(format!("{}/api/v1/namespaces", ctx.base_url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn anonymous_requests_are_processed_as_anonymous_and_denied_by_rbac() -> Result<(), DynError>
 {
     let Some(ctx) = setup_or_skip().await? else {
@@ -643,7 +699,7 @@ async fn create_service_account_with_token(
     name: &str,
     ca_cert_pem: Option<&[u8]>,
 ) -> Result<SecureClient, DynError> {
-    request_json(
+    let mut service_account = request_json(
         admin,
         Method::POST,
         &format!("{base_url}/api/v1/namespaces/{namespace}/serviceaccounts"),
@@ -660,7 +716,7 @@ async fn create_service_account_with_token(
     .await?;
 
     let token = format!("{namespace}-{name}-token");
-    request_json(
+    let secret = request_json(
         admin,
         Method::POST,
         &format!("{base_url}/api/v1/namespaces/{namespace}/secrets"),
@@ -680,6 +736,24 @@ async fn create_service_account_with_token(
                 "token": token
             }
         })),
+    )
+    .await?;
+    let secret_uid = secret["metadata"]["uid"]
+        .as_str()
+        .ok_or("service account token secret is missing metadata.uid")?;
+    service_account["secrets"] = json!([{
+        "kind": "Secret",
+        "namespace": namespace,
+        "name": format!("{name}-token"),
+        "uid": secret_uid,
+        "apiVersion": "v1"
+    }]);
+    request_json(
+        admin,
+        Method::PUT,
+        &format!("{base_url}/api/v1/namespaces/{namespace}/serviceaccounts/{name}"),
+        StatusCode::OK,
+        Some(service_account),
     )
     .await?;
 

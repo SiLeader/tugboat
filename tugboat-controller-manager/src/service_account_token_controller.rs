@@ -7,8 +7,10 @@ use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, ObjectReference};
-use tugboat_resources::{ObjectMetaResource, Resource, SERVICE_ACCOUNT_NAME_ANNOTATION};
-const SERVICE_ACCOUNT_TOKEN_SECRET_TYPE: &str = "tugboat.io/service-account-token";
+use tugboat_resources::{
+    ObjectMetaResource, Resource, SERVICE_ACCOUNT_NAME_ANNOTATION,
+    SERVICE_ACCOUNT_TOKEN_SECRET_TYPE,
+};
 const TOKEN_DATA_KEY: &str = "token";
 
 #[derive(Clone)]
@@ -84,7 +86,7 @@ impl ServiceAccountTokenReconciler {
         let secrets = secret_api.list().await?;
         let owned_secrets: Vec<Secret> = secrets
             .into_iter()
-            .filter(|secret| owned_by_service_account(secret, &name))
+            .filter(|secret| managed_token_secret_for_service_account(secret, &name))
             .collect();
 
         let (authoritative_secret, redundant_secrets) =
@@ -119,7 +121,7 @@ impl ServiceAccountTokenReconciler {
 
         let secret_api: Api<Secret> = Api::namespaced(self.client.clone(), &namespace);
         for secret in secret_api.list().await? {
-            if !owned_by_service_account(&secret, &name) {
+            if !managed_token_secret_for_service_account(&secret, &name) {
                 continue;
             }
             if let Some(secret_name) = secret.name() {
@@ -241,10 +243,9 @@ fn split_authoritative_secret(
     let mut redundant = Vec::new();
 
     for secret in owned_secrets {
-        let is_authoritative = match authoritative_name.as_deref() {
-            Some(name) => secret.name() == Some(name),
-            None => authoritative.is_none(),
-        };
+        let is_authoritative = authoritative_name
+            .as_deref()
+            .is_some_and(|name| secret.name() == Some(name));
         if authoritative.is_none() && is_authoritative {
             authoritative = Some(secret);
         } else {
@@ -269,12 +270,12 @@ fn choose_authoritative_secret_name(
         .iter()
         .filter(|reference| {
             reference.kind == "Secret"
+                && reference.api_version == "v1"
                 && reference.namespace.as_deref() == service_account.namespace()
                 && owned_secret_names.contains(&reference.name)
         })
         .map(|reference| reference.name.clone())
         .min()
-        .or_else(|| owned_secret_names.iter().next().cloned())
 }
 
 fn secret_names(secrets: &[Secret]) -> BTreeSet<String> {
@@ -284,12 +285,13 @@ fn secret_names(secrets: &[Secret]) -> BTreeSet<String> {
         .collect()
 }
 
-fn owned_by_service_account(secret: &Secret, service_account_name: &str) -> bool {
-    secret
-        .object_meta()
-        .as_ref()
-        .and_then(|meta| meta.annotations.get(SERVICE_ACCOUNT_NAME_ANNOTATION))
-        .is_some_and(|name| name == service_account_name)
+fn managed_token_secret_for_service_account(secret: &Secret, service_account_name: &str) -> bool {
+    secret.r#type == SERVICE_ACCOUNT_TOKEN_SECRET_TYPE
+        && secret
+            .object_meta()
+            .as_ref()
+            .and_then(|meta| meta.annotations.get(SERVICE_ACCOUNT_NAME_ANNOTATION))
+            .is_some_and(|name| name == service_account_name)
 }
 
 fn reconcile_token_secret_references(
@@ -374,7 +376,8 @@ mod tests {
     use super::{
         SERVICE_ACCOUNT_NAME_ANNOTATION, SERVICE_ACCOUNT_TOKEN_SECRET_TYPE, TOKEN_DATA_KEY,
         choose_authoritative_secret_name, generate_suffix, generate_token,
-        owned_by_service_account, reconcile_token_secret_references, split_authoritative_secret,
+        managed_token_secret_for_service_account, reconcile_token_secret_references,
+        split_authoritative_secret,
     };
     use std::collections::{BTreeSet, HashMap};
     use tugboat_resources::ObjectMetaResource;
@@ -382,7 +385,7 @@ mod tests {
     use tugboat_resources::manifests::meta::v1::{ObjectMeta, ObjectReference};
 
     #[test]
-    fn matches_owned_secret_from_annotation() {
+    fn matches_managed_token_secret_from_annotation_and_type() {
         let secret = Secret {
             object_meta: Some(ObjectMeta {
                 annotations: HashMap::from([(
@@ -391,11 +394,18 @@ mod tests {
                 )]),
                 ..Default::default()
             }),
+            r#type: SERVICE_ACCOUNT_TOKEN_SECRET_TYPE.to_string(),
             ..Default::default()
         };
 
-        assert!(owned_by_service_account(&secret, "builder"));
-        assert!(!owned_by_service_account(&secret, "default"));
+        assert!(managed_token_secret_for_service_account(&secret, "builder"));
+        assert!(!managed_token_secret_for_service_account(
+            &secret, "default"
+        ));
+        assert!(!managed_token_secret_for_service_account(
+            &Secret::default(),
+            "builder"
+        ));
     }
 
     #[test]
@@ -463,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_lexicographically_smallest_owned_secret() {
+    fn does_not_adopt_unreferenced_managed_secret() {
         let service_account = ServiceAccount {
             object_meta: Some(ObjectMeta {
                 namespace: Some("default".to_string()),
@@ -476,10 +486,20 @@ mod tests {
             named_secret("builder-token-a"),
         ];
 
-        let chosen =
-            choose_authoritative_secret_name(&service_account, &owned_secrets).expect("secret");
-
-        assert_eq!(chosen, "builder-token-a");
+        assert_eq!(
+            choose_authoritative_secret_name(&service_account, &owned_secrets),
+            None
+        );
+        let (authoritative, redundant) =
+            split_authoritative_secret(&service_account, owned_secrets);
+        assert!(authoritative.is_none());
+        assert_eq!(
+            redundant
+                .iter()
+                .filter_map(|secret| secret.name().map(str::to_string))
+                .collect::<Vec<_>>(),
+            vec!["builder-token-z".to_string(), "builder-token-a".to_string()]
+        );
     }
 
     #[test]
@@ -541,6 +561,7 @@ mod tests {
                 name: Some(name.to_string()),
                 ..Default::default()
             }),
+            r#type: SERVICE_ACCOUNT_TOKEN_SECRET_TYPE.to_string(),
             ..Default::default()
         }
     }

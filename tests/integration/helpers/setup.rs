@@ -28,7 +28,8 @@ use tugboat_resource_store::ResourceStore;
 use tugboat_resources::Resource;
 use tugboat_resources::manifests::authorization::v1::{ClusterRoleBinding, RoleRef, Subject};
 use tugboat_resources::manifests::core::v1::{Namespace, Secret, ServiceAccount};
-use tugboat_resources::manifests::meta::v1::ObjectMeta;
+use tugboat_resources::manifests::meta::v1::{ObjectMeta, ObjectReference};
+use tugboat_resources::{SERVICE_ACCOUNT_NAME_ANNOTATION, SERVICE_ACCOUNT_TOKEN_SECRET_TYPE};
 
 type DynError = Box<dyn Error + Send + Sync>;
 
@@ -103,8 +104,6 @@ const ADMIN_SECRET: &str = "integration-admin-token";
 const RBAC_API_GROUP: &str = "authorization";
 const CLUSTER_ROLE_KIND: &str = "ClusterRole";
 const SERVICE_ACCOUNT_SUBJECT_KIND: &str = "ServiceAccount";
-const SERVICE_ACCOUNT_NAME_ANNOTATION: &str = "tugboat.io/service-account.name";
-const SERVICE_ACCOUNT_TOKEN_SECRET_TYPE: &str = "tugboat.io/service-account-token";
 const TOKEN_DATA_KEY: &str = "token";
 
 pub struct TestContext {
@@ -559,6 +558,10 @@ async fn seed_admin_service_account(etcd_endpoint: &str) -> Result<String, DynEr
         "rbac-admin-{}",
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     );
+    let secret_uid = format!(
+        "integration-admin-secret-{}",
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    );
 
     let _ = store
         .put_if_not_exists(Namespace {
@@ -571,22 +574,30 @@ async fn seed_admin_service_account(etcd_endpoint: &str) -> Result<String, DynEr
         })
         .await?;
     let _ = store
-        .put_if_not_exists(ServiceAccount {
+        .put(ServiceAccount {
             type_meta: Some(ServiceAccount::type_meta()),
             object_meta: Some(ObjectMeta {
                 name: Some(ADMIN_SERVICE_ACCOUNT.to_string()),
                 namespace: Some(ADMIN_NAMESPACE.to_string()),
                 ..Default::default()
             }),
+            secrets: vec![ObjectReference {
+                kind: "Secret".to_string(),
+                namespace: Some(ADMIN_NAMESPACE.to_string()),
+                name: ADMIN_SECRET.to_string(),
+                uid: secret_uid.clone(),
+                api_version: "v1".to_string(),
+            }],
             ..Default::default()
         })
         .await?;
     let _ = store
-        .put_if_not_exists(Secret {
+        .put(Secret {
             type_meta: Some(Secret::type_meta()),
             object_meta: Some(ObjectMeta {
                 name: Some(ADMIN_SECRET.to_string()),
                 namespace: Some(ADMIN_NAMESPACE.to_string()),
+                uid: Some(secret_uid),
                 annotations: HashMap::from([(
                     SERVICE_ACCOUNT_NAME_ANNOTATION.to_string(),
                     ADMIN_SERVICE_ACCOUNT.to_string(),
@@ -599,7 +610,7 @@ async fn seed_admin_service_account(etcd_endpoint: &str) -> Result<String, DynEr
         })
         .await?;
     let _ = store
-        .put_if_not_exists(ClusterRoleBinding {
+        .put(ClusterRoleBinding {
             type_meta: Some(ClusterRoleBinding::type_meta()),
             object_meta: Some(ObjectMeta {
                 name: Some("integration-admin".to_string()),

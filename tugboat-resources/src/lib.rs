@@ -22,6 +22,7 @@ pub mod validators;
 pub const NODE_ARCH_LABEL_KEY: &str = "tugboat.cloud/arch";
 pub const NODE_RUNTIME_CLASS_LABEL_KEY: &str = "tugboat.cloud/runtime-class";
 pub const SERVICE_ACCOUNT_NAME_ANNOTATION: &str = "tugboat.io/service-account.name";
+pub const SERVICE_ACCOUNT_TOKEN_SECRET_TYPE: &str = "tugboat.io/service-account-token";
 
 pub trait Resource {
     fn type_meta() -> TypeMeta;
