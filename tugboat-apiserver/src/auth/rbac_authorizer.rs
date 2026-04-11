@@ -161,6 +161,9 @@ fn subject_matches_user(subject: &Subject, user: &UserInfo) -> bool {
 }
 
 fn service_account_subject_matches_user(subject: &Subject, user: &UserInfo) -> bool {
+    if !user.is_service_account() {
+        return false;
+    }
     let Some((namespace, name)) = parse_service_account_username(&user.username) else {
         return false;
     };
@@ -269,6 +272,23 @@ mod tests {
         let user = UserInfo::service_account("default", "builder", None, HashMap::new());
 
         assert!(subject_matches_user(&subject, &user));
+    }
+
+    #[test]
+    fn service_account_subject_does_not_match_x509_user_with_same_username_shape() {
+        let subject = Subject {
+            kind: "ServiceAccount".to_string(),
+            api_group: "".to_string(),
+            name: "builder".to_string(),
+            namespace: Some("default".to_string()),
+        };
+        let user = UserInfo::x509(
+            "system:serviceaccount:default:builder".to_string(),
+            vec!["system:masters".to_string()],
+            HashMap::new(),
+        );
+
+        assert!(!subject_matches_user(&subject, &user));
     }
 
     #[test]

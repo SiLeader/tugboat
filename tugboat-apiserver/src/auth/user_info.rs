@@ -14,12 +14,20 @@
 
 use std::collections::HashMap;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UserIdentity {
+    Anonymous,
+    ServiceAccount,
+    X509,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UserInfo {
     pub(crate) username: String,
     pub(crate) uid: Option<String>,
     pub(crate) groups: Vec<String>,
     pub(crate) extra: HashMap<String, Vec<String>>,
+    pub(crate) identity: UserIdentity,
 }
 
 impl UserInfo {
@@ -29,6 +37,7 @@ impl UserInfo {
             uid: None,
             groups: vec!["system:unauthenticated".to_string()],
             extra: HashMap::new(),
+            identity: UserIdentity::Anonymous,
         }
     }
 
@@ -47,6 +56,7 @@ impl UserInfo {
                 "system:authenticated".to_string(),
             ],
             extra,
+            identity: UserIdentity::ServiceAccount,
         }
     }
 
@@ -64,6 +74,11 @@ impl UserInfo {
             uid: None,
             groups,
             extra,
+            identity: UserIdentity::X509,
         }
+    }
+
+    pub(crate) fn is_service_account(&self) -> bool {
+        matches!(self.identity, UserIdentity::ServiceAccount)
     }
 }

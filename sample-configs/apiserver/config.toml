@@ -28,4 +28,5 @@ key_file = "/etc/tugboat/pki/apiserver.key"
 endpoints = ["etcd:2379"]
 
 [authorization]
-mode = "AlwaysAllow"
+# Use AlwaysAllow only for local development; RBAC is the secure default.
+mode = "RBAC"

@@ -57,8 +57,8 @@ pub struct AuthorizationConfig {
 
 #[derive(Clone, Default, serde::Deserialize)]
 pub enum AuthorizationMode {
-    #[default]
     AlwaysAllow,
+    #[default]
     #[serde(rename = "RBAC", alias = "Rbac", alias = "rbac")]
     Rbac,
 }
@@ -110,5 +110,26 @@ impl ApiServerConfig {
         let file = std::fs::read_to_string(file.as_ref())
             .unwrap_or_else(|e| panic!("Failed to read config file: {:?}: {e}", file.as_ref()));
         toml::from_str(&file).expect("Failed to parse config file")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApiServerConfig, AuthorizationMode};
+
+    #[test]
+    fn authorization_mode_defaults_to_rbac() {
+        assert!(matches!(
+            AuthorizationMode::default(),
+            AuthorizationMode::Rbac
+        ));
+    }
+
+    #[test]
+    fn new_config_defaults_to_rbac_authorization() {
+        let config =
+            ApiServerConfig::new("127.0.0.1:8443", vec!["http://127.0.0.1:2379".to_string()]);
+
+        assert!(matches!(config.authorization.mode, AuthorizationMode::Rbac));
     }
 }

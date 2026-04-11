@@ -19,9 +19,10 @@ url = "https://apiserver:8443"
 # CA certificate used to verify the apiserver TLS certificate.
 ca_cert_path = "/etc/tugboat/pki/ca.crt"
 
-# [apiserver.auth]
-# type = "service-account"
-# token_path = "/var/run/secrets/tugboat.cloud/serviceaccount/token"
+[apiserver.auth]
+# Use the mounted service account token when talking to an RBAC-enabled apiserver.
+type = "service-account"
+token_path = "/var/run/secrets/tugboat.cloud/serviceaccount/token"
 
 [csi]
 requeue_interval_seconds = 30

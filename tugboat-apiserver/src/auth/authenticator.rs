@@ -319,7 +319,7 @@ fn service_account_references_secret(service_account: &ServiceAccount, secret: &
             && reference.namespace.as_deref() == Some(secret_namespace)
             && match secret_uid {
                 Some(secret_uid) => reference.uid == secret_uid,
-                None => true,
+                None => false,
             }
     })
 }
@@ -441,6 +441,17 @@ mod tests {
         };
 
         assert!(service_account_references_secret(&service_account, &secret));
+
+        let mut secret_without_uid = secret.clone();
+        secret_without_uid
+            .object_meta
+            .as_mut()
+            .expect("object_meta should be set")
+            .uid = None;
+        assert!(!service_account_references_secret(
+            &service_account,
+            &secret_without_uid
+        ));
 
         let mut missing_uid = service_account.clone();
         missing_uid.secrets[0].uid.clear();
