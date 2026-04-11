@@ -286,8 +286,9 @@ impl CsiWrapper {
             {
                 Ok(_) => {}
                 Err(err) => {
+                    let context = "controller-published volume after stage failure";
                     if published.controller_published {
-                        let _ = self
+                        if let Err(rollback_err) = self
                             .retry_csi_operation(
                                 "rollback controller unpublish after stage failure",
                                 &published.volume_id,
@@ -311,7 +312,15 @@ impl CsiWrapper {
                                     }
                                 },
                             )
-                            .await;
+                            .await
+                        {
+                            let _ = cleanup_directory_path(staging_target_path);
+                            return Err(CsiError::RollbackFailed {
+                                context: context.to_string(),
+                                original: err.to_string(),
+                                rollback: rollback_err.to_string(),
+                            });
+                        }
                     }
                     let _ = cleanup_directory_path(staging_target_path);
                     return Err(err);
