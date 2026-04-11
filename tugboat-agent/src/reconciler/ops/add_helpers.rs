@@ -263,9 +263,21 @@ pub(crate) fn validate_recovered_published_volumes(
         return Ok(persisted);
     }
 
-    // Mismatch: Invalid state (expected volumes different from recovered)
-    // This indicates real corruption, not partial publish
-    Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(
-        ship_id.to_string(),
-    ))
+    // Backward-compatible recovery: match planned volumes by volume_id even if
+    // persisted metadata (paths/aliases/optional fields) differs.
+    let persisted_by_volume_id = persisted
+        .into_iter()
+        .map(|volume| (volume.volume_id.clone(), volume))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut recovered_by_id = Vec::with_capacity(planned_sorted.len());
+    for planned_volume in &planned_sorted {
+        let Some(recovered) = persisted_by_volume_id.get(&planned_volume.volume_id) else {
+            return Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(
+                ship_id.to_string(),
+            ));
+        };
+        recovered_by_id.push(recovered.clone());
+    }
+    recovered_by_id.sort_by(|left, right| left.target_path.cmp(&right.target_path));
+    Ok(recovered_by_id)
 }

@@ -158,8 +158,24 @@ impl PersistentVolumeCleanupReconciler {
         if csi.volume_handle.is_empty() {
             return Err(ControllerError::MissingVolumeHandle { name });
         }
-        let controller_create_secrets =
-            load_secret_reference(&self.client, csi.controller_create_secret_ref.as_ref()).await?;
+        let controller_create_secrets = match load_secret_reference(
+            &self.client,
+            csi.controller_create_secret_ref.as_ref(),
+        )
+        .await
+        {
+            Ok(secrets) => secrets,
+            Err(ControllerError::Client(tugboat_client::Error::Api(status)))
+                if status.code == 404 =>
+            {
+                tracing::warn!(
+                    "CSI cleanup secret for PersistentVolume '{}' was not found (404); retrying cleanup with empty secrets",
+                    name
+                );
+                std::collections::HashMap::new()
+            }
+            Err(err) => return Err(err),
+        };
 
         self.delete_volume_with_retry(
             &name,

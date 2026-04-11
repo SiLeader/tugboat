@@ -295,7 +295,7 @@ impl PvcProvisionerReconciler {
                     &pv_api,
                     &pv_name,
                 )
-                .await;
+                .await?;
             }
             return Ok(Action::await_change());
         };
@@ -314,7 +314,7 @@ impl PvcProvisionerReconciler {
                     &pv_api,
                     &pv_name,
                 )
-                .await;
+                .await?;
             }
             return Ok(Action::await_change());
         }
@@ -357,7 +357,7 @@ impl PvcProvisionerReconciler {
                         &pv_api,
                         &pv_name,
                     )
-                    .await;
+                    .await?;
                 }
                 return Ok(Action::await_change());
             }
@@ -500,25 +500,19 @@ impl PvcProvisionerReconciler {
         volume_delete_secrets: &std::collections::HashMap<String, String>,
         pv_api: &Api<PersistentVolume>,
         pv_name: &str,
-    ) {
+    ) -> Result<(), ControllerError> {
         if let Some(volume_id) = volume_id {
             let deleted = self
                 .cleanup_csi_volume_with_retry(socket_path, volume_id, volume_delete_secrets)
                 .await;
             if !deleted {
-                tracing::warn!(
-                    "Orphaned CSI volume '{}' could not be deleted after retries",
-                    volume_id
-                );
+                return Err(ControllerError::ProvisioningCleanupFailed {
+                    volume_id: volume_id.to_string(),
+                });
             }
         }
-        if let Err(cleanup_err) = pv_api.delete(pv_name).await {
-            tracing::warn!(
-                "Failed to clean up orphaned PersistentVolume '{}': {}",
-                pv_name,
-                cleanup_err
-            );
-        }
+        pv_api.delete(pv_name).await?;
+        Ok(())
     }
 
     /// Attempts to delete a CSI volume with up to 3 retries on failure.

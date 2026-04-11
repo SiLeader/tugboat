@@ -360,6 +360,8 @@ impl TugboatCsiOperator {
         mount_flags: Vec<String>,
         secrets: HashMap<String, String>,
     ) -> Result<ControllerExpandedVolume, error::Error> {
+        validate_required_capacity_bytes(capacity_bytes)?;
+
         let req = ControllerExpandVolumeRequest {
             volume_id,
             capacity_range: Some(CapacityRange {
@@ -374,8 +376,6 @@ impl TugboatCsiOperator {
                 mount_flags,
             )),
         };
-
-        validate_required_capacity_bytes(capacity_bytes)?;
 
         let mut client = self.connect_controller_client(socket_path).await?;
         let response = timeout(
@@ -626,6 +626,8 @@ impl TugboatCsiOperator {
         fs_type: Option<String>,
         secrets: HashMap<String, String>,
     ) -> Result<i64, error::Error> {
+        validate_required_capacity_bytes(capacity_bytes)?;
+
         let req = NodeExpandVolumeRequest {
             volume_id,
             volume_path,
@@ -642,8 +644,6 @@ impl TugboatCsiOperator {
             )),
             secrets,
         };
-
-        validate_required_capacity_bytes(capacity_bytes)?;
 
         let mut client = self.connect_node_client(socket_path).await?;
         let response = timeout(
