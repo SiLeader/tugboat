@@ -1027,10 +1027,7 @@ fn current_nic_ids(
                 None => format!("ClusterNetworkClass/{}/{ship_id}", info.name),
             };
             let digest = sha2::Sha256::digest(ident.as_bytes());
-            let mac = format!(
-                "52:54:00:{digest:02x}:{digest:02x}:{digest:02x}",
-                digest = digest
-            );
+            let mac = format!("52:54:00:{:02x}:{:02x}:{:02x}", digest[0], digest[1], digest[2]);
             format!("nic-{}", sanitize_identifier(&mac))
         })
         .collect()
@@ -1112,5 +1109,76 @@ async fn best_effort_cleanup_hotplug_additions(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::current_nic_ids;
+    use crate::cni::NetworkClassInfo;
+    use sha2::Digest;
+    use tugboat_resources::manifests::core::v1::{
+        NetworkClassSpec, Ship, ShipActualAllocation, ShipNetworkClassReference, ShipSpec,
+        ShipStatus,
+    };
+    use tugboat_vm_runtime_interface::hotplug::sanitize_identifier;
+
+    fn ship_spec_with_networks() -> ShipSpec {
+        ShipSpec {
+            image: "registry.example.com/test:1".to_string(),
+            ship_class: "small".to_string(),
+            node_name: Some("node-a".to_string()),
+            network_class_ref: vec![ShipNetworkClassReference {
+                api_group: "core".to_string(),
+                kind: "NetworkClass".to_string(),
+                name: "frontend".to_string(),
+            }],
+            uefi: None,
+            tolerations: vec![],
+            scheduler_name: None,
+            volume_claim_ref: vec![],
+            volumes: vec![],
+            target_node_name: None,
+            runtime_class: None,
+        }
+    }
+
+    #[test]
+    fn current_nic_ids_returns_status_ids_when_lengths_match() {
+        let old_spec = ship_spec_with_networks();
+        let ship = Ship {
+            status: Some(ShipStatus {
+                actual_allocation: Some(ShipActualAllocation {
+                    nic_ids: vec!["nic-preexisting".to_string()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let ids = current_nic_ids(&ship, "ship-123", &old_spec, &[]);
+        assert_eq!(ids, vec!["nic-preexisting".to_string()]);
+    }
+
+    #[test]
+    fn current_nic_ids_fallback_matches_cni_mac_derivation() {
+        let old_spec = ship_spec_with_networks();
+        let ship = Ship::default();
+        let old_network_classes = vec![NetworkClassInfo {
+            name: "frontend".to_string(),
+            namespace: Some("default".to_string()),
+            spec: NetworkClassSpec::default(),
+        }];
+
+        let ids = current_nic_ids(&ship, "ship-123", &old_spec, &old_network_classes);
+        assert_eq!(ids.len(), 1);
+
+        let ident = "NetworkClass/default/frontend/ship-123";
+        let digest = sha2::Sha256::digest(ident.as_bytes());
+        let mac = format!("52:54:00:{:02x}:{:02x}:{:02x}", digest[0], digest[1], digest[2]);
+        let expected = format!("nic-{}", sanitize_identifier(&mac));
+
+        assert_eq!(ids[0], expected);
     }
 }

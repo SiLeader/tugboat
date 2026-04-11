@@ -539,7 +539,14 @@ impl CsiWrapper {
                 })
                 .await
             {
-                Ok(()) | Err(CsiError::Driver(tugboat_csi_operator::Error::VolumeNotFound)) => {}
+                Ok(()) => {}
+                Err(CsiError::Driver(tugboat_csi_operator::Error::VolumeNotFound)) => {
+                    tracing::warn!(
+                        "CSI reported volume not found during controller unpublish (volume_id='{}', node='{}'); treating as idempotent cleanup",
+                        volume.volume_id,
+                        node_name
+                    );
+                }
                 Err(err) => return Err(err),
             }
         }

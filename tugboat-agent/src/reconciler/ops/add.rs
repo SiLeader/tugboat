@@ -664,9 +664,9 @@ impl ShipReconciler {
                         // Log this as a recoverable error - the volume IS accessible on the node.
                         // Next reconciliation will detect it and complete the setup.
                         warn!(
-                            "CSI volume '{}' is mounted on node but state persistence failed ({}). \
+                            "CSI volume '{}' (claim='{}', ship_id='{}') is mounted on node but state persistence failed ({}). \
                              Ship will be marked as failed; retry will recover and persist state.",
-                            volume_id, reason
+                            volume_id, volume.claim_name, guard.ship_id, reason
                         );
                         return Err(ReconcileError::CsiVolumePartiallyPublished {
                             volume_id,
