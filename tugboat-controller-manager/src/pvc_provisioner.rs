@@ -543,13 +543,24 @@ impl PvcProvisionerReconciler {
                     sleep(delay).await;
                 }
                 Err(err) => {
-                    tracing::error!(
-                        "Failed to clean up orphaned CSI volume '{}' after {} attempts: {}; \
-                         manual intervention may be required",
-                        volume_id,
-                        MAX_RETRIES,
-                        err
-                    );
+                    if is_retryable_csi_cleanup_error(&err) {
+                        tracing::error!(
+                            "Failed to clean up orphaned CSI volume '{}' after {} attempts: {}; \
+                             manual intervention may be required",
+                            volume_id,
+                            attempt,
+                            err
+                        );
+                    } else {
+                        tracing::error!(
+                            "Failed to clean up orphaned CSI volume '{}' due to non-retryable \
+                             error on attempt {}/{}: {}; manual intervention may be required",
+                            volume_id,
+                            attempt,
+                            MAX_RETRIES,
+                            err
+                        );
+                    }
                 }
             }
         }

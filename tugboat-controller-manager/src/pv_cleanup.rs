@@ -217,13 +217,25 @@ impl PersistentVolumeCleanupReconciler {
                     sleep(delay).await;
                 }
                 Err(err) => {
-                    tracing::error!(
-                        "Failed to delete CSI backing volume '{}' for PersistentVolume '{}' after {} attempts: {}",
-                        volume_handle,
-                        persistent_volume_name,
-                        MAX_RETRIES,
-                        err
-                    );
+                    if is_retryable_csi_cleanup_error(&err) {
+                        tracing::error!(
+                            "Failed to delete CSI backing volume '{}' for PersistentVolume '{}' after {} attempts: {}",
+                            volume_handle,
+                            persistent_volume_name,
+                            attempt,
+                            err
+                        );
+                    } else {
+                        tracing::error!(
+                            "Failed to delete CSI backing volume '{}' for PersistentVolume '{}' due to non-retryable \
+                             error on attempt {}/{}: {}",
+                            volume_handle,
+                            persistent_volume_name,
+                            attempt,
+                            MAX_RETRIES,
+                            err
+                        );
+                    }
                     return Err(err.into());
                 }
             }
