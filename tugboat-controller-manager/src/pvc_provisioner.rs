@@ -531,7 +531,7 @@ impl PvcProvisionerReconciler {
                 .await
             {
                 Ok(()) | Err(tugboat_csi_operator::Error::VolumeNotFound) => return true,
-                Err(err) if attempt < MAX_RETRIES => {
+                Err(err) if attempt < MAX_RETRIES && is_retryable_csi_cleanup_error(&err) => {
                     tracing::warn!(
                         "Failed to clean up orphaned CSI volume '{}' (attempt {}/{}): {}",
                         volume_id,
@@ -554,6 +554,34 @@ impl PvcProvisionerReconciler {
             }
         }
         false
+    }
+}
+
+fn is_retryable_csi_cleanup_error(error: &tugboat_csi_operator::Error) -> bool {
+    match error {
+        tugboat_csi_operator::Error::RpcTimeout
+        | tugboat_csi_operator::Error::SocketConnectionTimeout
+        | tugboat_csi_operator::Error::GrpcTransport(_)
+        | tugboat_csi_operator::Error::Grpc(_) => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_retryable_csi_cleanup_error;
+
+    #[test]
+    fn classifies_retryable_csi_cleanup_errors() {
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::RpcTimeout
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::VolumeNotFound
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::InvalidSocketPath("x".to_string())
+        ));
     }
 }
 

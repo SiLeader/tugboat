@@ -204,7 +204,7 @@ impl PersistentVolumeCleanupReconciler {
                 .await
             {
                 Ok(()) | Err(tugboat_csi_operator::Error::VolumeNotFound) => return Ok(()),
-                Err(err) if attempt < MAX_RETRIES => {
+                Err(err) if attempt < MAX_RETRIES && is_retryable_csi_cleanup_error(&err) => {
                     tracing::warn!(
                         "Failed to delete CSI backing volume '{}' for PersistentVolume '{}' (attempt {}/{}): {}",
                         volume_handle,
@@ -270,5 +270,33 @@ impl PersistentVolumeCleanupReconciler {
         updated.remove_finalizer(PV_FINALIZER);
         api.replace(&name, updated).await?;
         Ok(Action::await_change())
+    }
+}
+
+fn is_retryable_csi_cleanup_error(error: &tugboat_csi_operator::Error) -> bool {
+    match error {
+        tugboat_csi_operator::Error::RpcTimeout
+        | tugboat_csi_operator::Error::SocketConnectionTimeout
+        | tugboat_csi_operator::Error::GrpcTransport(_)
+        | tugboat_csi_operator::Error::Grpc(_) => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_retryable_csi_cleanup_error;
+
+    #[test]
+    fn classifies_retryable_csi_cleanup_errors() {
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::RpcTimeout
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::VolumeNotFound
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::InvalidVolumeName("bad".to_string())
+        ));
     }
 }
