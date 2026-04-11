@@ -155,6 +155,10 @@ fn deployment_template(dep: &Deployment) -> Result<&ShipTemplateSpec, Controller
         .ok_or(ControllerError::MissingDeploymentTemplate { namespace, name })
 }
 
+fn deployment_template_hash(dep: &Deployment) -> Result<String, ControllerError> {
+    Ok(template_hash(deployment_template(dep)?))
+}
+
 fn build_replicaset_with_replicas(
     dep: &Deployment,
     hash: &str,
@@ -580,12 +584,7 @@ impl DeploymentReconciler {
             TemplateChangeKind::InPlace | TemplateChangeKind::Hotplug => {
                 let active_rs = active_replicaset(managed_replicasets);
                 let Some(active_rs) = active_rs else {
-                    let hash = dep
-                        .spec
-                        .as_ref()
-                        .and_then(|spec| spec.ship_template.as_ref())
-                        .map(template_hash)
-                        .unwrap_or_default();
+                    let hash = deployment_template_hash(dep)?;
                     self.create_replicaset_if_absent(rs_api, build_replicaset(dep, &hash))
                         .await?;
                     return Ok(Action::await_change());
@@ -717,11 +716,7 @@ impl DeploymentReconciler {
                             .await?;
                     }
                 } else {
-                    let hash = dep_spec
-                        .ship_template
-                        .as_ref()
-                        .map(template_hash)
-                        .unwrap_or_default();
+                    let hash = deployment_template_hash(dep)?;
                     self.create_replicaset_if_absent(rs_api, build_replicaset(dep, &hash))
                         .await?;
                     return Ok(Action::requeue(Duration::from_secs(2)));
@@ -744,11 +739,7 @@ impl DeploymentReconciler {
                         return Ok(Action::requeue(Duration::from_secs(5)));
                     }
                 } else {
-                    let hash = dep_spec
-                        .ship_template
-                        .as_ref()
-                        .map(template_hash)
-                        .unwrap_or_default();
+                    let hash = deployment_template_hash(dep)?;
                     self.create_replicaset_if_absent(rs_api, build_replicaset(dep, &hash))
                         .await?;
                     return Ok(Action::requeue(Duration::from_secs(2)));
