@@ -19,9 +19,12 @@ use hyper_util::rt::TokioIo;
 use std::collections::HashMap;
 use std::io;
 use tokio::net::UnixStream;
+use tokio::time::{Duration, timeout};
 use tonic::Code;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
+
+const SOCKET_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod error;
 mod proto;
@@ -578,11 +581,20 @@ async fn connect_channel(socket_path: &str) -> Result<Channel, error::Error> {
         .connect_with_connector(service_fn(move |_: Uri| {
             let socket_path = socket_path.clone();
             async move {
-                let stream = UnixStream::connect(socket_path).await?;
+                let stream = timeout(SOCKET_CONNECT_TIMEOUT, UnixStream::connect(socket_path))
+                    .await
+                    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "socket connect timed out"))??;
                 Ok::<_, io::Error>(TokioIo::new(stream))
             }
         }))
-        .await?;
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("timed out") {
+                error::Error::SocketConnectionTimeout
+            } else {
+                error::Error::GrpcTransport(e)
+            }
+        })?;
     Ok(channel)
 }
 

@@ -26,6 +26,8 @@ use tugboat_vm_runtime_interface::hotplug::{
 };
 use tugboat_vm_runtime_interface::run::{VmNetworkConfig, VmVolumeConfig, VmVolumeKind};
 
+const QMP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Debug, Parser)]
 pub struct HotplugArgs {
     #[arg(help = "Path to the hotplug request config file or - for stdin")]
@@ -560,7 +562,9 @@ struct QmpClient {
 
 impl QmpClient {
     async fn connect(path: String) -> crate::Result<Self> {
-        let stream = UnixStream::connect(path).await?;
+        let stream = tokio::time::timeout(QMP_CONNECT_TIMEOUT, UnixStream::connect(path))
+            .await
+            .map_err(|_| crate::Error::Qmp("Timed out connecting to QMP socket".to_string()))??;
         let (reader, writer) = stream.into_split();
         let mut client = Self {
             reader: BufReader::new(reader),

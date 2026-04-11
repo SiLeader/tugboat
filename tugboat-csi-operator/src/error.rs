@@ -4,6 +4,8 @@ use thiserror::Error;
 pub enum Error {
     #[error("Grpc transport error: {0}")]
     GrpcTransport(#[from] tonic::transport::Error),
+    #[error("Timed out connecting to CSI socket")]
+    SocketConnectionTimeout,
     #[error("Target path already exists")]
     TargetPathAlreadyExists,
     #[error("Target path not found")]

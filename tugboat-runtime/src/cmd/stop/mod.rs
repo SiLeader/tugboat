@@ -16,8 +16,13 @@ use crate::config::load_config;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use qapi::futures::QmpStreamTokio;
+use tokio::time::{Duration, timeout};
 use tracing::info;
 use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
+
+const QMP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const QMP_NEGOTIATE_TIMEOUT: Duration = Duration::from_secs(5);
+const QMP_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Parser)]
 pub struct StopArgs {
@@ -29,26 +34,32 @@ pub async fn stop(config: QemuVmConfig, args: StopArgs) -> crate::Result<()> {
     let req: VmStopRequest = load_config(args.config)?;
     crate::validate::validate_safe_id(&req.id, "vm id")?;
 
-    let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
+    let stream = timeout(
+        QMP_CONNECT_TIMEOUT,
+        QmpStreamTokio::open_uds(config.get_uds_path(&req.id)),
+    )
+    .await
+    .map_err(|_| crate::Error::Qmp("Timed out connecting to QMP socket".to_string()))?
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let stream = timeout(QMP_NEGOTIATE_TIMEOUT, stream.negotiate())
         .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let stream = stream
-        .negotiate()
-        .await
+        .map_err(|_| crate::Error::Qmp("Timed out negotiating QMP capabilities".to_string()))?
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
     match req.stop_type {
         VmStopType::Shutdown => {
             info!("Sending system_powerdown to VM {}", req.id);
-            qmp.execute(qapi::qmp::system_powerdown {})
+            timeout(QMP_COMMAND_TIMEOUT, qmp.execute(qapi::qmp::system_powerdown {}))
                 .await
+                .map_err(|_| crate::Error::Qmp("Timed out issuing system_powerdown".to_string()))?
                 .map_err(|e| crate::Error::Qmp(e.to_string()))?;
         }
         VmStopType::PowerOff => {
             info!("Sending quit to VM {}", req.id);
-            qmp.execute(qapi::qmp::quit {})
+            timeout(QMP_COMMAND_TIMEOUT, qmp.execute(qapi::qmp::quit {}))
                 .await
+                .map_err(|_| crate::Error::Qmp("Timed out issuing quit".to_string()))?
                 .map_err(|e| crate::Error::Qmp(e.to_string()))?;
         }
     }
