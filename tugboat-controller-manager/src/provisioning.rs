@@ -369,13 +369,23 @@ pub(crate) async fn load_secret_reference(
 
     let mut data = HashMap::new();
     for (key, value) in secret.data {
-        let decoded = BASE64_STANDARD
-            .decode(value)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok());
-        if let Some(decoded) = decoded {
-            data.insert(key, decoded);
-        }
+        let decoded =
+            BASE64_STANDARD
+                .decode(value)
+                .map_err(|err| ControllerError::InvalidSecretData {
+                    namespace: reference.namespace.clone(),
+                    name: reference.name.clone(),
+                    key: key.clone(),
+                    reason: err.to_string(),
+                })?;
+        let decoded =
+            String::from_utf8(decoded).map_err(|err| ControllerError::InvalidSecretData {
+                namespace: reference.namespace.clone(),
+                name: reference.name.clone(),
+                key: key.clone(),
+                reason: err.to_string(),
+            })?;
+        data.insert(key, decoded);
     }
     data.extend(secret.string_data);
     Ok(data)

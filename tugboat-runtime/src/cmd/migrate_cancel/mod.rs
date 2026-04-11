@@ -42,10 +42,13 @@ pub async fn migrate_cancel(config: QemuVmConfig, args: MigrateCancelArgs) -> cr
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
-    timeout(QMP_COMMAND_TIMEOUT, qmp.execute(qapi::qmp::migrate_cancel {}))
-        .await
-        .map_err(|_| crate::Error::Qmp("Timed out issuing migrate_cancel".to_string()))?
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    timeout(
+        QMP_COMMAND_TIMEOUT,
+        qmp.execute(qapi::qmp::migrate_cancel {}),
+    )
+    .await
+    .map_err(|_| crate::Error::Qmp("Timed out issuing migrate_cancel".to_string()))?
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     Ok(())
 }

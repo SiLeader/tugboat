@@ -67,10 +67,7 @@ impl VmRuntimeOperator {
         debug!("Calling VM Runtime: {op}({vm_config})");
         let mut command = self.run_command();
         command.kill_on_drop(true);
-        let mut child = command
-            .args([op, "-"])
-            .stdin(Stdio::piped())
-            .spawn()?;
+        let mut child = command.args([op, "-"]).stdin(Stdio::piped()).spawn()?;
         match &mut child.stdin {
             Some(stdin) => {
                 debug!("Writing config to stdin: {vm_config}");

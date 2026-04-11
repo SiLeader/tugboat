@@ -50,10 +50,13 @@ pub async fn stop(config: QemuVmConfig, args: StopArgs) -> crate::Result<()> {
     match req.stop_type {
         VmStopType::Shutdown => {
             info!("Sending system_powerdown to VM {}", req.id);
-            timeout(QMP_COMMAND_TIMEOUT, qmp.execute(qapi::qmp::system_powerdown {}))
-                .await
-                .map_err(|_| crate::Error::Qmp("Timed out issuing system_powerdown".to_string()))?
-                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+            timeout(
+                QMP_COMMAND_TIMEOUT,
+                qmp.execute(qapi::qmp::system_powerdown {}),
+            )
+            .await
+            .map_err(|_| crate::Error::Qmp("Timed out issuing system_powerdown".to_string()))?
+            .map_err(|e| crate::Error::Qmp(e.to_string()))?;
         }
         VmStopType::PowerOff => {
             info!("Sending quit to VM {}", req.id);

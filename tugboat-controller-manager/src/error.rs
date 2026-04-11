@@ -30,6 +30,15 @@ pub(crate) enum ControllerError {
     MissingStorageClassSpec { name: String },
     #[error("StorageClass '{name}' has an empty provisioner")]
     MissingProvisioner { name: String },
+    #[error(
+        "Secret '{namespace}/{name}' referenced by CSI configuration has invalid data for key '{key}': {reason}"
+    )]
+    InvalidSecretData {
+        namespace: String,
+        name: String,
+        key: String,
+        reason: String,
+    },
     #[error("PersistentVolumeClaim '{namespace}/{name}' is missing access modes")]
     MissingAccessModes { namespace: String, name: String },
     #[error("PersistentVolumeClaim '{namespace}/{name}' has unsupported access mode '{mode}'")]
@@ -62,6 +71,10 @@ pub(crate) enum ControllerError {
         namespace: String,
         claim: String,
     },
+    #[error(
+        "Failed to clean up provisioned CSI volume '{volume_id}' after a provisioning conflict"
+    )]
+    ProvisioningCleanupFailed { volume_id: String },
     #[error("finalizer error: {0}")]
     Finalizer(String),
 }

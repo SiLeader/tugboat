@@ -14,7 +14,7 @@
 
 use super::{
     CsiAccessMode, CsiAccessType, NodeVolumeStats, TugboatCsiOperator, VolumeHealthCondition,
-    VolumeUsageStats, VolumeUsageUnit, volume_capability,
+    VolumeUsageStats, VolumeUsageUnit, normalize_socket_path, volume_capability,
 };
 use crate::error::Error;
 use crate::proto::csi::v1::node_server::{Node, NodeServer};
@@ -400,6 +400,20 @@ async fn publish_times_out_when_driver_stalls() {
         .await;
 
     assert!(matches!(result, Err(Error::RpcTimeout)));
+}
+
+#[test]
+fn normalize_socket_path_rejects_empty_path() {
+    let result = normalize_socket_path("unix://");
+
+    assert!(matches!(result, Err(Error::InvalidSocketPath(_))));
+}
+
+#[test]
+fn normalize_socket_path_strips_unix_prefix() {
+    let result = normalize_socket_path("unix:///var/run/csi.sock");
+
+    assert_eq!(result.expect("path should normalize"), "/var/run/csi.sock");
 }
 
 #[tokio::test]

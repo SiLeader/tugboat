@@ -585,9 +585,9 @@ async fn connect_controller_client(
 }
 
 async fn connect_channel(socket_path: &str) -> Result<Channel, error::Error> {
-    let socket_path = normalize_socket_path(socket_path);
+    let socket_path = normalize_socket_path(socket_path)?;
     let endpoint =
-        Endpoint::try_from("http://[::]:50051").expect("static tonic endpoint should be valid");
+        Endpoint::try_from("http://localhost").expect("static tonic endpoint should be valid");
     let connect_fut = endpoint.connect_with_connector(service_fn(move |_: Uri| {
         let socket_path = socket_path.clone();
         async move {
@@ -602,19 +602,21 @@ async fn connect_channel(socket_path: &str) -> Result<Channel, error::Error> {
     Ok(channel)
 }
 
-fn normalize_socket_path(socket_path: &str) -> String {
-    socket_path
+fn normalize_socket_path(socket_path: &str) -> Result<String, error::Error> {
+    let normalized = socket_path
         .strip_prefix("unix://")
         .unwrap_or(socket_path)
-        .to_string()
+        .trim();
+
+    if normalized.is_empty() {
+        return Err(error::Error::InvalidSocketPath(socket_path.to_string()));
+    }
+
+    Ok(normalized.to_string())
 }
 
 fn map_grpc_error(error: tonic::Status) -> error::Error {
     match error.code() {
-        Code::Ok => {
-            debug_assert!(false, "unexpected Code::Ok routed through map_grpc_error");
-            error::Error::Grpc(error)
-        }
         Code::DeadlineExceeded => error::Error::RpcTimeout,
         Code::AlreadyExists => error::Error::TargetPathAlreadyExists,
         Code::NotFound => error::Error::TargetPathNotFound,
@@ -625,13 +627,6 @@ fn map_grpc_error(error: tonic::Status) -> error::Error {
 
 fn map_controller_grpc_error(error: tonic::Status) -> error::Error {
     match error.code() {
-        Code::Ok => {
-            debug_assert!(
-                false,
-                "unexpected Code::Ok routed through map_controller_grpc_error"
-            );
-            error::Error::Grpc(error)
-        }
         Code::DeadlineExceeded => error::Error::RpcTimeout,
         Code::AlreadyExists => error::Error::VolumeAlreadyExists,
         Code::NotFound => error::Error::VolumeNotFound,

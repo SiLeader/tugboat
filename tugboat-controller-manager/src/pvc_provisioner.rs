@@ -191,12 +191,18 @@ impl PvcProvisionerReconciler {
                 }
                 Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
                     let Some(existing) = pv_api.get(&pv_name).await? else {
-                        self.cleanup_csi_volume_with_retry(
-                            &provisioner_config.socket_path,
-                            &volume_id,
-                            &controller_create_secrets,
-                        )
-                        .await;
+                        if !self
+                            .cleanup_csi_volume_with_retry(
+                                &provisioner_config.socket_path,
+                                &volume_id,
+                                &controller_create_secrets,
+                            )
+                            .await
+                        {
+                            return Err(ControllerError::ProvisioningCleanupFailed {
+                                volume_id: volume_id.clone(),
+                            });
+                        }
                         return Err(ControllerError::ExistingVolumeConflict {
                             name: pv_name.clone(),
                             namespace: namespace.clone(),
@@ -209,12 +215,18 @@ impl PvcProvisionerReconciler {
                         &name,
                         &storage_class_name,
                     )? {
-                        self.cleanup_csi_volume_with_retry(
-                            &provisioner_config.socket_path,
-                            &volume_id,
-                            &controller_create_secrets,
-                        )
-                        .await;
+                        if !self
+                            .cleanup_csi_volume_with_retry(
+                                &provisioner_config.socket_path,
+                                &volume_id,
+                                &controller_create_secrets,
+                            )
+                            .await
+                        {
+                            return Err(ControllerError::ProvisioningCleanupFailed {
+                                volume_id: volume_id.clone(),
+                            });
+                        }
                         return Err(ControllerError::ExistingVolumeConflict {
                             name: pv_name.clone(),
                             namespace: namespace.clone(),
@@ -223,12 +235,18 @@ impl PvcProvisionerReconciler {
                     }
                 }
                 Err(err) => {
-                    self.cleanup_csi_volume_with_retry(
-                        &provisioner_config.socket_path,
-                        &volume_id,
-                        &controller_create_secrets,
-                    )
-                    .await;
+                    if !self
+                        .cleanup_csi_volume_with_retry(
+                            &provisioner_config.socket_path,
+                            &volume_id,
+                            &controller_create_secrets,
+                        )
+                        .await
+                    {
+                        return Err(ControllerError::ProvisioningCleanupFailed {
+                            volume_id: volume_id.clone(),
+                        });
+                    }
                     return Err(err.into());
                 }
             }

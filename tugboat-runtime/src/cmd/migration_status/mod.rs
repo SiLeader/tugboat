@@ -44,10 +44,13 @@ pub async fn status(config: QemuVmConfig, args: MigrationStatusArgs) -> crate::R
         .map_err(|e| crate::Error::Qmp(e.to_string()))?;
     let (qmp, _handle) = stream.spawn_tokio();
 
-    let migration = timeout(QMP_COMMAND_TIMEOUT, qmp.execute(qapi::qmp::query_migrate {}))
-        .await
-        .map_err(|_| crate::Error::Qmp("Timed out querying migration status".to_string()))?
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let migration = timeout(
+        QMP_COMMAND_TIMEOUT,
+        qmp.execute(qapi::qmp::query_migrate {}),
+    )
+    .await
+    .map_err(|_| crate::Error::Qmp("Timed out querying migration status".to_string()))?
+    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
 
     let response = VmMigrationStatusResponse {
         phase: match migration.status {

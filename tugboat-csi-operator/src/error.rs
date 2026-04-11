@@ -6,6 +6,8 @@ pub enum Error {
     GrpcTransport(#[from] tonic::transport::Error),
     #[error("Timed out connecting to CSI socket")]
     SocketConnectionTimeout,
+    #[error("Invalid CSI socket path: {0}")]
+    InvalidSocketPath(String),
     #[error("Timed out waiting for CSI RPC response")]
     RpcTimeout,
     #[error("Target path already exists")]

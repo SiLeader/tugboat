@@ -378,23 +378,24 @@ impl ShipReconciler {
             .cloned()
             .collect::<Vec<_>>();
         if !removed_published_volumes.is_empty() {
-            let secrets = self
-                .controller_publish_secret_map(
-                    namespace,
-                    &prepared.old_volumes,
-                    &removed_published_volumes,
-                )
-                .await
-                .unwrap_or_default();
-            if let Err(err) = self
-                .cleanup_published_volumes(&removed_published_volumes, &secrets)
-                .await
-            {
-                warn!(
-                    "Failed to clean up removed hotplugged volumes for ship '{}': {}",
-                    ship_id, err
-                );
+            let mut secrets =
+                std::collections::HashMap::with_capacity(removed_published_volumes.len());
+            for published in &removed_published_volumes {
+                let Some(volume) = prepared.old_volumes.iter().find_map(|volume| {
+                    let volume = volume.persistent_volume_claim()?;
+                    (volume.name == published.claim_name).then_some(volume)
+                }) else {
+                    return Err(ReconcileError::PersistentVolumeClaimNotFound(
+                        published.claim_name.clone(),
+                    ));
+                };
+                let resolved = self.resolve_csi_secrets(volume).await?;
+                secrets.insert(published.claim_name.clone(), resolved.controller_publish);
             }
+
+            self.cleanup_published_volumes(&removed_published_volumes, &secrets)
+                .await?;
+
             for volume in &prepared.old_volumes {
                 let Some(volume) = volume.persistent_volume_claim() else {
                     continue;
