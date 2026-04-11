@@ -7,6 +7,8 @@ use crate::provisioning::{
     provisioner_config, pvc_identity, reclaim_policy_from_storage_class, requested_capacity_bytes,
     storage_class_csi_config, storage_class_provisioner,
 };
+use std::time::Duration;
+use tokio::time::sleep;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_csi_operator::TugboatCsiOperator;
@@ -454,21 +456,16 @@ impl PvcProvisionerReconciler {
         pv_api: &Api<PersistentVolume>,
         pv_name: &str,
     ) {
-        if let Some(volume_id) = volume_id
-            && let Err(cleanup_err) = self
-                .csi_operator
-                .delete_volume(
-                    socket_path,
-                    volume_id.to_string(),
-                    volume_delete_secrets.clone(),
-                )
-                .await
-        {
-            tracing::warn!(
-                "Failed to clean up orphaned CSI volume '{}': {}",
-                volume_id,
-                cleanup_err
-            );
+        if let Some(volume_id) = volume_id {
+            let deleted = self
+                .cleanup_csi_volume_with_retry(socket_path, volume_id, volume_delete_secrets)
+                .await;
+            if !deleted {
+                tracing::warn!(
+                    "Orphaned CSI volume '{}' could not be deleted after retries",
+                    volume_id
+                );
+            }
         }
         if let Err(cleanup_err) = pv_api.delete(pv_name).await {
             tracing::warn!(
@@ -485,15 +482,16 @@ impl PvcProvisionerReconciler {
         socket_path: &str,
         volume_id: &str,
         secrets: &std::collections::HashMap<String, String>,
-    ) {
+    ) -> bool {
         const MAX_RETRIES: usize = 3;
+        const BASE_RETRY_DELAY: Duration = Duration::from_millis(200);
         for attempt in 1..=MAX_RETRIES {
             match self
                 .csi_operator
                 .delete_volume(socket_path, volume_id.to_string(), secrets.clone())
                 .await
             {
-                Ok(()) => return,
+                Ok(()) | Err(tugboat_csi_operator::Error::VolumeNotFound) => return true,
                 Err(err) if attempt < MAX_RETRIES => {
                     tracing::warn!(
                         "Failed to clean up orphaned CSI volume '{}' (attempt {}/{}): {}",
@@ -502,6 +500,8 @@ impl PvcProvisionerReconciler {
                         MAX_RETRIES,
                         err
                     );
+                    let delay = BASE_RETRY_DELAY.saturating_mul(2u32.pow((attempt - 1) as u32));
+                    sleep(delay).await;
                 }
                 Err(err) => {
                     tracing::error!(
@@ -514,6 +514,7 @@ impl PvcProvisionerReconciler {
                 }
             }
         }
+        false
     }
 }
 

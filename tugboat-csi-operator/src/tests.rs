@@ -16,6 +16,7 @@ use super::{
     CsiAccessMode, CsiAccessType, NodeVolumeStats, TugboatCsiOperator, VolumeHealthCondition,
     VolumeUsageStats, VolumeUsageUnit, volume_capability,
 };
+use crate::error::Error;
 use crate::proto::csi::v1::node_server::{Node, NodeServer};
 use crate::proto::csi::v1::volume_capability::AccessType;
 use crate::proto::csi::v1::volume_usage::Unit as VolumeUsageProtoUnit;
@@ -48,6 +49,7 @@ enum RecordedCall {
 struct FakeNodeService {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     volume_stats_response: NodeGetVolumeStatsResponse,
+    publish_delay: Option<Duration>,
 }
 
 #[tonic::async_trait]
@@ -82,6 +84,9 @@ impl Node for FakeNodeService {
             .lock()
             .expect("lock should be available")
             .push(RecordedCall::Publish(request.into_inner()));
+        if let Some(delay) = self.publish_delay {
+            sleep(delay).await;
+        }
         Ok(Response::new(NodePublishVolumeResponse {}))
     }
 
@@ -137,6 +142,7 @@ impl Node for FakeNodeService {
 
 async fn spawn_node_server_with_volume_stats(
     volume_stats_response: NodeGetVolumeStatsResponse,
+    publish_delay: Option<Duration>,
 ) -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
     let socket_path = std::env::temp_dir().join(format!(
         "tugboat-csi-operator-{}.sock",
@@ -152,6 +158,7 @@ async fn spawn_node_server_with_volume_stats(
     let service = FakeNodeService {
         calls: calls.clone(),
         volume_stats_response,
+        publish_delay,
     };
     tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -165,7 +172,7 @@ async fn spawn_node_server_with_volume_stats(
 }
 
 async fn spawn_node_server() -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
-    spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse::default()).await
+    spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse::default(), None).await
 }
 
 #[test]
@@ -297,26 +304,29 @@ async fn can_stage_and_publish_volume_over_uds() {
 #[tokio::test]
 async fn can_query_volume_stats_over_uds() {
     let operator = TugboatCsiOperator::default();
-    let (socket_path, calls) = spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse {
-        usage: vec![
-            VolumeUsage {
-                available: 3072,
-                total: 4096,
-                used: 1024,
-                unit: VolumeUsageProtoUnit::Bytes as i32,
-            },
-            VolumeUsage {
-                available: 90,
-                total: 100,
-                used: 10,
-                unit: VolumeUsageProtoUnit::Inodes as i32,
-            },
-        ],
-        volume_condition: Some(VolumeCondition {
-            abnormal: true,
-            message: "filesystem is read-only".to_string(),
-        }),
-    })
+    let (socket_path, calls) = spawn_node_server_with_volume_stats(
+        NodeGetVolumeStatsResponse {
+            usage: vec![
+                VolumeUsage {
+                    available: 3072,
+                    total: 4096,
+                    used: 1024,
+                    unit: VolumeUsageProtoUnit::Bytes as i32,
+                },
+                VolumeUsage {
+                    available: 90,
+                    total: 100,
+                    used: 10,
+                    unit: VolumeUsageProtoUnit::Inodes as i32,
+                },
+            ],
+            volume_condition: Some(VolumeCondition {
+                abnormal: true,
+                message: "filesystem is read-only".to_string(),
+            }),
+        },
+        None,
+    )
     .await;
 
     let stats = operator
@@ -361,6 +371,35 @@ async fn can_query_volume_stats_over_uds() {
     assert_eq!(stats_request.volume_id, "volume-1");
     assert_eq!(stats_request.volume_path, "/publish/volume-1");
     assert_eq!(stats_request.staging_target_path, "/staging/volume-1");
+}
+
+#[tokio::test]
+async fn publish_times_out_when_driver_stalls() {
+    let operator = TugboatCsiOperator::default();
+    let (socket_path, _calls) = spawn_node_server_with_volume_stats(
+        NodeGetVolumeStatsResponse::default(),
+        Some(Duration::from_secs(1)),
+    )
+    .await;
+
+    let result = operator
+        .publish(
+            &socket_path,
+            "volume-1".to_string(),
+            "/publish/volume-1".to_string(),
+            false,
+            CsiAccessMode::ReadWriteOnce,
+            CsiAccessType::Filesystem,
+            Some("xfs".to_string()),
+            vec!["noatime".to_string()],
+            Some("/staging/volume-1".to_string()),
+            HashMap::from([("token".to_string(), "secret".to_string())]),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .await;
+
+    assert!(matches!(result, Err(Error::RpcTimeout)));
 }
 
 #[tokio::test]

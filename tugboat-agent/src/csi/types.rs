@@ -61,6 +61,14 @@ pub(crate) enum CsiError {
     Join(#[from] tokio::task::JoinError),
     #[error("Mount namespace error: {0}")]
     MountNamespace(#[from] mountns::Error),
+    #[error(
+        "CSI operation failed and rollback also failed ({context}); original: {original}; rollback: {rollback}"
+    )]
+    RollbackFailed {
+        context: String,
+        original: String,
+        rollback: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

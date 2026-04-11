@@ -227,13 +227,22 @@ impl CsiWrapper {
         }
         if let Err(err) = prepare_target_path(&published.target_path, published.access_type) {
             if staged {
-                self.rollback_published_volume(
-                    node_name,
-                    &published,
-                    &secrets.controller_publish,
-                    "staged volume after target-path preparation error",
-                )
-                .await;
+                let context = "staged volume after target-path preparation error";
+                if let Err(rollback_err) = self
+                    .rollback_published_volume(
+                        node_name,
+                        &published,
+                        &secrets.controller_publish,
+                        context,
+                    )
+                    .await
+                {
+                    return Err(CsiError::RollbackFailed {
+                        context: context.to_string(),
+                        original: err.to_string(),
+                        rollback: rollback_err.to_string(),
+                    });
+                }
             }
             return Err(err);
         }
@@ -268,23 +277,41 @@ impl CsiWrapper {
         })
         .await
         {
-            self.rollback_published_volume(
-                node_name,
-                &published,
-                &secrets.controller_publish,
-                "staged/published volume after publish error",
-            )
-            .await;
+            let context = "staged/published volume after publish error";
+            if let Err(rollback_err) = self
+                .rollback_published_volume(
+                    node_name,
+                    &published,
+                    &secrets.controller_publish,
+                    context,
+                )
+                .await
+            {
+                return Err(CsiError::RollbackFailed {
+                    context: context.to_string(),
+                    original: err.to_string(),
+                    rollback: rollback_err.to_string(),
+                });
+            }
             return Err(err);
         }
         if let Err(err) = self.persist_published_volume(&published) {
-            self.rollback_published_volume(
-                node_name,
-                &published,
-                &secrets.controller_publish,
-                "published volume after state persistence error",
-            )
-            .await;
+            let context = "published volume after state persistence error";
+            if let Err(rollback_err) = self
+                .rollback_published_volume(
+                    node_name,
+                    &published,
+                    &secrets.controller_publish,
+                    context,
+                )
+                .await
+            {
+                return Err(CsiError::RollbackFailed {
+                    context: context.to_string(),
+                    original: err.to_string(),
+                    rollback: rollback_err.to_string(),
+                });
+            }
             return Err(err);
         }
         Ok(published)
@@ -451,13 +478,13 @@ impl CsiWrapper {
         published: &PublishedVolume,
         controller_publish_secrets: &HashMap<String, String>,
         context: &str,
-    ) {
-        if let Err(cleanup_err) = self
-            .unpublish(published, node_name, controller_publish_secrets)
+    ) -> Result<(), CsiError> {
+        self.unpublish(published, node_name, controller_publish_secrets)
             .await
-        {
-            tracing::error!("Failed to roll back {context}: {cleanup_err}");
-        }
+            .map_err(|cleanup_err| {
+                tracing::error!("Failed to roll back {context}: {cleanup_err}");
+                cleanup_err
+            })
     }
 
     fn target_path(
