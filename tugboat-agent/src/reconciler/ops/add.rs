@@ -136,6 +136,21 @@ fn controller_publish_secrets_for_cleanup(
     }
 }
 
+fn find_recovered_published_volume<'a>(
+    recovered_published_volumes: &'a [PublishedVolume],
+    claim_name: &str,
+    volume_id: &str,
+) -> Option<&'a PublishedVolume> {
+    recovered_published_volumes
+        .iter()
+        .find(|published| published.claim_name == claim_name)
+        .or_else(|| {
+            recovered_published_volumes
+                .iter()
+                .find(|published| published.volume_id == volume_id)
+        })
+}
+
 struct VolumeSetupGuard<'a> {
     reconciler: &'a ShipReconciler,
     ship_id: &'a str,
@@ -730,10 +745,11 @@ impl ShipReconciler {
 
         for volume in volumes {
             if let Some(volume) = volume.persistent_volume_claim() {
-                let Some(published) = recovered_published_volumes
-                    .iter()
-                    .find(|published| published.claim_name == volume.name)
-                else {
+                let Some(published) = find_recovered_published_volume(
+                    recovered_published_volumes,
+                    &volume.name,
+                    &volume.source.volume_handle,
+                ) else {
                     return Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(
                         ship_id.to_string(),
                     ));
@@ -945,7 +961,8 @@ impl ShipReconciler {
 mod tests {
     use super::{
         CleanupSecretPolicy, RecoveredRuntimeAction, best_effort_stale_volume_cleanup,
-        controller_publish_secrets_for_cleanup, recovered_runtime_action,
+        controller_publish_secrets_for_cleanup, find_recovered_published_volume,
+        recovered_runtime_action,
     };
     use crate::csi::{PublishedAccessType, PublishedVolume};
     use crate::reconciler::error::ReconcileError;
@@ -1116,5 +1133,57 @@ mod tests {
             recovered_runtime_action(&ship, "node-2"),
             RecoveredRuntimeAction::Register
         );
+    }
+
+    #[test]
+    fn recovered_volume_lookup_prefers_claim_name_match() {
+        let claim_match = PublishedVolume {
+            claim_name: "data".to_string(),
+            driver: "example.csi".to_string(),
+            volume_id: "volume-1".to_string(),
+            target_path: "/var/lib/tugboat-agent/csi/ship-uid/data.fs".to_string(),
+            access_type: PublishedAccessType::Filesystem,
+            mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+            staging_target_path: None,
+            controller_published: true,
+            pvc_name: Some("data-pvc".to_string()),
+        };
+        let id_match = PublishedVolume {
+            claim_name: "legacy-data".to_string(),
+            driver: "example.csi".to_string(),
+            volume_id: "volume-1".to_string(),
+            target_path: "/var/lib/tugboat-agent/csi/ship-uid/legacy-data.fs".to_string(),
+            access_type: PublishedAccessType::Filesystem,
+            mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+            staging_target_path: None,
+            controller_published: true,
+            pvc_name: Some("data-pvc".to_string()),
+        };
+
+        let recovered = vec![claim_match.clone(), id_match];
+        let found = find_recovered_published_volume(&recovered, "data", "volume-1")
+            .expect("claim name match should be selected first");
+
+        assert_eq!(found, &claim_match);
+    }
+
+    #[test]
+    fn recovered_volume_lookup_falls_back_to_volume_id() {
+        let recovered = vec![PublishedVolume {
+            claim_name: "legacy-data".to_string(),
+            driver: "example.csi".to_string(),
+            volume_id: "volume-1".to_string(),
+            target_path: "/var/lib/tugboat-agent/csi/ship-uid/legacy-data.fs".to_string(),
+            access_type: PublishedAccessType::Filesystem,
+            mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+            staging_target_path: None,
+            controller_published: true,
+            pvc_name: Some("data-pvc".to_string()),
+        }];
+
+        let found = find_recovered_published_volume(&recovered, "data", "volume-1")
+            .expect("volume id fallback should recover entry");
+
+        assert_eq!(found.claim_name, "legacy-data");
     }
 }
