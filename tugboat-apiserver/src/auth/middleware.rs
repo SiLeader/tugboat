@@ -132,6 +132,11 @@ where
         let service = Rc::clone(&self.service);
 
         Box::pin(async move {
+            if should_bypass_authentication(req.path()) {
+                req.extensions_mut().insert(UserInfo::anonymous());
+                let res = service.call(req).await?;
+                return Ok(res.map_into_left_body());
+            }
             let user = match authenticator.authenticate(req.request()).await {
                 Ok(Some(user)) => user,
                 Ok(None) if authenticator.anonymous_enabled() => UserInfo::anonymous(),
@@ -226,6 +231,10 @@ fn forbidden<B>(
 ) -> Result<ServiceResponse<EitherBody<B>>, Error> {
     let response = StatusResponse::forbidden(message, None).error_response();
     Ok(req.into_response(response).map_into_right_body())
+}
+
+fn should_bypass_authentication(path: &str) -> bool {
+    path == "/healthz"
 }
 
 fn should_bypass(path: &str) -> bool {

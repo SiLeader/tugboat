@@ -558,7 +558,7 @@ async fn ensure_namespace_exists(
     }
 }
 
-fn validate_resource<T>(resource: &T) -> Result<(), Box<StatusResponse>>
+pub(crate) fn validate_resource<T>(resource: &T) -> Result<(), Box<StatusResponse>>
 where
     T: StaticResource + Validatable,
 {

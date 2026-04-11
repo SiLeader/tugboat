@@ -15,7 +15,7 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::{
-    ReplaceOptions, ResourceUpdater, validate_resource_name,
+    ReplaceOptions, ResourceUpdater, validate_resource, validate_resource_name,
 };
 use crate::endpoints::{ListQuery, NamespacedPathParams};
 use crate::operator::ApiOperator;
@@ -192,6 +192,7 @@ pub(super) async fn handle_ship_replace(
         },
     )
     .apply_replacement(&replacement)?;
+    validate_resource(&replaced)?;
     validate_ship_target_node_name_update(&current, &replaced)?;
 
     let replaced = if current != replaced {
@@ -241,6 +242,7 @@ pub(super) async fn handle_ship_patch(
         },
     )
     .apply_patch(patch.into_inner())?;
+    validate_resource(&patched)?;
     validate_ship_target_node_name_update(&current, &patched)?;
 
     let patched = if current != patched {

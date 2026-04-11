@@ -510,16 +510,32 @@ fn build_planned_migration(
         });
     }
 
-    let ship_namespace = ship
+    let ship_namespace = match ship
         .object_meta
         .as_ref()
         .and_then(|meta| meta.namespace.clone())
-        .unwrap_or_else(|| "default".to_string());
-    let ship_name = ship
+    {
+        Some(ns) => ns,
+        None => {
+            return Err(NodeDrainWarning {
+                ship: ship_key.to_string(),
+                reason: "ship is missing namespace metadata".to_string(),
+            });
+        }
+    };
+    let ship_name = match ship
         .object_meta
         .as_ref()
         .and_then(|meta| meta.name.clone())
-        .unwrap_or_else(|| "unknown".to_string());
+    {
+        Some(name) => name,
+        None => {
+            return Err(NodeDrainWarning {
+                ship: ship_key.to_string(),
+                reason: "ship is missing name metadata".to_string(),
+            });
+        }
+    };
 
     Ok(PlannedMigration {
         ship_key: ship_key.to_string(),

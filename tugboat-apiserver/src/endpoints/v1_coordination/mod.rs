@@ -53,8 +53,3 @@ pub(super) fn register_lease(service: &mut ServiceConfig) {
         .service(lease::handle_lease_read)
         .service(lease::handle_lease_replace);
 }
-
-#[allow(dead_code)]
-pub(super) fn register_v1_coordination(service: &mut ServiceConfig) {
-    service.configure(register_lease);
-}

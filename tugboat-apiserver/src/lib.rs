@@ -97,7 +97,7 @@ impl ApiServer {
         let tls = self
             .tls
             .ok_or_else(|| std::io::Error::other("TLS configuration is required"))?;
-        let builder = build_tls_acceptor(tls);
+        let builder = build_tls_acceptor(tls).map_err(std::io::Error::other)?;
         server.bind_openssl(self.listen, builder)?.run().await
     }
 
@@ -130,14 +130,21 @@ async fn run_with_bound_listener(
     listener: TcpListener,
     tls: Option<TlsConfig>,
 ) {
-    if tls.is_none() {
-        tracing::error!("TLS configuration is required; refusing to start HTTP without TLS",);
+    let Some(tls) = tls else {
+        tracing::error!("TLS configuration is required; refusing to start HTTP without TLS");
         return;
-    }
+    };
     if let Err(err) = crate::auth::bootstrap::bootstrap_default_rbac(&operator.store).await {
         tracing::error!("Failed to bootstrap default RBAC resources: {err}");
         return;
     }
+    let builder = match build_tls_acceptor(tls) {
+        Ok(b) => b,
+        Err(err) => {
+            tracing::error!("Failed to configure TLS: {err}");
+            return;
+        }
+    };
     let data = Data::new(operator);
     let server = HttpServer::new(move || {
         App::new()
@@ -159,8 +166,6 @@ async fn run_with_bound_listener(
             .into_app()
     })
     .on_connect(store_client_certificate_info);
-    let tls = tls.expect("checked above");
-    let builder = build_tls_acceptor(tls);
     let server = match server.listen_openssl(listener, builder) {
         Ok(server) => server,
         Err(err) => {
@@ -189,40 +194,53 @@ async fn health_check() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-fn build_tls_acceptor(tls: TlsConfig) -> SslAcceptorBuilder {
-    let mut builder =
-        SslAcceptor::mozilla_modern_v5(SslMethod::tls_server()).expect("Failed to create acceptor");
+fn build_tls_acceptor(tls: TlsConfig) -> Result<SslAcceptorBuilder, std::io::Error> {
+    let mut builder = SslAcceptor::mozilla_modern_v5(SslMethod::tls_server())
+        .map_err(|e| std::io::Error::other(format!("Failed to create TLS acceptor: {e}")))?
+;
     builder
         .set_private_key_file(tls.key_file, SslFiletype::PEM)
-        .expect("Failed to set key file");
+        .map_err(|e| std::io::Error::other(format!("Failed to set TLS private key: {e}")))?
+;
     builder
         .set_certificate_chain_file(tls.cert_file)
-        .expect("Failed to set cert file");
+        .map_err(|e| std::io::Error::other(format!("Failed to set TLS certificate chain: {e}")))?
+;
     if let Some(client_ca_file) = tls.client_cert_file {
-        configure_client_certificate_auth(&mut builder, &client_ca_file);
+        configure_client_certificate_auth(&mut builder, &client_ca_file)?;
     }
-    builder
+    Ok(builder)
 }
 
-fn configure_client_certificate_auth(builder: &mut SslAcceptorBuilder, client_ca_file: &str) {
-    let file = std::fs::read(client_ca_file).expect("Failed to read client CA file");
-    let certs = X509::stack_from_pem(file.as_slice()).expect("Failed to parse client CA file");
+fn configure_client_certificate_auth(
+    builder: &mut SslAcceptorBuilder,
+    client_ca_file: &str,
+) -> Result<(), std::io::Error> {
+    let file = std::fs::read(client_ca_file)
+        .map_err(|e| std::io::Error::other(format!("Failed to read client CA file: {e}")))?
+;
+    let certs = X509::stack_from_pem(file.as_slice())
+        .map_err(|e| std::io::Error::other(format!("Failed to parse client CA file: {e}")))?
+;
     // set_ca_file sets the trust store used to verify the client certificate chain.
     builder
         .set_ca_file(client_ca_file)
-        .expect("Failed to set client CA file");
+        .map_err(|e| std::io::Error::other(format!("Failed to set client CA file: {e}")))?
+;
     // add_client_ca populates the list of acceptable CAs sent to the client
     // in the TLS CertificateRequest message, allowing it to select the right
     // certificate to present. Both calls are needed for full mTLS support.
     for cert in certs {
         builder
             .add_client_ca(cert.as_ref())
-            .expect("Failed to add client CA");
+            .map_err(|e| std::io::Error::other(format!("Failed to add client CA: {e}")))?
+;
     }
     // Require a client certificate; connections without one are rejected at the
     // TLS handshake level. This makes bearer-token auth incompatible with mTLS
     // mode — choose one or the other in [http.tls].
     builder.set_verify(SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT);
+    Ok(())
 }
 
 fn store_client_certificate_info(connection: &dyn Any, data: &mut Extensions) {
@@ -254,7 +272,8 @@ mod tests {
             .expect("acceptor should be created");
         let path = write_temp_cert_file(generate_test_cert_pem());
 
-        configure_client_certificate_auth(&mut builder, path.to_str().expect("utf-8 path"));
+        configure_client_certificate_auth(&mut builder, path.to_str().expect("utf-8 path"))
+            .expect("configure_client_certificate_auth should succeed");
 
         let verify_mode = builder.build().context().verify_mode();
         assert!(verify_mode.contains(SslVerifyMode::PEER));
