@@ -12,7 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub(crate) mod state_manager;
 pub(crate) mod types;
+
+#[cfg(test)]
+mod tests_failure_scenarios;
 
 use crate::mountns;
 use nix::sched::{CloneFlags, setns};
@@ -22,6 +26,7 @@ use std::fs::{OpenOptions, create_dir_all, read_dir, remove_dir, remove_file};
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tugboat_csi_operator::{
     ControllerCapability, CsiAccessMode, CsiAccessType, NodeCapability, NodeVolumeStats,
     TugboatCsiOperator,
@@ -35,11 +40,14 @@ pub(crate) use types::{
     READ_ONLY_MANY, READ_WRITE_MANY, READ_WRITE_ONCE, ResolvedCsiSecrets, TryConvertFromString,
 };
 
+use state_manager::StateManager;
+
 #[derive(Clone)]
 pub(crate) struct CsiWrapper {
     operator: TugboatCsiOperator,
     drivers: CsiDrivers,
     publish_dir: PathBuf,
+    state_manager: Arc<StateManager>,
 }
 
 impl CsiWrapper {
@@ -52,6 +60,7 @@ impl CsiWrapper {
             operator,
             drivers,
             publish_dir: publish_dir.into(),
+            state_manager: Arc::new(StateManager::new()),
         }
     }
 
@@ -90,29 +99,37 @@ impl CsiWrapper {
         Ok(())
     }
 
-    pub(crate) fn load_published_volumes(
+    pub(crate) async fn load_published_volumes(
         &self,
         ship_id: &str,
     ) -> Result<Vec<PublishedVolume>, CsiError> {
-        let ship_dir = self.publish_dir.join(ship_id);
-        let entries = match read_dir(ship_dir) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(err) => return Err(err.into()),
-        };
+        let state_manager = self.state_manager.clone();
+        let publish_dir = self.publish_dir.clone();
+        let ship_id_str = ship_id.to_string();
 
-        let mut volumes: Vec<PublishedVolume> = Vec::new();
-        for entry in entries {
-            let path = entry?.path();
-            if path.extension() != Some(OsStr::new("json")) {
-                continue;
-            }
+        state_manager
+            .with_lock(ship_id, move || {
+                let ship_dir = publish_dir.join(&ship_id_str);
+                let entries = match read_dir(ship_dir) {
+                    Ok(entries) => entries,
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+                    Err(err) => return Err(err.into()),
+                };
 
-            let contents = std::fs::read(&path)?;
-            volumes.push(serde_json::from_slice(&contents)?);
-        }
-        volumes.sort_by(|left, right| left.target_path.cmp(&right.target_path));
-        Ok(volumes)
+                let mut volumes: Vec<PublishedVolume> = Vec::new();
+                for entry in entries {
+                    let path = entry?.path();
+                    if path.extension() != Some(OsStr::new("json")) {
+                        continue;
+                    }
+
+                    let contents = std::fs::read(&path)?;
+                    volumes.push(serde_json::from_slice(&contents)?);
+                }
+                volumes.sort_by(|left, right| left.target_path.cmp(&right.target_path));
+                Ok(volumes)
+            })
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -295,24 +312,21 @@ impl CsiWrapper {
             }
             return Err(err);
         }
-        if let Err(err) = self.persist_published_volume(&published) {
-            let context = "published volume after state persistence error";
-            if let Err(rollback_err) = self
-                .rollback_published_volume(
-                    node_name,
-                    &published,
-                    &secrets.controller_publish,
-                    context,
-                )
-                .await
-            {
-                return Err(CsiError::RollbackFailed {
-                    context: context.to_string(),
-                    original: err.to_string(),
-                    rollback: rollback_err.to_string(),
-                });
-            }
-            return Err(err);
+        if let Err(err) = self.persist_published_volume(&published, ship_id).await {
+            // CRITICAL: Volume is mounted on node but state file write failed.
+            // DO NOT rollback - rollback might also fail and leave volume in inconsistent state.
+            // Instead, return a typed error indicating the volume is partially published.
+            // Caller can retry persist or decide on cleanup strategy.
+            tracing::error!(
+                "Failed to persist CSI published volume state for '{}' (volume IS mounted on node): {}. \
+                 Volume will be recoverable on next reconciliation attempt.",
+                published.volume_id,
+                err
+            );
+            return Err(CsiError::PublishPartialState {
+                volume_id: published.volume_id.clone(),
+                reason: err.to_string(),
+            });
         }
         Ok(published)
     }
@@ -380,7 +394,7 @@ impl CsiWrapper {
                 Err(err) => return Err(CsiError::Driver(err)),
             }
         }
-        self.remove_published_volume_state(volume)?;
+        self.remove_published_volume_state(volume).await?;
         Ok(())
     }
 
@@ -512,37 +526,45 @@ impl CsiWrapper {
             .to_string()
     }
 
-    fn persist_published_volume(&self, volume: &PublishedVolume) -> Result<(), CsiError> {
+    async fn persist_published_volume(
+        &self,
+        volume: &PublishedVolume,
+        ship_id: &str,
+    ) -> Result<(), CsiError> {
         let path = self.state_path_for_volume(volume)?;
-        let Some(parent) = path.parent() else {
-            return Err(CsiError::TargetPathHasNoParent(path.display().to_string()));
-        };
-        create_dir_all(parent)?;
-        std::fs::write(path, serde_json::to_vec(volume)?)?;
-        Ok(())
+        let volume_copy = volume.clone();
+        let state_manager = self.state_manager.clone();
+
+        state_manager
+            .with_lock(ship_id, move || {
+                state_manager::atomic_write_json(&path, &volume_copy)
+            })
+            .await
     }
 
-    fn remove_published_volume_state(&self, volume: &PublishedVolume) -> Result<(), CsiError> {
-        let path = self.state_path_for_volume(volume)?;
-        match remove_file(&path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
-        }
+    async fn remove_published_volume_state(
+        &self,
+        volume: &PublishedVolume,
+    ) -> Result<(), CsiError> {
+        let ship_id = volume.extract_ship_id().ok_or_else(|| {
+            CsiError::TargetPathHasNoParent(format!(
+                "Could not extract ship_id from mount namespace path: {}",
+                volume.mount_namespace_path
+            ))
+        })?;
 
-        let Some(parent) = path.parent() else {
-            return Err(CsiError::TargetPathHasNoParent(path.display().to_string()));
-        };
-        match remove_dir(parent) {
-            Ok(()) => {}
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
-                ) => {}
-            Err(err) => return Err(err.into()),
-        }
-        Ok(())
+        let path = self.state_path_for_volume(volume)?;
+        let state_manager = self.state_manager.clone();
+
+        state_manager
+            .with_lock(ship_id, move || {
+                state_manager::safe_remove_file(&path)?;
+                if let Some(parent) = path.parent() {
+                    state_manager::safe_remove_dir(parent)?;
+                }
+                Ok(())
+            })
+            .await
     }
 
     fn state_path_for_volume(&self, volume: &PublishedVolume) -> Result<PathBuf, CsiError> {

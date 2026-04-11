@@ -66,7 +66,7 @@ impl ShipReconciler {
 
         let mut published_volumes = self.runtime_operator.delete(ship_id.clone()).await?;
         if published_volumes.is_empty() {
-            published_volumes = self.csi.load_published_volumes(ship_id)?;
+            published_volumes = self.csi.load_published_volumes(ship_id).await?;
         }
 
         let (volumes, controller_publish_secrets) = self

@@ -130,8 +130,8 @@ fn read_only_claims_force_read_only_publish() {
     assert!(read_only);
 }
 
-#[test]
-fn can_persist_and_load_published_volume_state() {
+#[tokio::test]
+async fn can_persist_and_load_published_volume_state() {
     let temp_dir = std::env::temp_dir().join(format!(
         "tugboat-agent-csi-{}",
         std::time::SystemTime::now()
@@ -168,17 +168,20 @@ fn can_persist_and_load_published_volume_state() {
     };
 
     wrapper
-        .persist_published_volume(&volume)
+        .persist_published_volume(&volume, "ship-uid")
+        .await
         .expect("state persistence should succeed");
 
     let loaded = wrapper
         .load_published_volumes("ship-uid")
+        .await
         .expect("state loading should succeed");
 
     assert_eq!(loaded, vec![volume.clone()]);
 
     wrapper
         .remove_published_volume_state(&volume)
+        .await
         .expect("state cleanup should succeed");
     let _ = std::fs::remove_dir_all(temp_dir);
 }
@@ -227,8 +230,8 @@ fn can_prepare_and_cleanup_block_target_path() {
     let _ = std::fs::remove_dir_all(temp_dir);
 }
 
-#[test]
-fn integration_happy_path_round_trips_block_volume_state() {
+#[tokio::test]
+async fn integration_happy_path_round_trips_block_volume_state() {
     let temp_dir = std::env::temp_dir().join(format!(
         "tugboat-agent-csi-it-happy-{}",
         std::time::SystemTime::now()
@@ -260,24 +263,27 @@ fn integration_happy_path_round_trips_block_volume_state() {
     prepare_target_path(&volume.target_path, volume.access_type)
         .expect("block target preparation should succeed");
     wrapper
-        .persist_published_volume(&volume)
+        .persist_published_volume(&volume, "ship-uid")
+        .await
         .expect("state persistence should succeed");
 
     let loaded = wrapper
         .load_published_volumes("ship-uid")
+        .await
         .expect("state loading should succeed");
     assert_eq!(loaded, vec![volume.clone()]);
 
     wrapper
         .remove_published_volume_state(&volume)
+        .await
         .expect("state cleanup should succeed");
     cleanup_target_path(&volume.target_path, volume.access_type)
         .expect("block target cleanup should succeed");
     let _ = std::fs::remove_dir_all(temp_dir);
 }
 
-#[test]
-fn integration_cleanup_path_removes_filesystem_state_and_paths() {
+#[tokio::test]
+async fn integration_cleanup_path_removes_filesystem_state_and_paths() {
     let temp_dir = std::env::temp_dir().join(format!(
         "tugboat-agent-csi-it-cleanup-{}",
         std::time::SystemTime::now()
@@ -317,7 +323,8 @@ fn integration_cleanup_path_removes_filesystem_state_and_paths() {
     prepare_target_path(&volume.target_path, volume.access_type)
         .expect("filesystem target preparation should succeed");
     wrapper
-        .persist_published_volume(&volume)
+        .persist_published_volume(&volume, "ship-uid")
+        .await
         .expect("state persistence should succeed");
 
     cleanup_target_path(&volume.target_path, volume.access_type)
@@ -331,11 +338,13 @@ fn integration_cleanup_path_removes_filesystem_state_and_paths() {
     .expect("staging directory cleanup should succeed");
     wrapper
         .remove_published_volume_state(&volume)
+        .await
         .expect("state cleanup should succeed");
 
     assert!(
         wrapper
             .load_published_volumes("ship-uid")
+            .await
             .expect("state loading should succeed")
             .is_empty()
     );

@@ -856,7 +856,7 @@ impl ShipReconciler {
                 return;
             }
         };
-        let published_volumes = match self.csi.load_published_volumes(ship_id) {
+        let published_volumes = match self.csi.load_published_volumes(ship_id).await {
             Ok(v) => v,
             Err(err) => {
                 warn!(

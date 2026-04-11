@@ -212,7 +212,7 @@ impl ShipReconciler {
                 .await?;
             let published_volumes = validate_recovered_published_volumes(
                 ship_id,
-                self.csi.load_published_volumes(ship_id)?,
+                self.csi.load_published_volumes(ship_id).await?,
                 &planned_published_volumes,
             )?;
             self.runtime_operator
@@ -237,15 +237,51 @@ impl ShipReconciler {
         debug!("Getting volume claims for ship");
         let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
         debug!("{} volumes loaded", volumes.len());
-        let stale_published_volumes = self.csi.load_published_volumes(ship_id)?;
-        if !stale_published_volumes.is_empty() {
-            info!("Cleaning up stale CSI publish state for ship '{}'", ship_id);
-            let controller_publish_secrets = self
-                .controller_publish_secret_map(&namespace, &volumes, &stale_published_volumes)
-                .await?;
-            self.cleanup_published_volumes(&stale_published_volumes, &controller_publish_secrets)
-                .await?;
-            self.csi.cleanup_mount_namespace(ship_id)?;
+        let persisted_volumes = self.csi.load_published_volumes(ship_id).await?;
+        
+        // Plan desired published volumes for this new ship creation
+        let planned_published_volumes = self
+            .plan_desired_published_volumes(ship_id, &volumes)
+            .await?;
+        
+        if !persisted_volumes.is_empty() {
+            // Attempt to recover partial-published volumes from previous failed attempts
+            match detect_and_recover_partial_published_volumes(
+                ship_id,
+                persisted_volumes.clone(),
+                &planned_published_volumes,
+            ) {
+                Ok(recovered_volumes) if recovered_volumes == planned_published_volumes => {
+                    // Recovery successful: volumes are mounted and now properly recorded
+                    info!(
+                        "Recovered CSI published volumes for ship '{}' from partial-publish state",
+                        ship_id
+                    );
+                    // Continue with reconciliation (volumes are already mounted on node)
+                }
+                Ok(_) => {
+                    // Partial match: some recovered but not all match planned
+                    // This shouldn't happen in normal flow, treat as stale and cleanup
+                    info!("Partial CSI publish state for ship '{}' does not match planned volumes, cleaning up", ship_id);
+                    let controller_publish_secrets = self
+                        .controller_publish_secret_map(&namespace, &volumes, &persisted_volumes)
+                        .await?;
+                    self.cleanup_published_volumes(&persisted_volumes, &controller_publish_secrets)
+                        .await?;
+                    self.csi.cleanup_mount_namespace(ship_id)?;
+                }
+                Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(_)) => {
+                    // State mismatch: volumes are corrupted, must cleanup
+                    warn!("CSI published volume state mismatch for ship '{}', cleaning up", ship_id);
+                    let controller_publish_secrets = self
+                        .controller_publish_secret_map(&namespace, &volumes, &persisted_volumes)
+                        .await?;
+                    self.cleanup_published_volumes(&persisted_volumes, &controller_publish_secrets)
+                        .await?;
+                    self.csi.cleanup_mount_namespace(ship_id)?;
+                }
+                Err(e) => return Err(e),
+            }
         }
         self.cleanup_materialized_volumes(ship_id)?;
 
@@ -517,7 +553,7 @@ impl ShipReconciler {
                 )?;
                 let secrets = self.resolve_csi_secrets(volume).await?;
 
-                let published = self
+                let published = match self
                     .csi
                     .publish(
                         &self.node_name,
@@ -529,7 +565,25 @@ impl ShipReconciler {
                         &volume.source,
                         &secrets,
                     )
-                    .await?;
+                    .await
+                {
+                    Ok(published) => published,
+                    Err(crate::csi::CsiError::PublishPartialState { volume_id, reason }) => {
+                        // Volume is mounted but state file write failed (disk full, permission denied, etc).
+                        // Log this as a recoverable error - the volume IS accessible on the node.
+                        // Next reconciliation will detect it and complete the setup.
+                        warn!(
+                            "CSI volume '{}' is mounted on node but state persistence failed ({}). \
+                             Ship will be marked as failed; retry will recover and persist state.",
+                            volume_id, reason
+                        );
+                        return Err(ReconcileError::CsiVolumePartiallyPublished {
+                            volume_id,
+                            reason,
+                        });
+                    }
+                    Err(err) => return Err(err.into()),
+                };
 
                 guard
                     .controller_publish_secrets
@@ -683,7 +737,7 @@ impl ShipReconciler {
             )
             .await?;
         if runtime_published_volumes.is_empty() {
-            runtime_published_volumes = self.csi.load_published_volumes(ship_id)?;
+            runtime_published_volumes = self.csi.load_published_volumes(ship_id).await?;
         }
         if runtime_published_volumes.is_empty() {
             self.cleanup_published_volumes(fallback_published_volumes, &controller_publish_secrets)
