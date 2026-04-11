@@ -3271,6 +3271,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "tonic",
  "tracing",
  "tracing-subscriber",
  "tugboat-client",

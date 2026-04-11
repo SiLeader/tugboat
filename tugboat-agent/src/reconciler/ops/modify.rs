@@ -1086,7 +1086,7 @@ async fn best_effort_cleanup_hotplug_additions(
         {
             Ok(secrets) => {
                 if let Err(err) = reconciler
-                    .cleanup_published_volumes(added_published_volumes, &secrets)
+                    .cleanup_published_volumes_best_effort(added_published_volumes, &secrets)
                     .await
                 {
                     warn!(

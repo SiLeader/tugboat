@@ -81,7 +81,7 @@ impl ShipReconciler {
             });
 
         let cleanup_result = self
-            .cleanup_published_volumes(&published_volumes, &controller_publish_secrets)
+            .cleanup_published_volumes_best_effort(&published_volumes, &controller_publish_secrets)
             .await;
         // Always attempt to clear the attachment status regardless of whether CSI
         // unpublish succeeded.  A previous cancelled reconcile may have already

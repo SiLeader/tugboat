@@ -27,6 +27,7 @@ use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::time::{Duration, sleep};
 use tugboat_csi_operator::{
     ControllerCapability, CsiAccessMode, CsiAccessType, NodeCapability, NodeVolumeStats,
     TugboatCsiOperator,
@@ -41,6 +42,14 @@ pub(crate) use types::{
 };
 
 use state_manager::StateManager;
+
+const CSI_RETRY_MAX_ATTEMPTS: usize = 3;
+
+#[cfg(not(test))]
+const CSI_RETRY_BASE_DELAY: Duration = Duration::from_millis(200);
+
+#[cfg(test)]
+const CSI_RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
 pub(crate) struct CsiWrapper {
@@ -147,7 +156,19 @@ impl CsiWrapper {
         let Some(uds_path) = self.drivers.get(&source.driver) else {
             return Err(CsiError::DriverNotFound(source.driver.clone()));
         };
-        let node_capabilities = self.operator.node_capabilities(uds_path).await?;
+        let volume_id = source.volume_handle.clone();
+        let node_capabilities = self
+            .retry_csi_operation("load node capabilities", &volume_id, || {
+                let operator = self.operator.clone();
+                let uds_path = uds_path.to_string();
+                async move {
+                    operator
+                        .node_capabilities(&uds_path)
+                        .await
+                        .map_err(CsiError::from)
+                }
+            })
+            .await?;
         let (access_mode, read_only) = effective_publish_settings(
             &claim.access_modes,
             &volume.access_modes,
@@ -162,7 +183,18 @@ impl CsiWrapper {
         };
         let volume_context = source.volume_attributes.clone();
         let requires_staging = node_capabilities.contains(&NodeCapability::StageUnstageVolume);
-        let controller_capabilities = self.operator.controller_capabilities(uds_path).await?;
+        let controller_capabilities = self
+            .retry_csi_operation("load controller capabilities", &volume_id, || {
+                let operator = self.operator.clone();
+                let uds_path = uds_path.to_string();
+                async move {
+                    operator
+                        .controller_capabilities(&uds_path)
+                        .await
+                        .map_err(CsiError::from)
+                }
+            })
+            .await?;
         self.ensure_mount_namespace(ship_id)?;
         let mut published = self.plan_published_volume(
             ship_id,
@@ -175,19 +207,32 @@ impl CsiWrapper {
         let publish_context =
             if controller_capabilities.contains(&ControllerCapability::PublishUnpublishVolume) {
                 published.controller_published = true;
-                self.operator
-                    .controller_publish(
-                        uds_path,
-                        published.volume_id.clone(),
-                        node_name.to_string(),
-                        read_only,
-                        access_mode,
-                        access_type,
-                        fs_type.clone(),
-                        secrets.controller_publish.clone(),
-                        volume_context.clone(),
-                    )
-                    .await?
+                self.retry_csi_operation("controller publish volume", &published.volume_id, || {
+                    let operator = self.operator.clone();
+                    let uds_path = uds_path.to_string();
+                    let volume_id = published.volume_id.clone();
+                    let node_name = node_name.to_string();
+                    let fs_type = fs_type.clone();
+                    let controller_publish_secrets = secrets.controller_publish.clone();
+                    let volume_context = volume_context.clone();
+                    async move {
+                        operator
+                            .controller_publish(
+                                &uds_path,
+                                volume_id,
+                                node_name,
+                                read_only,
+                                access_mode,
+                                access_type,
+                                fs_type,
+                                controller_publish_secrets,
+                                volume_context,
+                            )
+                            .await
+                            .map_err(CsiError::from)
+                    }
+                })
+                .await?
             } else {
                 HashMap::new()
             };
@@ -205,34 +250,66 @@ impl CsiWrapper {
             let mount_flags = mount_flags.clone();
             let volume_context = volume_context.clone();
             let publish_context = publish_context.clone();
-            match run_in_mount_namespace(mount_namespace_path, move || async move {
-                operator
-                    .stage(
-                        &uds_path,
-                        volume_id,
-                        staging_target_path_for_rpc,
-                        access_mode,
-                        access_type,
-                        fs_type,
-                        mount_flags,
-                        node_stage_secrets,
-                        volume_context,
-                        publish_context,
-                    )
-                    .await
-            })
-            .await
+            match self
+                .retry_csi_operation("stage volume", &published.volume_id, || {
+                    let operator = operator.clone();
+                    let uds_path = uds_path.clone();
+                    let volume_id = volume_id.clone();
+                    let staging_target_path_for_rpc = staging_target_path_for_rpc.clone();
+                    let mount_namespace_path = mount_namespace_path.clone();
+                    let node_stage_secrets = node_stage_secrets.clone();
+                    let fs_type = fs_type.clone();
+                    let mount_flags = mount_flags.clone();
+                    let volume_context = volume_context.clone();
+                    let publish_context = publish_context.clone();
+                    async move {
+                        run_in_mount_namespace(mount_namespace_path, move || async move {
+                            operator
+                                .stage(
+                                    &uds_path,
+                                    volume_id,
+                                    staging_target_path_for_rpc,
+                                    access_mode,
+                                    access_type,
+                                    fs_type,
+                                    mount_flags,
+                                    node_stage_secrets,
+                                    volume_context,
+                                    publish_context,
+                                )
+                                .await
+                        })
+                        .await
+                    }
+                })
+                .await
             {
                 Ok(_) => {}
                 Err(err) => {
                     if published.controller_published {
                         let _ = self
-                            .operator
-                            .controller_unpublish(
-                                &uds_path_for_controller,
-                                published.volume_id.clone(),
-                                node_name.to_string(),
-                                secrets.controller_publish.clone(),
+                            .retry_csi_operation(
+                                "rollback controller unpublish after stage failure",
+                                &published.volume_id,
+                                || {
+                                    let operator = self.operator.clone();
+                                    let uds_path_for_controller = uds_path_for_controller.clone();
+                                    let volume_id = published.volume_id.clone();
+                                    let node_name = node_name.to_string();
+                                    let controller_publish_secrets =
+                                        secrets.controller_publish.clone();
+                                    async move {
+                                        operator
+                                            .controller_unpublish(
+                                                &uds_path_for_controller,
+                                                volume_id,
+                                                node_name,
+                                                controller_publish_secrets,
+                                            )
+                                            .await
+                                            .map_err(CsiError::from)
+                                    }
+                                },
                             )
                             .await;
                     }
@@ -274,25 +351,42 @@ impl CsiWrapper {
         let mount_flags = mount_flags.clone();
         let volume_context = volume_context.clone();
         let publish_context = publish_context.clone();
-        if let Err(err) = run_in_mount_namespace(mount_namespace_path, move || async move {
-            operator
-                .publish(
-                    &uds_path,
-                    volume_id,
-                    target_path,
-                    read_only,
-                    access_mode,
-                    access_type,
-                    fs_type,
-                    mount_flags,
-                    staging_target_path,
-                    node_publish_secrets,
-                    volume_context,
-                    publish_context,
-                )
-                .await
-        })
-        .await
+        if let Err(err) = self
+            .retry_csi_operation("publish volume", &published.volume_id, || {
+                let operator = operator.clone();
+                let uds_path = uds_path.clone();
+                let volume_id = volume_id.clone();
+                let target_path = target_path.clone();
+                let mount_namespace_path = mount_namespace_path.clone();
+                let staging_target_path = staging_target_path.clone();
+                let node_publish_secrets = node_publish_secrets.clone();
+                let fs_type = fs_type.clone();
+                let mount_flags = mount_flags.clone();
+                let volume_context = volume_context.clone();
+                let publish_context = publish_context.clone();
+                async move {
+                    run_in_mount_namespace(mount_namespace_path, move || async move {
+                        operator
+                            .publish(
+                                &uds_path,
+                                volume_id,
+                                target_path,
+                                read_only,
+                                access_mode,
+                                access_type,
+                                fs_type,
+                                mount_flags,
+                                staging_target_path,
+                                node_publish_secrets,
+                                volume_context,
+                                publish_context,
+                            )
+                            .await
+                    })
+                    .await
+                }
+            })
+            .await
         {
             let context = "staged/published volume after publish error";
             if let Err(rollback_err) = self
@@ -347,12 +441,23 @@ impl CsiWrapper {
         let target_path = volume.target_path.clone();
         let mount_namespace_path = volume.mount_namespace_path.clone();
         let uds_path_for_unpublish = uds_path.clone();
-        match run_in_mount_namespace(mount_namespace_path, move || async move {
-            operator
-                .unpublish(&uds_path_for_unpublish, volume_id, target_path)
-                .await
-        })
-        .await
+        match self
+            .retry_csi_operation("unpublish volume", &volume.volume_id, || {
+                let operator = operator.clone();
+                let uds_path_for_unpublish = uds_path_for_unpublish.clone();
+                let volume_id = volume_id.clone();
+                let target_path = target_path.clone();
+                let mount_namespace_path = mount_namespace_path.clone();
+                async move {
+                    run_in_mount_namespace(mount_namespace_path, move || async move {
+                        operator
+                            .unpublish(&uds_path_for_unpublish, volume_id, target_path)
+                            .await
+                    })
+                    .await
+                }
+            })
+            .await
         {
             Ok(()) | Err(CsiError::Driver(tugboat_csi_operator::Error::TargetPathNotFound)) => {}
             Err(err) => return Err(err),
@@ -366,12 +471,23 @@ impl CsiWrapper {
             let staging_target_path = staging_target_path.clone();
             let staging_target_path_for_rpc = staging_target_path.clone();
             let mount_namespace_path = volume.mount_namespace_path.clone();
-            match run_in_mount_namespace(mount_namespace_path, move || async move {
-                operator
-                    .unstage(&uds_path, volume_id, staging_target_path_for_rpc)
-                    .await
-            })
-            .await
+            match self
+                .retry_csi_operation("unstage volume", &volume.volume_id, || {
+                    let operator = operator.clone();
+                    let uds_path = uds_path.clone();
+                    let volume_id = volume_id.clone();
+                    let staging_target_path_for_rpc = staging_target_path_for_rpc.clone();
+                    let mount_namespace_path = mount_namespace_path.clone();
+                    async move {
+                        run_in_mount_namespace(mount_namespace_path, move || async move {
+                            operator
+                                .unstage(&uds_path, volume_id, staging_target_path_for_rpc)
+                                .await
+                        })
+                        .await
+                    }
+                })
+                .await
             {
                 Ok(()) | Err(CsiError::Driver(tugboat_csi_operator::Error::TargetPathNotFound)) => {
                 }
@@ -381,17 +497,28 @@ impl CsiWrapper {
         }
         if volume.controller_published {
             match self
-                .operator
-                .controller_unpublish(
-                    &uds_path,
-                    volume.volume_id.clone(),
-                    node_name.to_string(),
-                    controller_publish_secrets.clone(),
-                )
+                .retry_csi_operation("controller unpublish volume", &volume.volume_id, || {
+                    let operator = self.operator.clone();
+                    let uds_path = uds_path.to_string();
+                    let volume_id = volume.volume_id.clone();
+                    let node_name = node_name.to_string();
+                    let controller_publish_secrets = controller_publish_secrets.clone();
+                    async move {
+                        operator
+                            .controller_unpublish(
+                                &uds_path,
+                                volume_id,
+                                node_name,
+                                controller_publish_secrets,
+                            )
+                            .await
+                            .map_err(CsiError::from)
+                    }
+                })
                 .await
             {
-                Ok(()) | Err(tugboat_csi_operator::Error::VolumeNotFound) => {}
-                Err(err) => return Err(CsiError::Driver(err)),
+                Ok(()) | Err(CsiError::Driver(tugboat_csi_operator::Error::VolumeNotFound)) => {}
+                Err(err) => return Err(err),
             }
         }
         self.remove_published_volume_state(volume).await?;
@@ -411,7 +538,18 @@ impl CsiWrapper {
         let Some(uds_path) = self.drivers.get(&volume.driver) else {
             return Err(CsiError::DriverNotFound(volume.driver.clone()));
         };
-        let node_capabilities = self.operator.node_capabilities(uds_path).await?;
+        let node_capabilities = self
+            .retry_csi_operation("load node capabilities", &volume.volume_id, || {
+                let operator = self.operator.clone();
+                let uds_path = uds_path.to_string();
+                async move {
+                    operator
+                        .node_capabilities(&uds_path)
+                        .await
+                        .map_err(CsiError::from)
+                }
+            })
+            .await?;
         if !node_capabilities.contains(&NodeCapability::ExpandVolume) {
             return Ok(None);
         }
@@ -431,20 +569,33 @@ impl CsiWrapper {
         let fs_type = filesystem_type(source, access_type);
         let node_expand_secrets = secrets.node_expand.clone();
         Ok(Some(
-            run_in_mount_namespace(mount_namespace_path, move || async move {
-                operator
-                    .node_expand(
-                        &uds_path,
-                        volume_id,
-                        volume_path,
-                        capacity_bytes,
-                        staging_target_path,
-                        access_mode,
-                        access_type,
-                        fs_type,
-                        node_expand_secrets,
-                    )
+            self.retry_csi_operation("expand volume", &volume.volume_id, || {
+                let operator = operator.clone();
+                let uds_path = uds_path.clone();
+                let volume_id = volume_id.clone();
+                let volume_path = volume_path.clone();
+                let staging_target_path = staging_target_path.clone();
+                let mount_namespace_path = mount_namespace_path.clone();
+                let fs_type = fs_type.clone();
+                let node_expand_secrets = node_expand_secrets.clone();
+                async move {
+                    run_in_mount_namespace(mount_namespace_path, move || async move {
+                        operator
+                            .node_expand(
+                                &uds_path,
+                                volume_id,
+                                volume_path,
+                                capacity_bytes,
+                                staging_target_path,
+                                access_mode,
+                                access_type,
+                                fs_type,
+                                node_expand_secrets,
+                            )
+                            .await
+                    })
                     .await
+                }
             })
             .await?,
         ))
@@ -457,7 +608,18 @@ impl CsiWrapper {
         let Some(uds_path) = self.drivers.get(&volume.driver) else {
             return Err(CsiError::DriverNotFound(volume.driver.clone()));
         };
-        let node_capabilities = self.operator.node_capabilities(uds_path).await?;
+        let node_capabilities = self
+            .retry_csi_operation("load node capabilities", &volume.volume_id, || {
+                let operator = self.operator.clone();
+                let uds_path = uds_path.to_string();
+                async move {
+                    operator
+                        .node_capabilities(&uds_path)
+                        .await
+                        .map_err(CsiError::from)
+                }
+            })
+            .await?;
         if !node_capabilities.contains(&NodeCapability::GetVolumeStats) {
             return Ok(None);
         }
@@ -469,10 +631,26 @@ impl CsiWrapper {
         let staging_target_path = volume.staging_target_path.clone();
         let mount_namespace_path = volume.mount_namespace_path.clone();
         Ok(Some(
-            run_in_mount_namespace(mount_namespace_path, move || async move {
-                operator
-                    .node_volume_stats(&uds_path, volume_id, volume_path, staging_target_path)
+            self.retry_csi_operation("fetch volume stats", &volume.volume_id, || {
+                let operator = operator.clone();
+                let uds_path = uds_path.clone();
+                let volume_id = volume_id.clone();
+                let volume_path = volume_path.clone();
+                let staging_target_path = staging_target_path.clone();
+                let mount_namespace_path = mount_namespace_path.clone();
+                async move {
+                    run_in_mount_namespace(mount_namespace_path, move || async move {
+                        operator
+                            .node_volume_stats(
+                                &uds_path,
+                                volume_id,
+                                volume_path,
+                                staging_target_path,
+                            )
+                            .await
+                    })
                     .await
+                }
             })
             .await?,
         ))
@@ -482,8 +660,43 @@ impl CsiWrapper {
         let Some(uds_path) = self.drivers.get(driver) else {
             return Err(CsiError::DriverNotFound(driver.to_string()));
         };
-        let node_capabilities = self.operator.node_capabilities(uds_path).await?;
+        let node_capabilities = self
+            .retry_csi_operation("load node capabilities", driver, || {
+                let operator = self.operator.clone();
+                let uds_path = uds_path.to_string();
+                async move {
+                    operator
+                        .node_capabilities(&uds_path)
+                        .await
+                        .map_err(CsiError::from)
+                }
+            })
+            .await?;
         Ok(node_capabilities.contains(&NodeCapability::StageUnstageVolume))
+    }
+
+    pub(crate) async fn recover_partial_published_volume_state(
+        &self,
+        ship_id: &str,
+        planned: &[PublishedVolume],
+    ) -> Result<Option<Vec<PublishedVolume>>, CsiError> {
+        if planned.is_empty() {
+            return Ok(None);
+        }
+        if !planned
+            .iter()
+            .all(|volume| self.looks_like_partially_published_volume(volume))
+        {
+            return Ok(None);
+        }
+
+        for volume in planned {
+            self.persist_published_volume(volume, ship_id).await?;
+        }
+
+        let mut recovered = planned.to_vec();
+        recovered.sort_by(|left, right| left.target_path.cmp(&right.target_path));
+        Ok(Some(recovered))
     }
 
     async fn rollback_published_volume(
@@ -578,6 +791,82 @@ impl CsiWrapper {
             ));
         };
         Ok(parent.join(format!("{}.json", stem.to_string_lossy())))
+    }
+
+    fn looks_like_partially_published_volume(&self, volume: &PublishedVolume) -> bool {
+        let target_path = Path::new(&volume.target_path);
+        let target_exists = match volume.access_type {
+            PublishedAccessType::Block => target_path.is_file(),
+            PublishedAccessType::Filesystem => target_path.is_dir(),
+        };
+        if !target_exists {
+            return false;
+        }
+        if !Path::new(&volume.mount_namespace_path).exists() {
+            return false;
+        }
+
+        volume
+            .staging_target_path
+            .as_ref()
+            .is_none_or(|path| Path::new(path).exists())
+    }
+
+    async fn retry_csi_operation<T, F, Fut>(
+        &self,
+        operation_name: &str,
+        volume_id: &str,
+        mut operation: F,
+    ) -> Result<T, CsiError>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T, CsiError>>,
+    {
+        for attempt in 1..=CSI_RETRY_MAX_ATTEMPTS {
+            match operation().await {
+                Ok(value) => return Ok(value),
+                Err(err) if attempt < CSI_RETRY_MAX_ATTEMPTS && is_retryable_csi_error(&err) => {
+                    let delay = CSI_RETRY_BASE_DELAY.saturating_mul(2u32.pow((attempt - 1) as u32));
+                    tracing::warn!(
+                        "Transient CSI failure during {} for '{}' (attempt {}/{}): {}",
+                        operation_name,
+                        volume_id,
+                        attempt,
+                        CSI_RETRY_MAX_ATTEMPTS,
+                        err
+                    );
+                    sleep(delay).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        unreachable!("CSI retry loop should return before exhausting attempts");
+    }
+}
+
+fn is_retryable_csi_error(error: &CsiError) -> bool {
+    match error {
+        CsiError::Driver(inner) => is_retryable_driver_error(inner),
+        _ => false,
+    }
+}
+
+fn is_retryable_driver_error(error: &tugboat_csi_operator::Error) -> bool {
+    match error {
+        tugboat_csi_operator::Error::RpcTimeout
+        | tugboat_csi_operator::Error::SocketConnectionTimeout
+        | tugboat_csi_operator::Error::GrpcTransport(_) => true,
+        tugboat_csi_operator::Error::Grpc(status) => matches!(
+            status.code(),
+            tonic::Code::Unavailable
+                | tonic::Code::DeadlineExceeded
+                | tonic::Code::Aborted
+                | tonic::Code::ResourceExhausted
+                | tonic::Code::Unknown
+                | tonic::Code::Internal
+        ),
+        _ => false,
     }
 }
 

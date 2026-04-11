@@ -39,6 +39,7 @@ futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util.workspace = true
 async-trait.workspace = true
+tonic.workspace = true
 
 thiserror.workspace = true
 nix = { workspace = true, features = ["sched", "mount"] }

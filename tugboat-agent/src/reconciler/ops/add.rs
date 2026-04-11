@@ -33,6 +33,12 @@ use tugboat_resources::manifests::core::v1::{Node, Ship, ShipCondition, ShipSpec
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CleanupSecretPolicy {
+    BestEffort,
+    RequireControllerPublishSecrets,
+}
+
 fn best_effort_stale_volume_cleanup<T>(
     namespace: &str,
     claim_name: &str,
@@ -108,6 +114,25 @@ fn recovered_runtime_action(ship: &Ship, local_node_name: &str) -> RecoveredRunt
         None | Some(PHASE_PENDING) => RecoveredRuntimeAction::RecreateTarget,
         Some(PHASE_READY | PHASE_MIGRATING | PHASE_COMPLETED) => RecoveredRuntimeAction::Register,
         Some(_) => RecoveredRuntimeAction::Register,
+    }
+}
+
+fn controller_publish_secrets_for_cleanup(
+    volume: &PublishedVolume,
+    controller_publish_secrets: &HashMap<String, HashMap<String, String>>,
+    policy: CleanupSecretPolicy,
+) -> Result<HashMap<String, String>, String> {
+    match controller_publish_secrets.get(&volume.claim_name) {
+        Some(secrets) => Ok(secrets.clone()),
+        None if !volume.controller_published
+            || matches!(policy, CleanupSecretPolicy::BestEffort) =>
+        {
+            Ok(HashMap::new())
+        }
+        None => Err(format!(
+            "missing controller publish secrets for claim alias '{}' (volume '{}')",
+            volume.claim_name, volume.volume_id
+        )),
     }
 }
 
@@ -238,51 +263,58 @@ impl ShipReconciler {
         let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
         debug!("{} volumes loaded", volumes.len());
         let persisted_volumes = self.csi.load_published_volumes(ship_id).await?;
-        
+
         // Plan desired published volumes for this new ship creation
         let planned_published_volumes = self
             .plan_desired_published_volumes(ship_id, &volumes)
             .await?;
-        
-        if !persisted_volumes.is_empty() {
-            // Attempt to recover partial-published volumes from previous failed attempts
-            match detect_and_recover_partial_published_volumes(
-                ship_id,
-                persisted_volumes.clone(),
-                &planned_published_volumes,
-            ) {
-                Ok(recovered_volumes) if recovered_volumes == planned_published_volumes => {
-                    // Recovery successful: volumes are mounted and now properly recorded
+        let recovered_published_volumes = if persisted_volumes.is_empty() {
+            match self
+                .csi
+                .recover_partial_published_volume_state(ship_id, &planned_published_volumes)
+                .await?
+            {
+                Some(recovered_volumes) => {
                     info!(
                         "Recovered CSI published volumes for ship '{}' from partial-publish state",
                         ship_id
                     );
-                    // Continue with reconciliation (volumes are already mounted on node)
+                    Some(recovered_volumes)
                 }
-                Ok(_) => {
-                    // Partial match: some recovered but not all match planned
-                    // This shouldn't happen in normal flow, treat as stale and cleanup
-                    info!("Partial CSI publish state for ship '{}' does not match planned volumes, cleaning up", ship_id);
-                    let controller_publish_secrets = self
-                        .controller_publish_secret_map(&namespace, &volumes, &persisted_volumes)
-                        .await?;
-                    self.cleanup_published_volumes(&persisted_volumes, &controller_publish_secrets)
-                        .await?;
-                    self.csi.cleanup_mount_namespace(ship_id)?;
+                None => None,
+            }
+        } else {
+            match validate_recovered_published_volumes(
+                ship_id,
+                persisted_volumes.clone(),
+                &planned_published_volumes,
+            ) {
+                Ok(recovered_volumes) => {
+                    info!(
+                        "Recovered persisted CSI published volumes for ship '{}'",
+                        ship_id
+                    );
+                    Some(recovered_volumes)
                 }
                 Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(_)) => {
-                    // State mismatch: volumes are corrupted, must cleanup
-                    warn!("CSI published volume state mismatch for ship '{}', cleaning up", ship_id);
+                    warn!(
+                        "CSI published volume state mismatch for ship '{}', cleaning up",
+                        ship_id
+                    );
                     let controller_publish_secrets = self
                         .controller_publish_secret_map(&namespace, &volumes, &persisted_volumes)
                         .await?;
-                    self.cleanup_published_volumes(&persisted_volumes, &controller_publish_secrets)
-                        .await?;
+                    self.cleanup_published_volumes_best_effort(
+                        &persisted_volumes,
+                        &controller_publish_secrets,
+                    )
+                    .await?;
                     self.csi.cleanup_mount_namespace(ship_id)?;
+                    None
                 }
                 Err(e) => return Err(e),
             }
-        }
+        };
         self.cleanup_materialized_volumes(ship_id)?;
 
         {
@@ -299,8 +331,20 @@ impl ShipReconciler {
 
         debug!("Planning network configurations for ship");
         let networks = self.cni.create_network_configs(ship_id, network_classes);
-        let (published_volumes, vm_volumes) =
-            self.setup_volumes(ship_id, &namespace, &volumes).await?;
+        let (published_volumes, vm_volumes) = match recovered_published_volumes {
+            Some(recovered_volumes) => {
+                let vm_volumes = self
+                    .setup_recovered_published_volumes(
+                        ship_id,
+                        &namespace,
+                        &volumes,
+                        &recovered_volumes,
+                    )
+                    .await?;
+                (recovered_volumes, vm_volumes)
+            }
+            None => self.setup_volumes(ship_id, &namespace, &volumes).await?,
+        };
         let incoming_port =
             if ship_spec.target_node_name.as_deref() == Some(self.node_name.as_str()) {
                 Some(self.find_available_port().await?)
@@ -655,6 +699,55 @@ impl ShipReconciler {
         Ok(planned)
     }
 
+    async fn setup_recovered_published_volumes(
+        &self,
+        ship_id: &str,
+        namespace: &str,
+        volumes: &[VolumeInfo],
+        recovered_published_volumes: &[PublishedVolume],
+    ) -> Result<Vec<VmVolumeConfig>, ReconcileError> {
+        let mut vm_volumes = Vec::new();
+        if volumes
+            .iter()
+            .any(|volume| volume.persistent_volume_claim().is_some())
+        {
+            self.csi.ensure_mount_namespace(ship_id)?;
+        }
+
+        for volume in volumes {
+            if let Some(volume) = volume.persistent_volume_claim() {
+                let Some(published) = recovered_published_volumes
+                    .iter()
+                    .find(|published| published.claim_name == volume.name)
+                else {
+                    return Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(
+                        ship_id.to_string(),
+                    ));
+                };
+
+                let (_, read_only) = effective_publish_settings(
+                    &volume.claim.access_modes,
+                    &volume.volume.access_modes,
+                    volume.source.read_only,
+                )?;
+                let secrets = self.resolve_csi_secrets(volume).await?;
+
+                self.ensure_node_expansion(namespace, volume, published, &secrets)
+                    .await?;
+                self.refresh_volume_stats(namespace, volume, published)
+                    .await?;
+                self.mark_volume_attached(&volume.volume_name, true).await?;
+
+                vm_volumes.push(vm_volume_config(volume, published, read_only));
+            } else if let Some(volume) = volume.materialized() {
+                let path = self.materialize_volume(ship_id, volume)?;
+                vm_volumes.push(VmVolumeConfig::filesystem(path, volume.name.clone(), true));
+            }
+        }
+
+        Ok(vm_volumes)
+    }
+
     async fn with_cleanup<Fut, F>(
         &self,
         ship_id: &str,
@@ -687,12 +780,46 @@ impl ShipReconciler {
         published_volumes: &[PublishedVolume],
         controller_publish_secrets: &HashMap<String, HashMap<String, String>>,
     ) -> Result<(), ReconcileError> {
+        self.cleanup_published_volumes_with_policy(
+            published_volumes,
+            controller_publish_secrets,
+            CleanupSecretPolicy::RequireControllerPublishSecrets,
+        )
+        .await
+    }
+
+    pub(crate) async fn cleanup_published_volumes_best_effort(
+        &self,
+        published_volumes: &[PublishedVolume],
+        controller_publish_secrets: &HashMap<String, HashMap<String, String>>,
+    ) -> Result<(), ReconcileError> {
+        self.cleanup_published_volumes_with_policy(
+            published_volumes,
+            controller_publish_secrets,
+            CleanupSecretPolicy::BestEffort,
+        )
+        .await
+    }
+
+    async fn cleanup_published_volumes_with_policy(
+        &self,
+        published_volumes: &[PublishedVolume],
+        controller_publish_secrets: &HashMap<String, HashMap<String, String>>,
+        policy: CleanupSecretPolicy,
+    ) -> Result<(), ReconcileError> {
         let mut errors = Vec::new();
         for volume in published_volumes.iter().rev() {
-            let secrets = controller_publish_secrets
-                .get(&volume.claim_name)
-                .cloned()
-                .unwrap_or_default();
+            let secrets = match controller_publish_secrets_for_cleanup(
+                volume,
+                controller_publish_secrets,
+                policy,
+            ) {
+                Ok(secrets) => secrets,
+                Err(err) => {
+                    errors.push(format!("{}: {err}", volume.target_path));
+                    continue;
+                }
+            };
             if let Err(err) = self.csi.unpublish(volume, &self.node_name, &secrets).await {
                 error!(
                     "Failed to unpublish CSI volume '{}' for ship mount namespace '{}': {err}",
@@ -803,10 +930,13 @@ impl ShipReconciler {
 #[cfg(test)]
 mod tests {
     use super::{
-        RecoveredRuntimeAction, best_effort_stale_volume_cleanup, recovered_runtime_action,
+        CleanupSecretPolicy, RecoveredRuntimeAction, best_effort_stale_volume_cleanup,
+        controller_publish_secrets_for_cleanup, recovered_runtime_action,
     };
+    use crate::csi::{PublishedAccessType, PublishedVolume};
     use crate::reconciler::error::ReconcileError;
     use crate::reconciler::ops::{PHASE_COMPLETED, PHASE_FAILED, PHASE_PENDING, PHASE_READY};
+    use std::collections::HashMap;
     use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
 
     #[test]
@@ -828,6 +958,58 @@ mod tests {
         );
 
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn strict_cleanup_requires_controller_publish_secrets() {
+        let volume = PublishedVolume {
+            claim_name: "data".to_string(),
+            driver: "example.csi".to_string(),
+            volume_id: "volume-1".to_string(),
+            target_path: "/var/lib/tugboat-agent/csi/ship-uid/data.fs".to_string(),
+            access_type: PublishedAccessType::Filesystem,
+            mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+            staging_target_path: Some(
+                "/var/lib/tugboat-agent/csi/ship-uid/.staging/data".to_string(),
+            ),
+            controller_published: true,
+            pvc_name: Some("data-pvc".to_string()),
+        };
+
+        let err = controller_publish_secrets_for_cleanup(
+            &volume,
+            &HashMap::new(),
+            CleanupSecretPolicy::RequireControllerPublishSecrets,
+        )
+        .expect_err("active cleanup should reject missing controller publish secrets");
+
+        assert!(err.contains("missing controller publish secrets"));
+    }
+
+    #[test]
+    fn best_effort_cleanup_allows_missing_controller_publish_secrets() {
+        let volume = PublishedVolume {
+            claim_name: "data".to_string(),
+            driver: "example.csi".to_string(),
+            volume_id: "volume-1".to_string(),
+            target_path: "/var/lib/tugboat-agent/csi/ship-uid/data.fs".to_string(),
+            access_type: PublishedAccessType::Filesystem,
+            mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+            staging_target_path: Some(
+                "/var/lib/tugboat-agent/csi/ship-uid/.staging/data".to_string(),
+            ),
+            controller_published: true,
+            pvc_name: Some("data-pvc".to_string()),
+        };
+
+        let secrets = controller_publish_secrets_for_cleanup(
+            &volume,
+            &HashMap::new(),
+            CleanupSecretPolicy::BestEffort,
+        )
+        .expect("stale cleanup should allow missing controller publish secrets");
+
+        assert!(secrets.is_empty());
     }
 
     #[test]
