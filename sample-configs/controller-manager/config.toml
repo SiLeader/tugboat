@@ -26,6 +26,8 @@ token_path = "/var/run/secrets/tugboat.cloud/serviceaccount/token"
 
 [csi]
 requeue_interval_seconds = 30
+socket_connect_timeout_seconds = 5
+rpc_timeout_seconds = 30
 
 [network]
 requeue_interval_seconds = 30

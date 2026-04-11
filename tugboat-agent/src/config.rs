@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tugboat_client::{ClientAuth, ClientTlsConfig};
 use tugboat_cni_operator::CniOperatorConfig;
+use tugboat_csi_operator::CsiTimeouts;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentConfig {
@@ -61,6 +62,10 @@ pub(crate) struct CsiConfig {
     pub publish_dir: String,
     #[serde(default)]
     pub drivers: HashMap<String, String>,
+    #[serde(default = "default_csi_socket_connect_timeout_seconds")]
+    pub socket_connect_timeout_seconds: u64,
+    #[serde(default = "default_csi_rpc_timeout_seconds")]
+    pub rpc_timeout_seconds: u64,
 }
 
 fn default_csi_publish_dir() -> String {
@@ -68,6 +73,14 @@ fn default_csi_publish_dir() -> String {
 }
 
 fn default_network_probe_interval_seconds() -> u64 {
+    30
+}
+
+fn default_csi_socket_connect_timeout_seconds() -> u64 {
+    5
+}
+
+fn default_csi_rpc_timeout_seconds() -> u64 {
     30
 }
 
@@ -81,5 +94,14 @@ impl AgentConfig {
 impl NodeConfig {
     pub(crate) fn network_probe_interval(&self) -> Duration {
         Duration::from_secs(self.network_probe_interval_seconds)
+    }
+}
+
+impl CsiConfig {
+    pub(crate) fn timeouts(&self) -> CsiTimeouts {
+        CsiTimeouts {
+            socket_connect_timeout: Duration::from_secs(self.socket_connect_timeout_seconds),
+            rpc_call_timeout: Duration::from_secs(self.rpc_timeout_seconds),
+        }
     }
 }

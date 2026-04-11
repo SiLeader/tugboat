@@ -8,6 +8,12 @@ pub enum Error {
     SocketConnectionTimeout,
     #[error("Invalid CSI socket path: {0}")]
     InvalidSocketPath(String),
+    #[error("Invalid CSI volume name: {0}")]
+    InvalidVolumeName(String),
+    #[error("Invalid CSI requested capacity bytes: {0}")]
+    InvalidCapacityBytes(i64),
+    #[error("CSI access mode list cannot be empty")]
+    MissingAccessModes,
     #[error("Timed out waiting for CSI RPC response")]
     RpcTimeout,
     #[error("Target path already exists")]
@@ -20,6 +26,8 @@ pub enum Error {
     VolumeNotFound,
     #[error("CreateVolume response is missing volume details")]
     MissingVolume,
+    #[error("CSI response is missing volume ID")]
+    MissingVolumeId,
     #[error("Failed precondition")]
     FailedPrecondition,
     #[error("Grpc error: {0}")]

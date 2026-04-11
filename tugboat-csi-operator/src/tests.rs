@@ -424,6 +424,101 @@ fn normalize_socket_path_strips_unix_prefix() {
     assert_eq!(result.expect("path should normalize"), "/var/run/csi.sock");
 }
 
+#[test]
+fn normalize_socket_path_rejects_relative_path() {
+    let result = normalize_socket_path("./csi.sock");
+
+    assert!(matches!(result, Err(Error::InvalidSocketPath(_))));
+}
+
+#[test]
+fn normalize_socket_path_rejects_unsupported_scheme() {
+    let result = normalize_socket_path("tcp://127.0.0.1:9000");
+
+    assert!(matches!(result, Err(Error::InvalidSocketPath(_))));
+}
+
+#[tokio::test]
+async fn create_volume_rejects_empty_name() {
+    let operator = TugboatCsiOperator::default();
+    let err = operator
+        .create_volume(
+            "/var/run/non-existent-csi.sock",
+            "   ".to_string(),
+            Some(1024),
+            HashMap::new(),
+            vec![CsiAccessMode::ReadWriteOnce],
+            CsiAccessType::Filesystem,
+            HashMap::new(),
+            Vec::new(),
+        )
+        .await
+        .expect_err("empty volume name should fail before RPC");
+
+    assert!(matches!(err, Error::InvalidVolumeName(_)));
+}
+
+#[tokio::test]
+async fn create_volume_rejects_empty_access_modes() {
+    let operator = TugboatCsiOperator::default();
+    let err = operator
+        .create_volume(
+            "/var/run/non-existent-csi.sock",
+            "volume-1".to_string(),
+            Some(1024),
+            HashMap::new(),
+            Vec::new(),
+            CsiAccessType::Filesystem,
+            HashMap::new(),
+            Vec::new(),
+        )
+        .await
+        .expect_err("missing access modes should fail before RPC");
+
+    assert!(matches!(err, Error::MissingAccessModes));
+}
+
+#[tokio::test]
+async fn create_volume_rejects_non_positive_capacity() {
+    let operator = TugboatCsiOperator::default();
+    let err = operator
+        .create_volume(
+            "/var/run/non-existent-csi.sock",
+            "volume-1".to_string(),
+            Some(0),
+            HashMap::new(),
+            vec![CsiAccessMode::ReadWriteOnce],
+            CsiAccessType::Filesystem,
+            HashMap::new(),
+            Vec::new(),
+        )
+        .await
+        .expect_err("non-positive capacity should fail before RPC");
+
+    assert!(matches!(err, Error::InvalidCapacityBytes(0)));
+}
+
+#[tokio::test]
+async fn node_expand_rejects_non_positive_capacity() {
+    let operator = TugboatCsiOperator::default();
+    let err = operator
+        .node_expand(
+            "/var/run/non-existent-csi.sock",
+            "volume-1".to_string(),
+            "/publish/volume-1".to_string(),
+            0,
+            None,
+            CsiAccessMode::ReadWriteOnce,
+            CsiAccessType::Filesystem,
+            None,
+            HashMap::new(),
+        )
+        .await
+        .expect_err("non-positive expansion capacity should fail before RPC");
+
+    assert!(matches!(err, Error::InvalidCapacityBytes(0)));
+}
+
 #[tokio::test]
 async fn can_unpublish_and_unstage_volume_over_uds() {
     let operator = TugboatCsiOperator::default();
