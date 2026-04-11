@@ -12,16 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cmd::qmp::{connect_qmp, execute_with_timeout};
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
-use qapi::futures::QmpStreamTokio;
 use qapi::qmp::MigrationStatus;
-use tokio::time::{Duration, timeout};
 use tugboat_vm_runtime_interface::migrate::{VmMigrationPhase, VmMigrationStatusResponse};
-
-const QMP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const QMP_NEGOTIATE_TIMEOUT: Duration = Duration::from_secs(5);
-const QMP_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Parser)]
 pub struct MigrationStatusArgs {
@@ -31,26 +26,15 @@ pub struct MigrationStatusArgs {
 
 pub async fn status(config: QemuVmConfig, args: MigrationStatusArgs) -> crate::Result<()> {
     crate::validate::validate_safe_id(&args.id, "vm id")?;
-    let stream = timeout(
-        QMP_CONNECT_TIMEOUT,
-        QmpStreamTokio::open_uds(config.get_uds_path(&args.id)),
-    )
-    .await
-    .map_err(|_| crate::Error::Qmp("Timed out connecting to QMP socket".to_string()))?
-    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let stream = timeout(QMP_NEGOTIATE_TIMEOUT, stream.negotiate())
-        .await
-        .map_err(|_| crate::Error::Qmp("Timed out negotiating QMP capabilities".to_string()))?
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let (qmp, _handle) = stream.spawn_tokio();
+    let (qmp, _handle) = connect_qmp(config.get_uds_path(&args.id))
+        .await?
+        .spawn_tokio();
 
-    let migration = timeout(
-        QMP_COMMAND_TIMEOUT,
+    let migration = execute_with_timeout(
         qmp.execute(qapi::qmp::query_migrate {}),
+        "Timed out querying migration status",
     )
-    .await
-    .map_err(|_| crate::Error::Qmp("Timed out querying migration status".to_string()))?
-    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    .await?;
 
     let response = VmMigrationStatusResponse {
         phase: match migration.status {

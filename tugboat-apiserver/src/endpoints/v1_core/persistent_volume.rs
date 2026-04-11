@@ -14,13 +14,11 @@
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, resource_handlers};
+use crate::endpoints::{ClusterNamePathParams, ListQuery, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::PersistentVolume;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -38,11 +36,6 @@ pub(super) async fn handle_persistent_volume_create(
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeDeletePathParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = PersistentVolume),
@@ -55,7 +48,7 @@ pub(super) struct PersistentVolumeDeletePathParams {
     )]
 #[delete("/api/v1/persistentvolumes/{name}")]
 pub(super) async fn handle_persistent_volume_delete(
-    path: Path<PersistentVolumeDeletePathParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<PersistentVolume>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<PersistentVolume>(&operator, None, path.into_inner().name)
@@ -82,11 +75,6 @@ pub(super) async fn handle_persistent_volume_list(
     resource_handlers::list_resources::<PersistentVolume>(&operator, query.into_inner(), None).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeReadPathParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = PersistentVolume),
@@ -99,16 +87,11 @@ pub(super) struct PersistentVolumeReadPathParams {
     )]
 #[get("/api/v1/persistentvolumes/{name}")]
 pub(super) async fn handle_persistent_volume_read(
-    path: Path<PersistentVolumeReadPathParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<PersistentVolume>, Box<StatusResponse>> {
     resource_handlers::read_resource::<PersistentVolume>(&operator, None, path.into_inner().name)
         .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeReplacePathParams {
-    name: String,
 }
 
 #[utoipa::path(
@@ -124,7 +107,7 @@ pub(super) struct PersistentVolumeReplacePathParams {
     )]
 #[put("/api/v1/persistentvolumes/{name}")]
 pub(super) async fn handle_persistent_volume_replace(
-    path: Path<PersistentVolumeReplacePathParams>,
+    path: Path<ClusterNamePathParams>,
     replacement: Json<PersistentVolume>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {
@@ -155,7 +138,7 @@ pub(super) async fn handle_persistent_volume_replace(
     )]
 #[patch("/api/v1/persistentvolumes/{name}")]
 pub(super) async fn handle_persistent_volume_patch(
-    path: Path<PersistentVolumePatchPathParams>,
+    path: Path<ClusterNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {
@@ -173,11 +156,6 @@ pub(super) async fn handle_persistent_volume_patch(
     .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumePatchPathParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource updated", body = PersistentVolume),
@@ -191,7 +169,7 @@ pub(super) struct PersistentVolumePatchPathParams {
     )]
 #[patch("/api/v1/persistentvolumes/{name}/status")]
 pub(super) async fn handle_persistent_volume_status_patch(
-    path: Path<PersistentVolumePatchPathParams>,
+    path: Path<ClusterNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {
@@ -202,11 +180,6 @@ pub(super) async fn handle_persistent_volume_status_patch(
         patch.into_inner(),
     )
     .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeStatusReplacePathParams {
-    name: String,
 }
 
 #[utoipa::path(
@@ -222,7 +195,7 @@ pub(super) struct PersistentVolumeStatusReplacePathParams {
     )]
 #[put("/api/v1/persistentvolumes/{name}/status")]
 pub(super) async fn handle_persistent_volume_status_replace(
-    path: Path<PersistentVolumeStatusReplacePathParams>,
+    path: Path<ClusterNamePathParams>,
     replacement: Json<PersistentVolume>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<PersistentVolume>, Box<StatusResponse>> {

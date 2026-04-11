@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cmd::qmp::{connect_qmp, execute_with_timeout};
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
-use qapi::futures::QmpStreamTokio;
 use qapi::qmp::RunState;
 use tugboat_vm_runtime_interface::status::{VmStatus, VmStatusResponse};
 
@@ -53,18 +53,12 @@ impl FromQmp<RunState> for VmStatus {
 
 pub(crate) async fn status(vm: QemuVmConfig, args: StatusArgs) -> Result<(), crate::Error> {
     crate::validate::validate_safe_id(&args.id, "vm id")?;
-    let stream = QmpStreamTokio::open_uds(vm.get_uds_path(&args.id))
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let stream = stream
-        .negotiate()
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let (qmp, _handle) = stream.spawn_tokio();
-    let status = qmp
-        .execute(qapi::qmp::query_status {})
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    let (qmp, _handle) = connect_qmp(vm.get_uds_path(&args.id)).await?.spawn_tokio();
+    let status = execute_with_timeout(
+        qmp.execute(qapi::qmp::query_status {}),
+        "Timed out querying VM status",
+    )
+    .await?;
 
     let status = VmStatusResponse {
         status: VmStatus::from_qmp(status.status),

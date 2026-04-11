@@ -64,16 +64,7 @@ fn is_migration_timed_out(timestamp: &Option<Time>, timeout_secs: i64) -> bool {
     now.seconds - ts.seconds > timeout_secs
 }
 
-fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
-    if let Some(existing) = conditions
-        .iter_mut()
-        .find(|existing| existing.status == condition.status)
-    {
-        *existing = condition;
-    } else {
-        conditions.push(condition);
-    }
-}
+use super::upsert_ship_condition;
 
 #[async_trait]
 pub trait MigrationContext: Send + Sync {

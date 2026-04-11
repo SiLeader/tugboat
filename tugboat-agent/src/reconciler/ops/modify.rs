@@ -1027,7 +1027,10 @@ fn current_nic_ids(
                 None => format!("ClusterNetworkClass/{}/{ship_id}", info.name),
             };
             let digest = sha2::Sha256::digest(ident.as_bytes());
-            let mac = format!("52:54:00:{:02x}:{:02x}:{:02x}", digest[0], digest[1], digest[2]);
+            let mac = format!(
+                "52:54:00:{:02x}:{:02x}:{:02x}",
+                digest[0], digest[1], digest[2]
+            );
             format!("nic-{}", sanitize_identifier(&mac))
         })
         .collect()
@@ -1176,7 +1179,10 @@ mod tests {
 
         let ident = "NetworkClass/default/frontend/ship-123";
         let digest = sha2::Sha256::digest(ident.as_bytes());
-        let mac = format!("52:54:00:{:02x}:{:02x}:{:02x}", digest[0], digest[1], digest[2]);
+        let mac = format!(
+            "52:54:00:{:02x}:{:02x}:{:02x}",
+            digest[0], digest[1], digest[2]
+        );
         let expected = format!("nic-{}", sanitize_identifier(&mac));
 
         assert_eq!(ids[0], expected);

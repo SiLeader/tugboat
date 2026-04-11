@@ -15,13 +15,11 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, NamespacedPathParams};
+use crate::endpoints::{ListQuery, NamespacedNamePathParams, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::apps::v1::ReplicaSet;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -44,12 +42,6 @@ pub(super) async fn handle_replicaset_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ReplicaSetPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = ReplicaSet),
@@ -63,7 +55,7 @@ pub(super) struct ReplicaSetPathParams {
     )]
 #[delete("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}")]
 pub(super) async fn handle_replicaset_delete(
-    path: Path<ReplicaSetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ReplicaSet>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -131,7 +123,7 @@ pub(super) async fn handle_replicaset_list_all(
     )]
 #[get("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}")]
 pub(super) async fn handle_replicaset_read(
-    path: Path<ReplicaSetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ReplicaSet>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -152,7 +144,7 @@ pub(super) async fn handle_replicaset_read(
     )]
 #[put("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}")]
 pub(super) async fn handle_replicaset_replace(
-    path: Path<ReplicaSetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<ReplicaSet>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {
@@ -185,7 +177,7 @@ pub(super) async fn handle_replicaset_replace(
     )]
 #[patch("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}")]
 pub(super) async fn handle_replicaset_patch(
-    path: Path<ReplicaSetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {
@@ -218,7 +210,7 @@ pub(super) async fn handle_replicaset_patch(
     )]
 #[patch("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}/status")]
 pub(super) async fn handle_replicaset_status_patch(
-    path: Path<ReplicaSetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {
@@ -246,7 +238,7 @@ pub(super) async fn handle_replicaset_status_patch(
     )]
 #[put("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}/status")]
 pub(super) async fn handle_replicaset_status_replace(
-    path: Path<ReplicaSetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<ReplicaSet>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ReplicaSet>, Box<StatusResponse>> {

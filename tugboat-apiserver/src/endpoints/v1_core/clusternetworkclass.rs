@@ -13,13 +13,11 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
-use crate::endpoints::{ListQuery, resource_handlers};
+use crate::endpoints::{ClusterNamePathParams, ListQuery, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::ClusterNetworkClass;
-use utoipa::ToSchema;
 
 #[utoipa::path(
     responses(
@@ -37,11 +35,6 @@ pub(super) async fn handle_clusternetworkclass_create(
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ClusterNetworkClassDeletePathParams {
-    name: String,
-}
-
 #[utoipa::path(
     responses(
         (status = 200, description = "Resource deleted", body = ClusterNetworkClass),
@@ -54,7 +47,7 @@ pub(super) struct ClusterNetworkClassDeletePathParams {
 )]
 #[delete("/api/v1/clusternetworkclasses/{name}")]
 pub(super) async fn handle_clusternetworkclass_delete(
-    path: Path<ClusterNetworkClassDeletePathParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ClusterNetworkClass>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<ClusterNetworkClass>(
@@ -85,10 +78,6 @@ pub(super) async fn handle_clusternetworkclass_list(
     resource_handlers::list_resources::<ClusterNetworkClass>(&operator, query.into_inner(), None)
         .await
 }
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ReadParams {
-    name: String,
-}
 
 #[utoipa::path(
     responses(
@@ -102,16 +91,11 @@ pub(super) struct ReadParams {
 )]
 #[get("/api/v1/clusternetworkclasses/{name}")]
 pub(super) async fn handle_clusternetworkclass_read(
-    path: Path<ReadParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ClusterNetworkClass>, Box<StatusResponse>> {
     resource_handlers::read_resource::<ClusterNetworkClass>(&operator, None, path.into_inner().name)
         .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ClusterNetworkClassPatchPathParams {
-    name: String,
 }
 
 #[utoipa::path(
@@ -127,7 +111,7 @@ pub(super) struct ClusterNetworkClassPatchPathParams {
 )]
 #[patch("/api/v1/clusternetworkclasses/{name}/status")]
 pub(super) async fn handle_clusternetworkclass_status_patch(
-    path: Path<ClusterNetworkClassPatchPathParams>,
+    path: Path<ClusterNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ClusterNetworkClass>, Box<StatusResponse>> {
@@ -138,11 +122,6 @@ pub(super) async fn handle_clusternetworkclass_status_patch(
         patch.into_inner(),
     )
     .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ClusterNetworkClassStatusReplacePathParams {
-    name: String,
 }
 
 #[utoipa::path(
@@ -158,7 +137,7 @@ pub(super) struct ClusterNetworkClassStatusReplacePathParams {
 )]
 #[put("/api/v1/clusternetworkclasses/{name}/status")]
 pub(super) async fn handle_clusternetworkclass_status_replace(
-    path: Path<ClusterNetworkClassStatusReplacePathParams>,
+    path: Path<ClusterNamePathParams>,
     replacement: Json<ClusterNetworkClass>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ClusterNetworkClass>, Box<StatusResponse>> {

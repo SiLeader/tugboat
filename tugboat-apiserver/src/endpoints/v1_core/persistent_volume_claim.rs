@@ -15,13 +15,11 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, NamespacedPathParams};
+use crate::endpoints::{ListQuery, NamespacedNamePathParams, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::PersistentVolumeClaim;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -44,12 +42,6 @@ pub(super) async fn handle_persistent_volume_claim_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeClaimDeletePathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = PersistentVolumeClaim),
@@ -63,7 +55,7 @@ pub(super) struct PersistentVolumeClaimDeletePathParams {
     )]
 #[delete("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}")]
 pub(super) async fn handle_persistent_volume_claim_delete(
-    path: Path<PersistentVolumeClaimDeletePathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
     let params = path.into_inner();
@@ -123,12 +115,6 @@ pub(super) async fn handle_persistent_volume_claim_list_all(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeClaimReadPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = PersistentVolumeClaim),
@@ -142,7 +128,7 @@ pub(super) struct PersistentVolumeClaimReadPathParams {
     )]
 #[get("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}")]
 pub(super) async fn handle_persistent_volume_claim_read(
-    path: Path<PersistentVolumeClaimReadPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -152,12 +138,6 @@ pub(super) async fn handle_persistent_volume_claim_read(
         path.name,
     )
     .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeClaimReplacePathParams {
-    namespace: String,
-    name: String,
 }
 
 #[utoipa::path(
@@ -174,7 +154,7 @@ pub(super) struct PersistentVolumeClaimReplacePathParams {
     )]
 #[put("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}")]
 pub(super) async fn handle_persistent_volume_claim_replace(
-    path: Path<PersistentVolumeClaimReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<PersistentVolumeClaim>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
@@ -207,7 +187,7 @@ pub(super) async fn handle_persistent_volume_claim_replace(
     )]
 #[patch("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}")]
 pub(super) async fn handle_persistent_volume_claim_patch(
-    path: Path<PersistentVolumeClaimPatchPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
@@ -226,12 +206,6 @@ pub(super) async fn handle_persistent_volume_claim_patch(
     .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeClaimPatchPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource updated", body = PersistentVolumeClaim),
@@ -246,7 +220,7 @@ pub(super) struct PersistentVolumeClaimPatchPathParams {
     )]
 #[patch("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}/status")]
 pub(super) async fn handle_persistent_volume_claim_status_patch(
-    path: Path<PersistentVolumeClaimPatchPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<PersistentVolumeClaim>, Box<StatusResponse>> {
@@ -258,12 +232,6 @@ pub(super) async fn handle_persistent_volume_claim_status_patch(
         patch.into_inner(),
     )
     .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct PersistentVolumeClaimStatusReplacePathParams {
-    namespace: String,
-    name: String,
 }
 
 #[utoipa::path(
@@ -280,7 +248,7 @@ pub(super) struct PersistentVolumeClaimStatusReplacePathParams {
     )]
 #[put("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}/status")]
 pub(super) async fn handle_persistent_volume_claim_status_replace(
-    path: Path<PersistentVolumeClaimStatusReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<PersistentVolumeClaim>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<PersistentVolumeClaim>, Box<StatusResponse>> {

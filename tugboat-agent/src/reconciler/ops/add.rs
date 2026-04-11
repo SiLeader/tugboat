@@ -86,16 +86,7 @@ enum RecoveredRuntimeAction {
     CleanupFailedTarget,
 }
 
-fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
-    if let Some(existing) = conditions
-        .iter_mut()
-        .find(|existing| existing.status == condition.status)
-    {
-        *existing = condition;
-    } else {
-        conditions.push(condition);
-    }
-}
+use super::upsert_ship_condition;
 
 fn recovered_runtime_action(ship: &Ship, local_node_name: &str) -> RecoveredRuntimeAction {
     let Some(spec) = ship.spec.as_ref() else {

@@ -15,13 +15,11 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, NamespacedPathParams};
+use crate::endpoints::{ListQuery, NamespacedNamePathParams, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::apps::v1::Fleet;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -44,12 +42,6 @@ pub(super) async fn handle_fleet_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct FleetPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = Fleet),
@@ -63,7 +55,7 @@ pub(super) struct FleetPathParams {
     )]
 #[delete("/apis/apps/v1/namespaces/{namespace}/fleets/{name}")]
 pub(super) async fn handle_fleet_delete(
-    path: Path<FleetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Fleet>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -130,7 +122,7 @@ pub(super) async fn handle_fleet_list_all(
     )]
 #[get("/apis/apps/v1/namespaces/{namespace}/fleets/{name}")]
 pub(super) async fn handle_fleet_read(
-    path: Path<FleetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Fleet>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -151,7 +143,7 @@ pub(super) async fn handle_fleet_read(
     )]
 #[put("/apis/apps/v1/namespaces/{namespace}/fleets/{name}")]
 pub(super) async fn handle_fleet_replace(
-    path: Path<FleetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<Fleet>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Fleet>, Box<StatusResponse>> {
@@ -184,7 +176,7 @@ pub(super) async fn handle_fleet_replace(
     )]
 #[patch("/apis/apps/v1/namespaces/{namespace}/fleets/{name}")]
 pub(super) async fn handle_fleet_patch(
-    path: Path<FleetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Fleet>, Box<StatusResponse>> {
@@ -217,7 +209,7 @@ pub(super) async fn handle_fleet_patch(
     )]
 #[patch("/apis/apps/v1/namespaces/{namespace}/fleets/{name}/status")]
 pub(super) async fn handle_fleet_status_patch(
-    path: Path<FleetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Fleet>, Box<StatusResponse>> {
@@ -245,7 +237,7 @@ pub(super) async fn handle_fleet_status_patch(
     )]
 #[put("/apis/apps/v1/namespaces/{namespace}/fleets/{name}/status")]
 pub(super) async fn handle_fleet_status_replace(
-    path: Path<FleetPathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<Fleet>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Fleet>, Box<StatusResponse>> {

@@ -12,24 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cmd::qmp::{connect_qmp, execute_with_timeout};
 use crate::config::load_config;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
-use qapi::futures::QmpStreamTokio;
 use qapi::qmp::{
     MigrateSetParameters, MigrationCapability, MigrationCapabilityStatus, MigrationStatus,
     ZeroPageDetection, migrate_set_capabilities, migrate_set_parameters, migrate_start_postcopy,
     query_migrate,
 };
-use tokio::time::{Duration, Instant, sleep, timeout};
+use tokio::time::{Duration, Instant, sleep};
 use tugboat_vm_runtime_interface::migrate::VmMigrateRequest;
 
 const MAX_MIGRATION_BANDWIDTH_BYTES_PER_SEC: u64 = 1 << 30;
 const MIGRATION_DOWNTIME_LIMIT_MS: u64 = 300;
 const XBZRLE_CACHE_SIZE_BYTES: u64 = 64 << 20;
-const QMP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const QMP_NEGOTIATE_TIMEOUT: Duration = Duration::from_secs(5);
-const QMP_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const POSTCOPY_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const MIGRATION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -42,19 +39,9 @@ pub struct MigrateArgs {
 pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<()> {
     let req: VmMigrateRequest = load_config(args.config)?;
     crate::validate::validate_safe_id(&req.id, "vm id")?;
-    let stream = timeout(
-        QMP_CONNECT_TIMEOUT,
-        QmpStreamTokio::open_uds(config.get_uds_path(&req.id)),
-    )
-    .await
-    .map_err(|_| crate::Error::Qmp("Timed out connecting to QMP socket".to_string()))?
-    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let stream = stream.negotiate();
-    let stream = timeout(QMP_NEGOTIATE_TIMEOUT, stream)
-        .await
-        .map_err(|_| crate::Error::Qmp("Timed out negotiating QMP capabilities".to_string()))?
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let (qmp, _handle) = stream.spawn_tokio();
+    let (qmp, _handle) = connect_qmp(config.get_uds_path(&req.id))
+        .await?
+        .spawn_tokio();
 
     let mut capabilities = vec![
         MigrationCapabilityStatus {
@@ -77,16 +64,13 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
         });
     }
 
-    timeout(
-        QMP_COMMAND_TIMEOUT,
+    execute_with_timeout(
         qmp.execute(migrate_set_capabilities { capabilities }),
+        "Timed out setting migration capabilities",
     )
-    .await
-    .map_err(|_| crate::Error::Qmp("Timed out setting migration capabilities".to_string()))?
-    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    .await?;
 
-    timeout(
-        QMP_COMMAND_TIMEOUT,
+    execute_with_timeout(
         qmp.execute(migrate_set_parameters(MigrateSetParameters {
             max_bandwidth: Some(
                 req.max_bandwidth_bytes_per_sec
@@ -100,13 +84,11 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
             zero_page_detection: Some(ZeroPageDetection::legacy),
             ..Default::default()
         })),
+        "Timed out setting migration parameters",
     )
-    .await
-    .map_err(|_| crate::Error::Qmp("Timed out setting migration parameters".to_string()))?
-    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    .await?;
 
-    timeout(
-        QMP_COMMAND_TIMEOUT,
+    execute_with_timeout(
         qmp.execute(qapi::qmp::migrate {
             uri: Some(format!(
                 "tcp:{}:{}",
@@ -116,10 +98,9 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
             detach: None,
             resume: None,
         }),
+        "Timed out starting migration",
     )
-    .await
-    .map_err(|_| crate::Error::Qmp("Timed out starting migration".to_string()))?
-    .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    .await?;
 
     if req.postcopy_enabled {
         let deadline = Instant::now() + POSTCOPY_WAIT_TIMEOUT;
@@ -130,10 +111,11 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
                         .to_string(),
                 ));
             }
-            let info = timeout(QMP_COMMAND_TIMEOUT, qmp.execute(query_migrate {}))
-                .await
-                .map_err(|_| crate::Error::Qmp("Timed out querying migration status".to_string()))?
-                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+            let info = execute_with_timeout(
+                qmp.execute(query_migrate {}),
+                "Timed out querying migration status",
+            )
+            .await?;
             match info.status {
                 Some(MigrationStatus::active) => break,
                 Some(
@@ -145,10 +127,11 @@ pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<(
                 _ => sleep(MIGRATION_POLL_INTERVAL).await,
             }
         }
-        timeout(QMP_COMMAND_TIMEOUT, qmp.execute(migrate_start_postcopy {}))
-            .await
-            .map_err(|_| crate::Error::Qmp("Timed out starting postcopy migration".to_string()))?
-            .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+        execute_with_timeout(
+            qmp.execute(migrate_start_postcopy {}),
+            "Timed out starting postcopy migration",
+        )
+        .await?;
     }
 
     Ok(())

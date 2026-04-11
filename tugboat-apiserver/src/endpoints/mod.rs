@@ -58,6 +58,19 @@ struct NamespacedPathParams {
     namespace: String,
 }
 
+/// Shared path params for namespaced resources that require both namespace and name.
+#[derive(Deserialize, ToSchema)]
+struct NamespacedNamePathParams {
+    namespace: String,
+    name: String,
+}
+
+/// Shared path params for cluster-scoped resources that require only a name.
+#[derive(Deserialize, ToSchema)]
+struct ClusterNamePathParams {
+    name: String,
+}
+
 #[derive(Deserialize, Copy, Clone)]
 enum WatchOption {
     #[serde(rename = "true", alias = "True")]
