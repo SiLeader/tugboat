@@ -485,41 +485,56 @@ fn plan_node_drain(
             });
             continue;
         };
-
-        if target_node_name == node_name {
-            warnings.push(NodeDrainWarning {
-                ship: ship_key,
-                reason: "selected target node matched the drained node".to_string(),
-            });
-            continue;
+        match build_planned_migration(node_name, ship, &ship_key, target_node_name.clone()) {
+            Ok(migration) => {
+                started.push(migration);
+                shadow_ships.push(reserve_ship_on_target(ship, target_node_name));
+            }
+            Err(warning) => warnings.push(warning),
         }
-
-        let ship_namespace = ship
-            .object_meta
-            .as_ref()
-            .and_then(|meta| meta.namespace.clone())
-            .unwrap_or_else(|| "default".to_string());
-        let ship_name = ship
-            .object_meta
-            .as_ref()
-            .and_then(|meta| meta.name.clone())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        started.push(PlannedMigration {
-            ship_key: ship_key.clone(),
-            ship_namespace,
-            ship_name,
-            target_node_name: target_node_name.clone(),
-        });
-
-        let mut reserved = ship.clone();
-        let reserved_spec = reserved.spec.get_or_insert_with(Default::default);
-        reserved_spec.node_name = Some(target_node_name);
-        reserved_spec.target_node_name = None;
-        shadow_ships.push(reserved);
     }
 
     DrainPlan { started, warnings }
+}
+
+fn build_planned_migration(
+    drained_node_name: &str,
+    ship: &Ship,
+    ship_key: &str,
+    target_node_name: String,
+) -> Result<PlannedMigration, NodeDrainWarning> {
+    if target_node_name == drained_node_name {
+        return Err(NodeDrainWarning {
+            ship: ship_key.to_string(),
+            reason: "selected target node matched the drained node".to_string(),
+        });
+    }
+
+    let ship_namespace = ship
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.namespace.clone())
+        .unwrap_or_else(|| "default".to_string());
+    let ship_name = ship
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    Ok(PlannedMigration {
+        ship_key: ship_key.to_string(),
+        ship_namespace,
+        ship_name,
+        target_node_name,
+    })
+}
+
+fn reserve_ship_on_target(ship: &Ship, target_node_name: String) -> Ship {
+    let mut reserved = ship.clone();
+    let reserved_spec = reserved.spec.get_or_insert_with(Default::default);
+    reserved_spec.node_name = Some(target_node_name);
+    reserved_spec.target_node_name = None;
+    reserved
 }
 
 fn ensure_ship_supports_migration_storage(
