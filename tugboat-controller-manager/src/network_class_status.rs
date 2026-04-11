@@ -98,26 +98,28 @@ fn build_network_class_status(
     nodes: &[Node],
 ) -> NetworkClassStatus {
     let timestamp = Some(Time::now());
-    let Ok(required_plugins) = required_plugins(spec) else {
-        let reason = required_plugins(spec).unwrap_err();
-        return NetworkClassStatus {
-            conditions: vec![
-                NetworkClassCondition {
-                    r#type: "Accepted".to_string(),
-                    status: "False".to_string(),
-                    message: reason.clone(),
-                    timestamp,
-                },
-                NetworkClassCondition {
-                    r#type: "Ready".to_string(),
-                    status: "False".to_string(),
-                    message: reason,
-                    timestamp,
-                },
-            ],
-            ready_nodes: Vec::new(),
-            nodes_status: Vec::new(),
-        };
+    let required_plugins = match required_plugins(spec) {
+        Ok(required_plugins) => required_plugins,
+        Err(reason) => {
+            return NetworkClassStatus {
+                conditions: vec![
+                    NetworkClassCondition {
+                        r#type: "Accepted".to_string(),
+                        status: "False".to_string(),
+                        message: reason.clone(),
+                        timestamp,
+                    },
+                    NetworkClassCondition {
+                        r#type: "Ready".to_string(),
+                        status: "False".to_string(),
+                        message: reason,
+                        timestamp,
+                    },
+                ],
+                ready_nodes: Vec::new(),
+                nodes_status: Vec::new(),
+            };
+        }
     };
 
     let nodes_status = build_nodes_status(nodes, &required_plugins);
@@ -223,16 +225,16 @@ fn required_plugins(spec: Option<&NetworkClassSpec>) -> Result<Vec<&'static str>
     if plugin.eq_ignore_ascii_case("bridge") {
         Ok(vec!["bridge", "loopback"])
     } else if plugin.eq_ignore_ascii_case("flannel") {
-            let mut plugins = vec!["bridge", "flannel", "loopback"];
-            if spec
-                .flannel
-                .as_ref()
-                .and_then(|flannel| flannel.port_mappings)
-                .unwrap_or(false)
-            {
-                plugins.push("portmap");
-            }
-            Ok(plugins)
+        let mut plugins = vec!["bridge", "flannel", "loopback"];
+        if spec
+            .flannel
+            .as_ref()
+            .and_then(|flannel| flannel.port_mappings)
+            .unwrap_or(false)
+        {
+            plugins.push("portmap");
+        }
+        Ok(plugins)
     } else {
         Err(format!(
             "Unsupported cniPlugin '{}'. Supported values are bridge and flannel.",

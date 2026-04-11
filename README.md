@@ -277,7 +277,7 @@ For a manual multi-node validation flow:
 1. Install the required CNI binaries (`bridge`, `loopback`, `flannel`, and `portmap`
    when port mappings are enabled) on each node under the configured CNI bin directory.
 2. Bring up Flannel externally so each node has the expected runtime state
-   (by default `/run/flannel/subnet.env` and `/run/flannel`).
+  (by default `/run/flannel/subnet.env` and `/var/lib/cni/flannel`).
 3. Start `tugboat-agent` on each node and confirm `kubectl get node -o yaml`
    shows `status.cniPlugins` with the expected readiness.
 4. Apply a `ClusterNetworkClass` or `NetworkClass` using `cniPlugin: flannel`

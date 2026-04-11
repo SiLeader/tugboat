@@ -23,7 +23,7 @@ use tugboat_vm_runtime_interface::run::VmNetworkConfig;
 
 const CNI_VERSION: &str = "1.0.0";
 const DEFAULT_FLANNEL_SUBNET_FILE: &str = "/run/flannel/subnet.env";
-const DEFAULT_FLANNEL_DATA_DIR: &str = "/run/flannel";
+const DEFAULT_FLANNEL_DATA_DIR: &str = "/var/lib/cni/flannel";
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniWrapper {
@@ -398,7 +398,7 @@ mod tests {
             internet_access: Some(true),
             flannel: Some(FlannelNetworkClass {
                 subnet_file: "/run/flannel/subnet.env".to_string(),
-                data_dir: "/run/flannel".to_string(),
+                data_dir: "/var/lib/cni/flannel".to_string(),
                 hairpin_mode: Some(true),
                 default_gateway: Some(false),
                 port_mappings: Some(true),
@@ -421,7 +421,7 @@ mod tests {
                     hairpin_mode,
                 }),
             } if subnet_file.as_deref() == Some("/run/flannel/subnet.env")
-                && data_dir.as_deref() == Some("/run/flannel")
+                && data_dir.as_deref() == Some("/var/lib/cni/flannel")
                 && bridge.as_deref() == Some("br-test")
                 && *is_gateway == Some(false)
                 && *is_default_gateway == Some(false)
@@ -454,7 +454,7 @@ mod tests {
             cni_plugin: "flannel".to_string(),
             flannel: Some(FlannelNetworkClass {
                 subnet_file: " ".to_string(),
-                data_dir: "/run/flannel".to_string(),
+                data_dir: "/var/lib/cni/flannel".to_string(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -540,7 +540,7 @@ netns = "/tmp"
                     cni_plugin: "flannel".to_string(),
                     flannel: Some(FlannelNetworkClass {
                         subnet_file: "/run/flannel/subnet.env".to_string(),
-                        data_dir: "/run/flannel".to_string(),
+                        data_dir: "/var/lib/cni/flannel".to_string(),
                         ..Default::default()
                     }),
                     ..Default::default()

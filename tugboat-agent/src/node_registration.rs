@@ -35,7 +35,7 @@ const CGROUP_V1_CPU_PERIOD_PATH: &str = "/sys/fs/cgroup/cpu/cpu.cfs_period_us";
 const CGROUP_V1_MEMORY_LIMIT_PATH: &str = "/sys/fs/cgroup/memory/memory.limit_in_bytes";
 const CGROUP_V1_MEMORY_UNLIMITED_THRESHOLD: u64 = 1 << 60;
 const DEFAULT_FLANNEL_SUBNET_FILE: &str = "/run/flannel/subnet.env";
-const DEFAULT_FLANNEL_DATA_DIR: &str = "/run/flannel";
+const DEFAULT_FLANNEL_DATA_DIR: &str = "/var/lib/cni/flannel";
 const REQUIRED_CNI_PLUGINS: [&str; 2] = ["bridge", "loopback"];
 const OPTIONAL_CNI_PLUGINS: [&str; 2] = ["flannel", "portmap"];
 
