@@ -61,7 +61,7 @@ macro_rules! create_object {
                 Ok($crate::data::ModifyResponse::Created(data.apply_revision()))
             } else {
                 Err(Box::new(StatusResponse::conflict(
-                    "Specified name is already exists",
+                    "Specified name already exists",
                     None,
                 )))
             };
