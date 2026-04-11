@@ -362,7 +362,9 @@ fn probe_flannel_plugin(
     } else {
         false
     };
-    let ready = binary_ready && subnet_ready && subnet_content_ready && data_dir_ready;
+    // Flannel CNI can initialize without a pre-created data dir; requiring it
+    // here can incorrectly mark otherwise healthy nodes as not ready.
+    let ready = binary_ready && subnet_ready && subnet_content_ready;
 
     let mut missing = Vec::new();
     if !binary_ready {
@@ -376,19 +378,23 @@ fn probe_flannel_plugin(
             subnet_file.display()
         ));
     }
-    if !data_dir_ready {
-        missing.push(format!("data dir '{}'", data_dir.display()));
-    }
-
     Ok(NodeCniPluginStatus {
         name: "flannel".to_string(),
         ready: Some(ready),
         message: if ready {
-            format!(
-                "Found flannel plugin binary and runtime state ('{}', '{}').",
-                subnet_file.display(),
-                data_dir.display()
-            )
+            if data_dir_ready {
+                format!(
+                    "Found flannel plugin binary and runtime state ('{}', '{}').",
+                    subnet_file.display(),
+                    data_dir.display()
+                )
+            } else {
+                format!(
+                    "Found flannel plugin binary and subnet file '{}'; optional data dir '{}' is not present yet.",
+                    subnet_file.display(),
+                    data_dir.display()
+                )
+            }
         } else {
             format!("Missing flannel prerequisites: {}.", missing.join(", "))
         },
@@ -754,6 +760,32 @@ mod tests {
             .expect("flannel plugin should exist");
         assert_eq!(flannel.ready, Some(false));
         assert!(flannel.message.contains("FLANNEL_NETWORK CIDR"));
+
+        cleanup_test_dir(&base);
+    }
+
+    #[test]
+    fn build_node_status_allows_missing_flannel_data_dir() {
+        let base = test_dir("flannel-missing-data-dir");
+        let bin = base.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for plugin in ["bridge", "loopback", "flannel", "portmap"] {
+            std::fs::write(bin.join(plugin), "").unwrap();
+        }
+        let subnet = base.join("subnet.env");
+        let data_dir = base.join("flannel");
+        std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
+
+        let config = test_cni_config(&bin);
+        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+
+        let flannel = status
+            .cni_plugins
+            .iter()
+            .find(|plugin| plugin.name == "flannel")
+            .expect("flannel plugin should exist");
+        assert_eq!(flannel.ready, Some(true));
+        assert!(flannel.message.contains("optional data dir"));
 
         cleanup_test_dir(&base);
     }
