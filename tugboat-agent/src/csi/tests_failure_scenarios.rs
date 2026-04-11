@@ -35,12 +35,28 @@ mod tests {
         let error = CsiError::PublishPartialState {
             volume_id: "vol-123".to_string(),
             reason: "disk full".to_string(),
+            published: Box::new(PublishedVolume {
+                claim_name: "claim-1".to_string(),
+                driver: "driver.test".to_string(),
+                volume_id: "vol-123".to_string(),
+                target_path: "/tmp/target".to_string(),
+                access_type: PublishedAccessType::Filesystem,
+                mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+                staging_target_path: None,
+                controller_published: true,
+                pvc_name: Some("pvc-1".to_string()),
+            }),
         };
 
         match error {
-            CsiError::PublishPartialState { volume_id, reason } => {
+            CsiError::PublishPartialState {
+                volume_id,
+                reason,
+                published,
+            } => {
                 assert_eq!(volume_id, "vol-123");
                 assert_eq!(reason, "disk full");
+                assert_eq!(published.volume_id, "vol-123");
             }
             _ => panic!("Expected PublishPartialState error"),
         }

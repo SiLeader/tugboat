@@ -429,6 +429,7 @@ impl CsiWrapper {
             return Err(CsiError::PublishPartialState {
                 volume_id: published.volume_id.clone(),
                 reason: err.to_string(),
+                published: Box::new(published),
             });
         }
         Ok(published)

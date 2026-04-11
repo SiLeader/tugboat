@@ -636,7 +636,16 @@ impl ShipReconciler {
                     .await
                 {
                     Ok(published) => published,
-                    Err(crate::csi::CsiError::PublishPartialState { volume_id, reason }) => {
+                    Err(crate::csi::CsiError::PublishPartialState {
+                        volume_id,
+                        reason,
+                        published,
+                    }) => {
+                        guard
+                            .controller_publish_secrets
+                            .insert(volume.name.clone(), secrets.controller_publish.clone());
+                        guard.published_volumes.push(*published);
+
                         // Volume is mounted but state file write failed (disk full, permission denied, etc).
                         // Log this as a recoverable error - the volume IS accessible on the node.
                         // Next reconciliation will detect it and complete the setup.
