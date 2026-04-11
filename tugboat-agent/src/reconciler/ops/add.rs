@@ -168,7 +168,7 @@ impl<'a> VolumeSetupGuard<'a> {
         }
     }
 
-    async fn cancel(self, context: &str) {
+    async fn cancel(self, context: &str) -> Vec<String> {
         let cleanup_errors = self
             .reconciler
             .cleanup_after_volume_setup_error(
@@ -186,6 +186,7 @@ impl<'a> VolumeSetupGuard<'a> {
                 cleanup_errors.join("; ")
             );
         }
+        cleanup_errors
     }
 
     fn commit(self) -> Vec<PublishedVolume> {
@@ -592,7 +593,13 @@ impl ShipReconciler {
         match vm_volumes {
             Ok(vm_volumes) => Ok((guard.commit(), vm_volumes)),
             Err(err) => {
-                guard.cancel("volume setup error").await;
+                let cleanup_errors = guard.cancel("volume setup error").await;
+                if !cleanup_errors.is_empty() {
+                    return Err(ReconcileError::VolumeSetupCleanupFailed {
+                        original_error: Box::new(err),
+                        cleanup_errors: cleanup_errors.join("; "),
+                    });
+                }
                 Err(err)
             }
         }

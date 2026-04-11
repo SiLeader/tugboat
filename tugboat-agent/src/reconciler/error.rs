@@ -50,6 +50,11 @@ pub(crate) struct InvalidSecretVolumeDataError {
 
 #[derive(Debug, Error)]
 pub(crate) enum ReconcileError {
+    #[error("Failed to clean up CSI volumes after volume setup error (original error: {original_error}): {cleanup_errors}")]
+    VolumeSetupCleanupFailed {
+        original_error: Box<ReconcileError>,
+        cleanup_errors: String,
+    },
     #[error("API error: {0}")]
     Api(#[from] tugboat_client::Error),
     #[error("Field '{1}' in '{0}' is missing")]
