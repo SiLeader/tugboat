@@ -277,8 +277,8 @@ fn is_retryable_csi_cleanup_error(error: &tugboat_csi_operator::Error) -> bool {
     match error {
         tugboat_csi_operator::Error::RpcTimeout
         | tugboat_csi_operator::Error::SocketConnectionTimeout
-        | tugboat_csi_operator::Error::GrpcTransport(_)
-        | tugboat_csi_operator::Error::Grpc(_) => true,
+        | tugboat_csi_operator::Error::GrpcTransport(_) => true,
+        tugboat_csi_operator::Error::Grpc(_) => false,
         _ => false,
     }
 }
