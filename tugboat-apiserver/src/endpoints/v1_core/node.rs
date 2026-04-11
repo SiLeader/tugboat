@@ -523,11 +523,7 @@ fn build_planned_migration(
             });
         }
     };
-    let ship_name = match ship
-        .object_meta
-        .as_ref()
-        .and_then(|meta| meta.name.clone())
-    {
+    let ship_name = match ship.object_meta.as_ref().and_then(|meta| meta.name.clone()) {
         Some(name) => name,
         None => {
             return Err(NodeDrainWarning {

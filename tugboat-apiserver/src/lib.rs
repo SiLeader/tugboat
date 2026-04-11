@@ -196,16 +196,13 @@ async fn health_check() -> HttpResponse {
 
 fn build_tls_acceptor(tls: TlsConfig) -> Result<SslAcceptorBuilder, std::io::Error> {
     let mut builder = SslAcceptor::mozilla_modern_v5(SslMethod::tls_server())
-        .map_err(|e| std::io::Error::other(format!("Failed to create TLS acceptor: {e}")))?
-;
+        .map_err(|e| std::io::Error::other(format!("Failed to create TLS acceptor: {e}")))?;
     builder
         .set_private_key_file(tls.key_file, SslFiletype::PEM)
-        .map_err(|e| std::io::Error::other(format!("Failed to set TLS private key: {e}")))?
-;
+        .map_err(|e| std::io::Error::other(format!("Failed to set TLS private key: {e}")))?;
     builder
         .set_certificate_chain_file(tls.cert_file)
-        .map_err(|e| std::io::Error::other(format!("Failed to set TLS certificate chain: {e}")))?
-;
+        .map_err(|e| std::io::Error::other(format!("Failed to set TLS certificate chain: {e}")))?;
     if let Some(client_ca_file) = tls.client_cert_file {
         configure_client_certificate_auth(&mut builder, &client_ca_file)?;
     }
@@ -217,24 +214,20 @@ fn configure_client_certificate_auth(
     client_ca_file: &str,
 ) -> Result<(), std::io::Error> {
     let file = std::fs::read(client_ca_file)
-        .map_err(|e| std::io::Error::other(format!("Failed to read client CA file: {e}")))?
-;
+        .map_err(|e| std::io::Error::other(format!("Failed to read client CA file: {e}")))?;
     let certs = X509::stack_from_pem(file.as_slice())
-        .map_err(|e| std::io::Error::other(format!("Failed to parse client CA file: {e}")))?
-;
+        .map_err(|e| std::io::Error::other(format!("Failed to parse client CA file: {e}")))?;
     // set_ca_file sets the trust store used to verify the client certificate chain.
     builder
         .set_ca_file(client_ca_file)
-        .map_err(|e| std::io::Error::other(format!("Failed to set client CA file: {e}")))?
-;
+        .map_err(|e| std::io::Error::other(format!("Failed to set client CA file: {e}")))?;
     // add_client_ca populates the list of acceptable CAs sent to the client
     // in the TLS CertificateRequest message, allowing it to select the right
     // certificate to present. Both calls are needed for full mTLS support.
     for cert in certs {
         builder
             .add_client_ca(cert.as_ref())
-            .map_err(|e| std::io::Error::other(format!("Failed to add client CA: {e}")))?
-;
+            .map_err(|e| std::io::Error::other(format!("Failed to add client CA: {e}")))?;
     }
     // Require a client certificate; connections without one are rejected at the
     // TLS handshake level. This makes bearer-token auth incompatible with mTLS

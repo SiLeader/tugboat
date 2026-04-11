@@ -162,7 +162,7 @@ pub(super) async fn handle_fleet_replace(
         path.name,
         replacement.into_inner(),
         ReplaceOptions {
-            preserve_status: false,
+            preserve_status: true,
             use_client_resource_version: true,
             update_generation: true,
         },
@@ -195,7 +195,7 @@ pub(super) async fn handle_fleet_patch(
         path.name,
         patch.into_inner(),
         ReplaceOptions {
-            preserve_status: false,
+            preserve_status: true,
             use_client_resource_version: true,
             update_generation: true,
         },

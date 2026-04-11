@@ -223,6 +223,8 @@ const WORKLOAD_OPS: ResourceOperations = ResourceOperations {
     patch: true,
     update: true,
     delete: true,
+    status_patch: true,
+    status_update: true,
     ..NAMESPACED_DEFAULT_OPS
 };
 
