@@ -140,6 +140,21 @@ fn replicaset_has_template_hash(rs: &ReplicaSet, hash: &str) -> bool {
             .is_some_and(|value| value == hash)
 }
 
+fn deployment_template(dep: &Deployment) -> Result<&ShipTemplateSpec, ControllerError> {
+    let namespace = dep.namespace().unwrap_or_default().to_string();
+    let name = dep.name().unwrap_or_default().to_string();
+
+    dep.spec
+        .as_ref()
+        .ok_or_else(|| ControllerError::MissingDeploymentSpec {
+            namespace: namespace.clone(),
+            name: name.clone(),
+        })?
+        .ship_template
+        .as_ref()
+        .ok_or(ControllerError::MissingDeploymentTemplate { namespace, name })
+}
+
 fn build_replicaset_with_replicas(
     dep: &Deployment,
     hash: &str,
@@ -449,13 +464,8 @@ impl DeploymentReconciler {
         managed_replicasets: &[&ReplicaSet],
         initial_replicas: Option<i32>,
     ) -> Result<Option<ReplicaSet>, ControllerError> {
-        let dep_template = dep
-            .spec
-            .as_ref()
-            .and_then(|spec| spec.ship_template.as_ref())
-            .cloned()
-            .unwrap_or_default();
-        let hash = template_hash(&dep_template);
+        let dep_template = deployment_template(dep)?;
+        let hash = template_hash(dep_template);
 
         if let Some(existing_rs) = managed_replicasets
             .iter()
@@ -821,7 +831,7 @@ impl DeploymentReconciler {
                 namespace: namespace.to_string(),
                 name: dep_name,
             })?;
-        let dep_template = dep_spec.ship_template.clone().unwrap_or_default();
+        let dep_template = deployment_template(&dep)?.clone();
         let runtime_class = self.resolve_runtime_class(&dep_template).await?;
 
         let rs_api: Api<ReplicaSet> = Api::namespaced(self.client.clone(), namespace);
@@ -918,13 +928,14 @@ impl Reconciler<Deployment> for DeploymentReconciler {
 mod tests {
     use super::{
         REPLICASET_UPDATE_STRATEGY_ALL, REPLICASET_UPDATE_STRATEGY_ANNOTATION, active_replicaset,
-        build_deployment_status, build_replicaset, has_old_running_replicas,
+        build_deployment_status, build_replicaset, deployment_template, has_old_running_replicas,
         is_owned_by_deployment, managed_replicasets, next_rolling_update_rotation_targets,
         old_replicasets, owner_reference_for_deployment, replicaset_has_template_hash,
         replicaset_ready_replicas, revision_history_limit, rolling_update_limits,
         set_in_place_update_strategy, stale_replicasets_for_cleanup, template_hash,
         update_replicaset_for_in_place, update_replicaset_replicas,
     };
+    use crate::error::ControllerError;
     use tugboat_resources::ObjectMetaResource;
     use tugboat_resources::manifests::apps::v1::{
         Deployment, DeploymentSpec, DeploymentStatus, DeploymentStrategy, ReplicaSet,
@@ -1061,6 +1072,19 @@ mod tests {
         let rs = super::build_replicaset_with_replicas(&dep, &hash, Some(0));
 
         assert_eq!(rs.spec.as_ref().unwrap().replicas, Some(0));
+    }
+
+    #[test]
+    fn deployment_template_returns_error_when_missing() {
+        let mut dep = deployment();
+        dep.spec.as_mut().unwrap().ship_template = None;
+
+        let result = deployment_template(&dep);
+
+        assert!(matches!(
+            result,
+            Err(ControllerError::MissingDeploymentTemplate { .. })
+        ));
     }
 
     #[test]
