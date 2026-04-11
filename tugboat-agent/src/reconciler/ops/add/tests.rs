@@ -211,3 +211,4 @@ fn recovered_volumes_accept_volume_id_match_with_different_metadata() {
 
     assert_eq!(recovered, vec![persisted]);
 }
+

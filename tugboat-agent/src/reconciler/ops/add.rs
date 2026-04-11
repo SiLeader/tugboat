@@ -975,6 +975,7 @@ mod tests {
     };
     use crate::csi::{PublishedAccessType, PublishedVolume};
     use crate::reconciler::error::ReconcileError;
+    use crate::reconciler::ops::add_helpers::validate_recovered_published_volumes;
     use crate::reconciler::ops::{PHASE_COMPLETED, PHASE_FAILED, PHASE_PENDING, PHASE_READY};
     use std::collections::HashMap;
     use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
@@ -1194,5 +1195,73 @@ mod tests {
             .expect("volume id fallback should recover entry");
 
         assert_eq!(found.claim_name, "legacy-data");
+    }
+
+    fn test_volume(target_path: &str, volume_id: &str) -> PublishedVolume {
+        PublishedVolume {
+            claim_name: "data".to_string(),
+            driver: "example.csi".to_string(),
+            volume_id: volume_id.to_string(),
+            target_path: target_path.to_string(),
+            access_type: PublishedAccessType::Filesystem,
+            mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
+            staging_target_path: Some(format!("{target_path}.staging")),
+            controller_published: true,
+            pvc_name: Some("data-pvc".to_string()),
+        }
+    }
+
+    #[test]
+    fn recovered_validation_rejects_duplicate_volume_ids_in_planned_state() {
+        let persisted = vec![test_volume(
+            "/var/lib/tugboat-agent/csi/ship-uid/current.fs",
+            "persisted-volume-id",
+        )];
+        let planned = vec![
+            test_volume(
+                "/var/lib/tugboat-agent/csi/ship-uid/new-a.fs",
+                "shared-volume-id",
+            ),
+            test_volume(
+                "/var/lib/tugboat-agent/csi/ship-uid/new-b.fs",
+                "shared-volume-id",
+            ),
+        ];
+
+        let err = validate_recovered_published_volumes("ship-uid", persisted, &planned)
+            .expect_err("duplicate planned volume ids should fail fallback recovery");
+
+        assert!(matches!(
+            err,
+            ReconcileError::RecoveredPublishedVolumeStateMismatch(ship)
+            if ship == "ship-uid"
+        ));
+    }
+
+    #[test]
+    fn recovered_validation_rejects_duplicate_volume_ids_in_persisted_state() {
+        let persisted = vec![
+            test_volume(
+                "/var/lib/tugboat-agent/csi/ship-uid/old-a.fs",
+                "shared-volume-id",
+            ),
+            test_volume(
+                "/var/lib/tugboat-agent/csi/ship-uid/old-b.fs",
+                "shared-volume-id",
+            ),
+        ];
+        let planned = vec![test_volume(
+            "/var/lib/tugboat-agent/csi/ship-uid/new.fs",
+            "shared-volume-id",
+        )];
+
+        let err = validate_recovered_published_volumes("ship-uid", persisted, &planned)
+            .expect_err("duplicate persisted volume ids should fail fallback recovery");
+
+        assert!(matches!(
+            err,
+            ReconcileError::RecoveredPublishedVolumeStateMismatch(ship)
+            if ship == "ship-uid"
+        ));
     }
 }
