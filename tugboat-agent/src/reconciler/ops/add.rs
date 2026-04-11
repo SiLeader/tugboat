@@ -154,7 +154,8 @@ impl<'a> VolumeSetupGuard<'a> {
     }
 
     async fn cancel(self, context: &str) {
-        self.reconciler
+        let cleanup_errors = self
+            .reconciler
             .cleanup_after_volume_setup_error(
                 self.ship_id,
                 &self.published_volumes,
@@ -162,6 +163,14 @@ impl<'a> VolumeSetupGuard<'a> {
                 context,
             )
             .await;
+        if !cleanup_errors.is_empty() {
+            error!(
+                "Cleanup after {} for ship '{}' completed with errors: {}",
+                context,
+                self.ship_id,
+                cleanup_errors.join("; ")
+            );
+        }
     }
 
     fn commit(self) -> Vec<PublishedVolume> {
@@ -655,19 +664,24 @@ impl ShipReconciler {
         cleanup_targets: &[PublishedVolume],
         controller_publish_secrets: &HashMap<String, HashMap<String, String>>,
         context: &str,
-    ) {
+    ) -> Vec<String> {
+        let mut cleanup_errors = Vec::new();
         if let Err(cleanup_err) = self
             .cleanup_published_volumes(cleanup_targets, controller_publish_secrets)
             .await
         {
             error!("Failed to clean up published volumes after {context}: {cleanup_err}");
+            cleanup_errors.push(format!("published volumes: {cleanup_err}"));
         }
         if let Err(cleanup_err) = self.cleanup_materialized_volumes(ship_id) {
             error!("Failed to clean up materialized volumes after {context}: {cleanup_err}");
+            cleanup_errors.push(format!("materialized volumes: {cleanup_err}"));
         }
         if let Err(cleanup_err) = self.csi.cleanup_mount_namespace(ship_id) {
             error!("Failed to clean up mount namespace after {context}: {cleanup_err}");
+            cleanup_errors.push(format!("mount namespace: {cleanup_err}"));
         }
+        cleanup_errors
     }
 
     async fn plan_desired_published_volumes(

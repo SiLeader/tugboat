@@ -459,7 +459,14 @@ impl CsiWrapper {
             })
             .await
         {
-            Ok(()) | Err(CsiError::Driver(tugboat_csi_operator::Error::TargetPathNotFound)) => {}
+            Ok(()) => {}
+            Err(CsiError::Driver(tugboat_csi_operator::Error::TargetPathNotFound)) => {
+                tracing::warn!(
+                    "CSI reported target path not found during unpublish (volume_id='{}', path='{}'); treating as idempotent cleanup",
+                    volume.volume_id,
+                    volume.target_path
+                );
+            }
             Err(err) => return Err(err),
         }
 
@@ -489,7 +496,13 @@ impl CsiWrapper {
                 })
                 .await
             {
-                Ok(()) | Err(CsiError::Driver(tugboat_csi_operator::Error::TargetPathNotFound)) => {
+                Ok(()) => {}
+                Err(CsiError::Driver(tugboat_csi_operator::Error::TargetPathNotFound)) => {
+                    tracing::warn!(
+                        "CSI reported staging path not found during unstage (volume_id='{}', staging_path='{}'); treating as idempotent cleanup",
+                        volume.volume_id,
+                        staging_target_path
+                    );
                 }
                 Err(err) => return Err(err),
             }
@@ -683,20 +696,33 @@ impl CsiWrapper {
         if planned.is_empty() {
             return Ok(None);
         }
-        if !planned
-            .iter()
-            .all(|volume| self.looks_like_partially_published_volume(volume))
-        {
-            return Ok(None);
-        }
-
+        let mut write_plan = Vec::with_capacity(planned.len());
         for volume in planned {
-            self.persist_published_volume(volume, ship_id).await?;
+            write_plan.push((self.state_path_for_volume(volume)?, volume.clone()));
         }
 
-        let mut recovered = planned.to_vec();
-        recovered.sort_by(|left, right| left.target_path.cmp(&right.target_path));
-        Ok(Some(recovered))
+        let state_manager = self.state_manager.clone();
+        state_manager
+            .with_lock(ship_id, move || {
+                if !write_plan
+                    .iter()
+                    .all(|(_, volume)| Self::looks_like_partially_published_volume(volume))
+                {
+                    return Ok(None);
+                }
+
+                for (path, volume) in &write_plan {
+                    state_manager::atomic_write_json(path, volume)?;
+                }
+
+                let mut recovered = write_plan
+                    .into_iter()
+                    .map(|(_, volume)| volume)
+                    .collect::<Vec<_>>();
+                recovered.sort_by(|left, right| left.target_path.cmp(&right.target_path));
+                Ok(Some(recovered))
+            })
+            .await
     }
 
     async fn rollback_published_volume(
@@ -793,7 +819,7 @@ impl CsiWrapper {
         Ok(parent.join(format!("{}.json", stem.to_string_lossy())))
     }
 
-    fn looks_like_partially_published_volume(&self, volume: &PublishedVolume) -> bool {
+    fn looks_like_partially_published_volume(volume: &PublishedVolume) -> bool {
         let target_path = Path::new(&volume.target_path);
         let target_exists = match volume.access_type {
             PublishedAccessType::Block => target_path.is_file(),

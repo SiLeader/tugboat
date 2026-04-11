@@ -311,14 +311,17 @@ impl TugboatCsiOperator {
         socket_path: &str,
     ) -> Result<Vec<NodeCapability>, error::Error> {
         let mut client = connect_node_client(socket_path).await?;
-        let response = timeout(
+        let response = match timeout(
             RPC_CALL_TIMEOUT,
             client.node_get_capabilities(NodeGetCapabilitiesRequest {}),
         )
         .await
         .map_err(|_| error::Error::RpcTimeout)?
-        .map_err(map_grpc_error)?
-        .into_inner();
+        {
+            Ok(response) => response.into_inner(),
+            Err(status) if status.code() == Code::Unimplemented => return Ok(Vec::new()),
+            Err(status) => return Err(map_grpc_error(status)),
+        };
 
         Ok(response
             .capabilities

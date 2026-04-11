@@ -154,7 +154,7 @@ impl PvcProvisionerReconciler {
             );
             return Ok(self.requeue_action());
         } else {
-            let provisioned_volume = self
+            let provisioned_volume = match self
                 .csi_operator
                 .create_volume(
                     &provisioner_config.socket_path,
@@ -166,7 +166,34 @@ impl PvcProvisionerReconciler {
                     controller_create_secrets.clone(),
                     csi_config.mount_options.clone(),
                 )
-                .await?;
+                .await
+            {
+                Ok(volume) => volume,
+                Err(tugboat_csi_operator::Error::VolumeAlreadyExists) => {
+                    let Some(existing) = pv_api.get(&pv_name).await? else {
+                        tracing::warn!(
+                            "CSI volume for PersistentVolume '{}' already exists but API object is not visible yet; requeueing",
+                            pv_name
+                        );
+                        return Ok(self.requeue_action());
+                    };
+                    if !existing_pv_matches_claim(
+                        &existing,
+                        &namespace,
+                        &name,
+                        &storage_class_name,
+                    )? {
+                        return Err(ControllerError::ExistingVolumeConflict {
+                            name: pv_name.clone(),
+                            namespace: namespace.clone(),
+                            claim: name.clone(),
+                        });
+                    }
+                    // Another reconciler already provisioned this volume/PV pair.
+                    return Ok(self.requeue_action());
+                }
+                Err(err) => return Err(err.into()),
+            };
             let volume_id = provisioned_volume.volume_id.clone();
             provisioned_volume_id = Some(volume_id.clone());
 

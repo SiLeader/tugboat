@@ -554,6 +554,70 @@ async fn can_recover_partial_published_volume_state_from_existing_paths() {
     assert_eq!(persisted, vec![volume]);
 }
 
+#[tokio::test]
+async fn partial_recovery_is_serialized_for_same_ship() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir should be created");
+    let wrapper = CsiWrapper::new(
+        TugboatCsiOperator::default(),
+        CsiDrivers::default(),
+        temp_dir.path(),
+    );
+    let mount_namespace_path = temp_dir.path().join("mntns").join("ship-uid");
+    std::fs::create_dir_all(&mount_namespace_path).expect("mount namespace path should exist");
+    let staging_target_path = temp_dir
+        .path()
+        .join("ship-uid")
+        .join(".staging")
+        .join("data");
+    let volume = PublishedVolume {
+        claim_name: "data".to_string(),
+        driver: "example.csi".to_string(),
+        volume_id: "volume-1".to_string(),
+        target_path: temp_dir
+            .path()
+            .join("ship-uid")
+            .join("data.fs")
+            .display()
+            .to_string(),
+        access_type: PublishedAccessType::Filesystem,
+        mount_namespace_path: mount_namespace_path.display().to_string(),
+        staging_target_path: Some(staging_target_path.display().to_string()),
+        controller_published: true,
+        pvc_name: Some("data-pvc".to_string()),
+    };
+
+    prepare_target_path(&volume.target_path, volume.access_type)
+        .expect("publish target should be created");
+    prepare_directory_path(
+        volume
+            .staging_target_path
+            .as_deref()
+            .expect("staging path should exist"),
+    )
+    .expect("staging path should be created");
+
+    let (left, right) = tokio::join!(
+        wrapper.recover_partial_published_volume_state("ship-uid", std::slice::from_ref(&volume)),
+        wrapper.recover_partial_published_volume_state("ship-uid", std::slice::from_ref(&volume))
+    );
+
+    let left = left
+        .expect("left recovery should succeed")
+        .expect("left recovery should detect partial publish state");
+    let right = right
+        .expect("right recovery should succeed")
+        .expect("right recovery should detect partial publish state");
+
+    assert_eq!(left, vec![volume.clone()]);
+    assert_eq!(right, vec![volume.clone()]);
+
+    let persisted = wrapper
+        .load_published_volumes("ship-uid")
+        .await
+        .expect("recovered state should be persisted");
+    assert_eq!(persisted, vec![volume]);
+}
+
 #[test]
 fn classifies_retryable_driver_errors() {
     assert!(is_retryable_driver_error(

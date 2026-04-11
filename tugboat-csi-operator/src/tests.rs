@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
 use tokio::time::{Duration, sleep};
 use tokio_stream::wrappers::UnixListenerStream;
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 
 #[derive(Debug, Clone)]
 enum RecordedCall {
@@ -50,6 +50,7 @@ struct FakeNodeService {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     volume_stats_response: NodeGetVolumeStatsResponse,
     publish_delay: Option<Duration>,
+    node_capabilities_error: Option<Code>,
 }
 
 #[tonic::async_trait]
@@ -105,6 +106,9 @@ impl Node for FakeNodeService {
         &self,
         _request: Request<NodeGetCapabilitiesRequest>,
     ) -> Result<Response<NodeGetCapabilitiesResponse>, Status> {
+        if let Some(code) = self.node_capabilities_error {
+            return Err(Status::new(code, "injected failure"));
+        }
         Ok(Response::new(NodeGetCapabilitiesResponse::default()))
     }
 
@@ -143,6 +147,7 @@ impl Node for FakeNodeService {
 async fn spawn_node_server_with_volume_stats(
     volume_stats_response: NodeGetVolumeStatsResponse,
     publish_delay: Option<Duration>,
+    node_capabilities_error: Option<Code>,
 ) -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
     let socket_path = std::env::temp_dir().join(format!(
         "tugboat-csi-operator-{}.sock",
@@ -159,6 +164,7 @@ async fn spawn_node_server_with_volume_stats(
         calls: calls.clone(),
         volume_stats_response,
         publish_delay,
+        node_capabilities_error,
     };
     tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -172,7 +178,7 @@ async fn spawn_node_server_with_volume_stats(
 }
 
 async fn spawn_node_server() -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
-    spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse::default(), None).await
+    spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse::default(), None, None).await
 }
 
 #[test]
@@ -326,6 +332,7 @@ async fn can_query_volume_stats_over_uds() {
             }),
         },
         None,
+        None,
     )
     .await;
 
@@ -379,6 +386,7 @@ async fn publish_times_out_when_driver_stalls() {
     let (socket_path, _calls) = spawn_node_server_with_volume_stats(
         NodeGetVolumeStatsResponse::default(),
         Some(Duration::from_secs(1)),
+        None,
     )
     .await;
 
@@ -486,4 +494,22 @@ async fn can_expand_volume_over_uds() {
             .map(|range| range.required_bytes),
         Some(4096)
     );
+}
+
+#[tokio::test]
+async fn node_capabilities_returns_empty_on_unimplemented() {
+    let operator = TugboatCsiOperator::default();
+    let (socket_path, _calls) = spawn_node_server_with_volume_stats(
+        NodeGetVolumeStatsResponse::default(),
+        None,
+        Some(Code::Unimplemented),
+    )
+    .await;
+
+    let capabilities = operator
+        .node_capabilities(&socket_path)
+        .await
+        .expect("unimplemented node capabilities should be treated as empty");
+
+    assert!(capabilities.is_empty());
 }
