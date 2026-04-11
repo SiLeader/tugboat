@@ -16,13 +16,13 @@ use serde::de::DeserializeOwned;
 use std::fs::File;
 use tracing::debug;
 
-pub(crate) fn load_config_or_panic<T: DeserializeOwned>(path: String) -> T {
+pub(crate) fn load_config<T: DeserializeOwned>(path: String) -> crate::Result<T> {
     if path == "-" {
         debug!("Loading configuration from stdin");
-        serde_json::from_reader(std::io::stdin())
+        serde_json::from_reader(std::io::stdin()).map_err(crate::Error::from)
     } else {
         debug!("Loading configuration from '{path}'");
-        serde_json::from_reader(File::open(path).expect("Cannot open config file"))
+        let file = File::open(path)?;
+        serde_json::from_reader(file).map_err(crate::Error::from)
     }
-    .expect("Failed to parse VM config file as TOML")
 }

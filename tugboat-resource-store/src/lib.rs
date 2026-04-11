@@ -74,11 +74,19 @@ impl ResourceStore {
             info!("Resource metadata.name is missing");
             return Err(Error::FieldMissing("metadata.name".to_string()));
         };
-        let expected_revision = meta
-            .resource_version
-            .as_ref()
-            .and_then(|v| v.parse::<i64>().ok());
-        let key = Self::create_key::<T>(meta.namespace.clone(), name);
+        let expected_revision = match meta.resource_version.as_ref() {
+            Some(value) => {
+                let parsed = value.parse::<i64>().map_err(|_| {
+                    Error::InvalidField(
+                        "metadata.resourceVersion".to_string(),
+                        "must be a valid integer".to_string(),
+                    )
+                })?;
+                Some(parsed)
+            }
+            None => None,
+        };
+        let key = Self::create_key::<T>(meta.namespace.clone(), name)?;
         let bytes = value.serialize()?;
         debug!(
             "Prepared put request key = {key}, value = {} bytes",
@@ -101,12 +109,27 @@ impl ResourceStore {
         })
     }
 
-    fn create_key<T: StaticResource>(namespace: Option<String>, name: &str) -> String {
+    fn create_key<T: StaticResource>(
+        namespace: Option<String>,
+        name: &str,
+    ) -> Result<String, Error> {
         if T::is_cluster_scoped() {
-            format!("{BASE_PATH}/{}/{}/{}", T::group(), T::plural(), name)
+            Ok(format!(
+                "{BASE_PATH}/{}/{}/{}",
+                T::group(),
+                T::plural(),
+                name
+            ))
         } else {
-            let ns = namespace.unwrap_or("default".to_string());
-            format!("{BASE_PATH}/{}/{}/{}/{}", T::group(), T::plural(), ns, name)
+            let ns =
+                namespace.ok_or_else(|| Error::FieldMissing("metadata.namespace".to_string()))?;
+            Ok(format!(
+                "{BASE_PATH}/{}/{}/{}/{}",
+                T::group(),
+                T::plural(),
+                ns,
+                name
+            ))
         }
     }
 
@@ -204,7 +227,7 @@ impl ResourceStore {
             info!("Resource metadata.name is missing");
             return Err(Error::FieldMissing("metadata.name".to_string()));
         };
-        let key = Self::create_key::<T>(meta.namespace.clone(), name);
+        let key = Self::create_key::<T>(meta.namespace.clone(), name)?;
         let bytes = value.serialize()?;
         debug!(
             "Put resource (if not exists) key = {key}, value = {} bytes",
@@ -239,7 +262,7 @@ impl ResourceStore {
         namespace: Option<String>,
         name: &str,
     ) -> Result<Option<ContentData<T>>, Error> {
-        let key = Self::create_key::<T>(namespace, name);
+        let key = Self::create_key::<T>(namespace, name)?;
         info!("Get resource: key = {key}");
 
         let mut client = self.etcd.clone();
@@ -295,7 +318,7 @@ impl ResourceStore {
         namespace: Option<String>,
         name: &str,
     ) -> Result<Option<ContentData<T>>, Error> {
-        let key = Self::create_key::<T>(namespace, name);
+        let key = Self::create_key::<T>(namespace, name)?;
         info!("Delete resource: key = {key}");
 
         let mut client = self.etcd.clone();

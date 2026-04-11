@@ -100,7 +100,7 @@ impl RunVm for QemuVm<'_> {
             .qemu_args_with_arg_if(self.args.uefi.enabled, &self.config.uefi, &self)
             .debug_command()
             .exec();
-        panic!("Cannot exec: {err}");
+        Err(crate::Error::Io(err))
     }
 }
 

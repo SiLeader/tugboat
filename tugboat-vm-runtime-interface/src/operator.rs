@@ -167,12 +167,10 @@ impl VmRuntimeOperator {
 async fn kill_impl(mut child: Child) -> Result<(), Error> {
     debug!("Killing child: pid: {}", child.id().unwrap_or_default());
     child.kill().await?;
-    tokio::spawn(async move {
-        debug!("Waiting child: pid: {}", child.id().unwrap_or_default());
-        if let Err(e) = child.wait().await {
-            error!("Cannot wait child: {e}");
-        }
-    });
+    debug!("Waiting child: pid: {}", child.id().unwrap_or_default());
+    if let Err(e) = child.wait().await {
+        error!("Cannot wait child: {e}");
+    }
     Ok(())
 }
 

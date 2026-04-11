@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::load_config_or_panic;
+use crate::config::load_config;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use serde_json::{Map, Value, json};
@@ -114,7 +114,7 @@ async fn execute_rollback(qmp: &mut QmpClient, actions: Vec<HotplugRollback>) {
 }
 
 pub async fn run(config: QemuVmConfig, args: HotplugArgs) -> crate::Result<()> {
-    let req: VmHotplugRequest = load_config_or_panic(args.config);
+    let req: VmHotplugRequest = load_config(args.config)?;
     crate::validate::validate_safe_id(&req.id, "vm id")?;
     let mut qmp = QmpClient::connect(config.get_uds_path(&req.id)).await?;
 

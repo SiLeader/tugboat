@@ -114,6 +114,12 @@ impl From<tugboat_resource_store::error::Error> for StatusResponse {
             tugboat_resource_store::error::Error::FieldMissing(_) => {
                 StatusResponse::bad_request("Missing required field", None)
             }
+            tugboat_resource_store::error::Error::InvalidField(field, reason) => {
+                StatusResponse::bad_request(
+                    "Invalid field value",
+                    Some(serde_json::json!({"field": field, "reason": reason})),
+                )
+            }
             tugboat_resource_store::error::Error::Etcd(_) => {
                 StatusResponse::internal_error("Etcd access error", None)
             }

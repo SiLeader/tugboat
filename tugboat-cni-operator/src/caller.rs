@@ -13,7 +13,10 @@
 // limitations under the License.
 
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::time::{Duration, timeout};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniCaller {
@@ -22,6 +25,8 @@ pub(crate) struct CniCaller {
 }
 
 impl CniCaller {
+    const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
     pub(crate) fn new(bin_path: impl AsRef<Path>, net_ns_base_path: impl AsRef<Path>) -> Self {
         Self {
             bin_path: bin_path.as_ref().to_path_buf(),
@@ -46,23 +51,59 @@ impl CniCaller {
         }
         println!("===== END DUMP NETNS DIR =====");
 
-        let child = Command::new(self.bin_path.join(cni_type))
+        let mut child = Command::new(self.bin_path.join(cni_type))
             .env("CNI_COMMAND", command)
             .env("CNI_CONTAINERID", id)
             .env("CNI_NETNS", self.net_ns_base_path.join(id))
             .env("CNI_IFNAME", iface_name)
             .env("CNI_PATH", &self.bin_path)
             .stdin(file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()?;
 
-        let output = child.wait_with_output().await?;
-        if output.status.success() {
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| crate::Error::InvalidConfiguration("stdout is not piped".to_string()))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| crate::Error::InvalidConfiguration("stderr is not piped".to_string()))?;
+
+        let stdout_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            let _ = stdout.read_to_end(&mut bytes).await;
+            bytes
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            let _ = stderr.read_to_end(&mut bytes).await;
+            bytes
+        });
+
+        let status = match timeout(Self::COMMAND_TIMEOUT, child.wait()).await {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => return Err(crate::Error::Io(e)),
+            Err(_) => {
+                let _ = child.kill().await;
+                return Err(crate::Error::CommandTimeout(format!(
+                    "{} {}",
+                    cni_type, command
+                )));
+            }
+        };
+
+        let stdout = stdout_task.await.unwrap_or_default();
+        let stderr = stderr_task.await.unwrap_or_default();
+
+        if status.success() {
             Ok(())
         } else {
             Err(crate::Error::CommandFailed(
-                output.status,
-                String::from_utf8_lossy(&output.stdout).to_string(),
-                String::from_utf8_lossy(&output.stderr).to_string(),
+                status,
+                String::from_utf8_lossy(&stdout).to_string(),
+                String::from_utf8_lossy(&stderr).to_string(),
             ))
         }
     }
