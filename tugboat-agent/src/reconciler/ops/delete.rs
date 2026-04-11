@@ -83,20 +83,23 @@ impl ShipReconciler {
         let cleanup_result = self
             .cleanup_published_volumes_best_effort(&published_volumes, &controller_publish_secrets)
             .await;
-        // Always attempt to clear the attachment status regardless of whether CSI
-        // unpublish succeeded.  A previous cancelled reconcile may have already
-        // completed the CSI teardown, causing cleanup_published_volumes to fail,
-        // while the PV status still shows an attached node.
-        for volume in &volumes {
-            let Some(volume) = volume.persistent_volume_claim() else {
-                continue;
-            };
-            if let Err(err) = self.mark_volume_attached(&volume.volume_name, false).await {
-                warn!(
-                    "Failed to clear attachment status for PersistentVolume '{}': {}",
-                    volume.volume_name, err
-                );
+        if cleanup_result.is_ok() {
+            for volume in &volumes {
+                let Some(volume) = volume.persistent_volume_claim() else {
+                    continue;
+                };
+                if let Err(err) = self.mark_volume_attached(&volume.volume_name, false).await {
+                    warn!(
+                        "Failed to clear attachment status for PersistentVolume '{}': {}",
+                        volume.volume_name, err
+                    );
+                }
             }
+        } else {
+            warn!(
+                "Skipping PersistentVolume attachment status clear for ship '{}' because CSI cleanup failed",
+                ship_id
+            );
         }
         let mount_namespace_result = self
             .csi
