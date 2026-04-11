@@ -30,7 +30,7 @@ pub(crate) async fn create(vm: QemuVmConfig, args: CreateArgs) -> Result<(), cra
     let config = load_config::<VmRunRequest>(args.config)?;
     enter_mount_namespace(&config.id)?;
     create_and_enter_to_network_namespace(&config.id)?;
-    daemonize();
+    daemonize()?;
 
     create_signal_fifo(&config.id)?;
     wait_signal_using_fifo(&config.id)?;

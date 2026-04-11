@@ -52,6 +52,7 @@ impl SecureClient {
         );
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, url: impl AsRef<str>) -> reqwest::RequestBuilder {
         let url = url.as_ref();
         Self::assert_https(url);
@@ -111,19 +112,23 @@ const TOKEN_DATA_KEY: &str = "token";
 
 pub struct TestContext {
     pub base_url: String,
+    #[allow(dead_code)]
     pub client: TugboatClient,
     pub admin_token: Option<String>,
     ca_cert_pem: Option<Vec<u8>>,
+    #[allow(dead_code)]
     ca_cert_path: Option<PathBuf>,
     masters_identity_pem: Option<Vec<u8>>,
     _guard: TestGuard,
 }
 
+#[allow(dead_code)]
 pub struct SchedulerGuard {
     task: JoinHandle<()>,
     config_path: PathBuf,
 }
 
+#[allow(dead_code)]
 pub struct ControllerManagerGuard {
     task: JoinHandle<()>,
     config_path: PathBuf,
@@ -144,6 +149,7 @@ enum EtcdGuard {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 enum AuthorizationModeSetting {
     AlwaysAllow,
     Rbac,
@@ -172,6 +178,7 @@ struct GeneratedTlsAssets {
 }
 
 impl TestContext {
+    #[allow(dead_code)]
     pub async fn setup() -> Result<Option<Self>, DynError> {
         Self::setup_with_options(SetupOptions {
             authorization_mode: AuthorizationModeSetting::AlwaysAllow,
@@ -250,8 +257,7 @@ impl TestContext {
         let mut temp_paths = Vec::new();
         let config_path = write_apiserver_config(port, &etcd.0, options, Some(&tls_assets))?;
         temp_paths.push(config_path.clone());
-        let server =
-            ApiServer::from_config(ApiServerConfig::load_from_file_or_panic(config_path)).await?;
+        let server = ApiServer::from_config(ApiServerConfig::load_from_file(config_path)?).await?;
 
         temp_paths.extend(tls_assets.temp_paths.clone());
 
@@ -340,6 +346,7 @@ impl TestContext {
         Ok(builder)
     }
 
+    #[allow(dead_code)]
     pub fn start_scheduler(&self) -> Result<SchedulerGuard, DynError> {
         let config_path = std::env::temp_dir().join(format!(
             "tugboat-scheduler-it-{}-{}.toml",
@@ -369,6 +376,7 @@ impl TestContext {
         Ok(SchedulerGuard { task, config_path })
     }
 
+    #[allow(dead_code)]
     pub async fn start_controller_manager(&self) -> Result<ControllerManagerGuard, DynError> {
         let config_path = std::env::temp_dir().join(format!(
             "tugboat-controller-manager-it-{}-{}.toml",
@@ -579,7 +587,6 @@ async fn seed_admin_service_account(etcd_endpoint: &str) -> Result<String, DynEr
                 name: Some(ADMIN_NAMESPACE.to_string()),
                 ..Default::default()
             }),
-            ..Default::default()
         })
         .await?;
     let _ = store
@@ -649,7 +656,7 @@ fn write_apiserver_config(
     tls_assets: Option<&GeneratedTlsAssets>,
 ) -> Result<PathBuf, DynError> {
     let mut config = format!(
-        "[http]\nlisten = \"127.0.0.1:{port}\"\n\n[etcd]\nendpoints = [\"{etcd_endpoint}\"]\n\n[authorization]\nmode = \"{}\"\n",
+        "[http]\nlisten = \"127.0.0.1:{port}\"\n\n[etcd]\nendpoints = [\"{etcd_endpoint}\"]\n\n[authentication]\nanonymous_enabled = true\n\n[authorization]\nmode = \"{}\"\n",
         match options.authorization_mode {
             AuthorizationModeSetting::AlwaysAllow => "AlwaysAllow",
             AuthorizationModeSetting::Rbac => "RBAC",

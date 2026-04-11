@@ -64,7 +64,7 @@ pub enum AuthorizationMode {
 }
 
 fn default_anonymous_enabled() -> bool {
-    true
+    false
 }
 
 impl Default for AuthenticationConfig {
@@ -106,10 +106,16 @@ impl ApiServerConfig {
         }
     }
 
-    pub fn load_from_file_or_panic(file: impl AsRef<std::path::Path>) -> Self {
-        let file = std::fs::read_to_string(file.as_ref())
-            .unwrap_or_else(|e| panic!("Failed to read config file: {:?}: {e}", file.as_ref()));
-        toml::from_str(&file).expect("Failed to parse config file")
+    pub fn load_from_file(
+        file: impl AsRef<std::path::Path>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let path = file.as_ref();
+        let file = std::fs::read_to_string(path).map_err(|e| {
+            std::io::Error::other(format!("Failed to read config file {:?}: {e}", path))
+        })?;
+        toml::from_str(&file).map_err(|e| {
+            std::io::Error::other(format!("Failed to parse config file {:?}: {e}", path)).into()
+        })
     }
 }
 
@@ -131,5 +137,13 @@ mod tests {
             ApiServerConfig::new("127.0.0.1:8443", vec!["http://127.0.0.1:2379".to_string()]);
 
         assert!(matches!(config.authorization.mode, AuthorizationMode::Rbac));
+    }
+
+    #[test]
+    fn anonymous_auth_defaults_to_disabled() {
+        let config =
+            ApiServerConfig::new("127.0.0.1:8443", vec!["http://127.0.0.1:2379".to_string()]);
+
+        assert!(!config.authentication.anonymous_enabled);
     }
 }

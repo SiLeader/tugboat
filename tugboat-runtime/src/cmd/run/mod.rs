@@ -29,7 +29,7 @@ pub(crate) async fn run(vm: QemuVmConfig, args: StartArgs) -> Result<(), crate::
     let config = load_config::<VmRunRequest>(args.config)?;
     enter_mount_namespace(&config.id)?;
     create_and_enter_to_network_namespace(&config.id)?;
-    daemonize();
+    daemonize()?;
     crate::execute::run(vm, config).await?;
     Ok(())
 }

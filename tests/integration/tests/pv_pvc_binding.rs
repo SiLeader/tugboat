@@ -275,8 +275,7 @@ async fn persistent_volume_claim_can_be_deleted() -> Result<(), DynError> {
 async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup().await? else {
         eprintln!(
-            "skipping integration test: set {} or {} (or install docker) to enable",
-            "TUGBOAT_TEST_APISERVER_URL", "TUGBOAT_TEST_ETCD_ENDPOINT"
+            "skipping integration test: set TUGBOAT_TEST_APISERVER_URL or TUGBOAT_TEST_ETCD_ENDPOINT (or install docker) to enable"
         );
         return Ok(None);
     };

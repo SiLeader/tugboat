@@ -107,8 +107,7 @@ async fn namespace_creation_generates_default_service_account() -> Result<(), Dy
 async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup().await? else {
         eprintln!(
-            "skipping integration test: set {} or {} (or install docker) to enable",
-            "TUGBOAT_TEST_APISERVER_URL", "TUGBOAT_TEST_ETCD_ENDPOINT"
+            "skipping integration test: set TUGBOAT_TEST_APISERVER_URL or TUGBOAT_TEST_ETCD_ENDPOINT (or install docker) to enable"
         );
         return Ok(None);
     };
@@ -177,7 +176,6 @@ async fn wait_for_json(
     url: &str,
     predicate: impl Fn(&Value) -> bool,
 ) -> Result<Value, DynError> {
-    let mut last_body = None;
     for _ in 0..50 {
         let response = client.get(url).send().await?;
         if response.status() == StatusCode::OK {
@@ -185,7 +183,6 @@ async fn wait_for_json(
             if predicate(&body) {
                 return Ok(body);
             }
-            last_body = Some(body);
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

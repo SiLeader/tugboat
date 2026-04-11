@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use clap::Parser;
+use std::error::Error;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tugboat_apiserver::ApiServer;
@@ -25,7 +26,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -33,9 +34,8 @@ async fn main() {
     let args = Args::parse();
     info!("Starting Tugboat API server");
 
-    let config = ApiServerConfig::load_from_file_or_panic(args.config);
-    let server = ApiServer::from_config(config)
-        .await
-        .expect("Failed to initialize ApiServer");
-    server.run().await;
+    let config = ApiServerConfig::load_from_file(args.config)?;
+    let server = ApiServer::from_config(config).await?;
+    server.run().await?;
+    Ok(())
 }

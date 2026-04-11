@@ -30,3 +30,7 @@ endpoints = ["etcd:2379"]
 [authorization]
 # Use AlwaysAllow only for local development; RBAC is the secure default.
 mode = "RBAC"
+
+[authentication]
+# Anonymous requests are disabled by default.
+anonymous_enabled = false
