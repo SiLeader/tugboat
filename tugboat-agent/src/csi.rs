@@ -895,7 +895,8 @@ fn is_retryable_driver_error(error: &tugboat_csi_operator::Error) -> bool {
         | tugboat_csi_operator::Error::GrpcTransport(_) => true,
         tugboat_csi_operator::Error::Grpc(status) => matches!(
             status.code(),
-            tonic::Code::Unavailable
+            tonic::Code::Cancelled
+                | tonic::Code::Unavailable
                 | tonic::Code::DeadlineExceeded
                 | tonic::Code::Aborted
                 | tonic::Code::ResourceExhausted

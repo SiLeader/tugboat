@@ -280,7 +280,8 @@ fn is_retryable_csi_cleanup_error(error: &tugboat_csi_operator::Error) -> bool {
         | tugboat_csi_operator::Error::GrpcTransport(_) => true,
         tugboat_csi_operator::Error::Grpc(status) => matches!(
             status.code(),
-            tonic::Code::Unavailable
+            tonic::Code::Cancelled
+                | tonic::Code::Unavailable
                 | tonic::Code::DeadlineExceeded
                 | tonic::Code::Aborted
                 | tonic::Code::ResourceExhausted
@@ -300,6 +301,9 @@ mod tests {
     fn classifies_retryable_csi_cleanup_errors() {
         assert!(is_retryable_csi_cleanup_error(
             &tugboat_csi_operator::Error::RpcTimeout
+        ));
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::Grpc(Status::new(Code::Cancelled, "transient"))
         ));
         assert!(is_retryable_csi_cleanup_error(
             &tugboat_csi_operator::Error::Grpc(Status::new(Code::Unavailable, "transient"))

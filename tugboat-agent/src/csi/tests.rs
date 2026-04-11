@@ -624,6 +624,9 @@ fn classifies_retryable_driver_errors() {
         &tugboat_csi_operator::Error::RpcTimeout
     ));
     assert!(is_retryable_driver_error(
+        &tugboat_csi_operator::Error::Grpc(tonic::Status::cancelled("transient"),)
+    ));
+    assert!(is_retryable_driver_error(
         &tugboat_csi_operator::Error::Grpc(tonic::Status::unavailable("temporary"),)
     ));
     assert!(!is_retryable_driver_error(
