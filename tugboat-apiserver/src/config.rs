@@ -19,6 +19,10 @@ use tugboat_resource_store::ResourceStore;
 pub struct ApiServerConfig {
     http: HttpConfig,
     etcd: EtcdConfig,
+    #[serde(default)]
+    authentication: AuthenticationConfig,
+    #[serde(default)]
+    authorization: AuthorizationConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -39,13 +43,51 @@ pub struct TlsConfig {
     pub(crate) client_cert_file: Option<String>,
 }
 
+#[derive(Clone, serde::Deserialize)]
+pub struct AuthenticationConfig {
+    #[serde(default = "default_anonymous_enabled")]
+    pub(crate) anonymous_enabled: bool,
+}
+
+#[derive(Clone, Default, serde::Deserialize)]
+pub struct AuthorizationConfig {
+    #[serde(default)]
+    pub(crate) mode: AuthorizationMode,
+}
+
+#[derive(Clone, Default, serde::Deserialize)]
+pub enum AuthorizationMode {
+    AlwaysAllow,
+    #[default]
+    #[serde(rename = "RBAC", alias = "Rbac", alias = "rbac")]
+    Rbac,
+}
+
+fn default_anonymous_enabled() -> bool {
+    true
+}
+
+impl Default for AuthenticationConfig {
+    fn default() -> Self {
+        Self {
+            anonymous_enabled: default_anonymous_enabled(),
+        }
+    }
+}
+
 impl crate::ApiServer {
     pub async fn from_config(
         value: ApiServerConfig,
     ) -> Result<Self, tugboat_resource_store::error::Error> {
         let store = ResourceStore::new(value.etcd.endpoints.as_slice()).await?;
         let operator = ApiOperator::new(store);
-        Ok(Self::new(value.http.listen, operator, value.http.tls))
+        Ok(Self::new(
+            value.http.listen,
+            operator,
+            value.http.tls,
+            value.authentication,
+            value.authorization,
+        ))
     }
 }
 
@@ -59,6 +101,8 @@ impl ApiServerConfig {
             etcd: EtcdConfig {
                 endpoints: etcd_endpoints,
             },
+            authentication: AuthenticationConfig::default(),
+            authorization: AuthorizationConfig::default(),
         }
     }
 
@@ -66,5 +110,26 @@ impl ApiServerConfig {
         let file = std::fs::read_to_string(file.as_ref())
             .unwrap_or_else(|e| panic!("Failed to read config file: {:?}: {e}", file.as_ref()));
         toml::from_str(&file).expect("Failed to parse config file")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApiServerConfig, AuthorizationMode};
+
+    #[test]
+    fn authorization_mode_defaults_to_rbac() {
+        assert!(matches!(
+            AuthorizationMode::default(),
+            AuthorizationMode::Rbac
+        ));
+    }
+
+    #[test]
+    fn new_config_defaults_to_rbac_authorization() {
+        let config =
+            ApiServerConfig::new("127.0.0.1:8443", vec!["http://127.0.0.1:2379".to_string()]);
+
+        assert!(matches!(config.authorization.mode, AuthorizationMode::Rbac));
     }
 }

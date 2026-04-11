@@ -28,9 +28,11 @@ fn main() {
 
     let resources = [
         ".tugboat.apps.v1",
+        ".tugboat.authorization.v1",
         ".tugboat.core.v1",
         ".tugboat.coordination.v1",
         ".tugboat.meta.v1.ObjectMeta",
+        ".tugboat.meta.v1.ObjectReference",
         ".tugboat.meta.v1.OwnerReference",
         ".tugboat.meta.v1.TypeMeta",
     ];
@@ -60,6 +62,12 @@ fn main() {
                 "proto/apps/v1/replica_set.proto",
                 "proto/apps/v1/deployment.proto",
                 "proto/apps/v1/fleet.proto",
+                // authorization/v1
+                "proto/authorization/v1/policy_rule.proto",
+                "proto/authorization/v1/role.proto",
+                "proto/authorization/v1/cluster_role.proto",
+                "proto/authorization/v1/role_binding.proto",
+                "proto/authorization/v1/cluster_role_binding.proto",
                 // core/v1
                 "proto/core/v1/config_map.proto",
                 "proto/core/v1/namespace.proto",
@@ -72,8 +80,10 @@ fn main() {
                 "proto/core/v1/storage_class.proto",
                 "proto/core/v1/ship.proto",
                 "proto/core/v1/ship_class.proto",
+                "proto/core/v1/service_account.proto",
                 // meta/v1
                 "proto/meta/v1/object_meta.proto",
+                "proto/meta/v1/object_reference.proto",
                 "proto/meta/v1/type_meta.proto",
                 "proto/meta/v1/time.proto",
                 // coordination/v1

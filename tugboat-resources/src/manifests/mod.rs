@@ -69,6 +69,14 @@ pub mod core {
         );
         apply_resource!(Secret, "core", "v1", "secrets", "secret", namespaced);
         apply_resource!(
+            ServiceAccount,
+            "core",
+            "v1",
+            "serviceaccounts",
+            "serviceaccount",
+            namespaced
+        );
+        apply_resource!(
             RuntimeClass,
             "core",
             "v1",
@@ -95,6 +103,7 @@ pub mod core {
         apply_validators!(PersistentVolume, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(PersistentVolumeClaim, validators NameValidator);
         apply_validators!(Secret, validators NameValidator);
+        apply_validators!(ServiceAccount, validators NameValidator);
         apply_validators!(RuntimeClass, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(StorageClass, validators NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator);
 
@@ -211,6 +220,54 @@ pub mod apps {
         apply_validators!(Deployment, validators NameValidator);
         apply_validators!(ReplicaSet, validators NameValidator);
         apply_validators!(Fleet, validators NameValidator);
+    }
+}
+
+pub mod authorization {
+    pub mod v1 {
+        use crate::validators::{NameValidator, NamespaceProhibitedValidator};
+        use crate::{apply_resource, apply_validators};
+
+        include!(concat!(env!("OUT_DIR"), "/tugboat.authorization.v1.rs"));
+
+        apply_resource!(
+            ClusterRole,
+            "authorization",
+            "v1",
+            "clusterroles",
+            "clusterrole",
+            cluster
+        );
+        apply_resource!(
+            ClusterRoleBinding,
+            "authorization",
+            "v1",
+            "clusterrolebindings",
+            "clusterrolebinding",
+            cluster
+        );
+        apply_resource!(Role, "authorization", "v1", "roles", "role", namespaced);
+        apply_resource!(
+            RoleBinding,
+            "authorization",
+            "v1",
+            "rolebindings",
+            "rolebinding",
+            namespaced
+        );
+
+        apply_validators!(
+            ClusterRole,
+            validators NameValidator,
+            NamespaceProhibitedValidator
+        );
+        apply_validators!(
+            ClusterRoleBinding,
+            validators NameValidator,
+            NamespaceProhibitedValidator
+        );
+        apply_validators!(Role, validators NameValidator);
+        apply_validators!(RoleBinding, validators NameValidator);
     }
 }
 

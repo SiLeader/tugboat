@@ -3,8 +3,9 @@ mod helpers;
 
 use std::error::Error;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 use serde_json::Value;
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -15,7 +16,7 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
 
     let api_versions = get_json(&client, &ctx.base_url, "/api").await?;
     assert_eq!(api_versions["kind"], "APIVersions");
@@ -70,6 +71,15 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         "coordination/v1"
     );
 
+    let authorization_group = groups
+        .iter()
+        .find(|group| group["name"] == "authorization")
+        .ok_or("authorization API group is missing")?;
+    assert_eq!(
+        authorization_group["preferredVersion"]["groupVersion"],
+        "authorization/v1"
+    );
+
     let apps_v1_resources = get_json(&client, &ctx.base_url, "/apis/apps/v1").await?;
     assert_eq!(apps_v1_resources["groupVersion"], "apps/v1");
     let apps_resources = apps_v1_resources["resources"]
@@ -89,6 +99,25 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
     let lease = find_resource(coordination_resources, "leases")?;
     assert_has_verbs(lease, &["create", "list", "get", "delete"])?;
 
+    let authorization_v1_resources =
+        get_json(&client, &ctx.base_url, "/apis/authorization/v1").await?;
+    assert_eq!(
+        authorization_v1_resources["groupVersion"],
+        "authorization/v1"
+    );
+    let authorization_resources = authorization_v1_resources["resources"]
+        .as_array()
+        .ok_or("authorization/v1 discovery response is missing resources")?;
+    for resource_name in [
+        "roles",
+        "rolebindings",
+        "clusterroles",
+        "clusterrolebindings",
+    ] {
+        let resource = find_resource(authorization_resources, resource_name)?;
+        assert_has_verbs(resource, &["create", "list", "get", "delete"])?;
+    }
+
     let openapi_discovery = get_json(&client, &ctx.base_url, "/openapi/v3").await?;
     assert_eq!(
         openapi_discovery["paths"]["api/v1"]["serverRelativeUrl"],
@@ -102,6 +131,10 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         openapi_discovery["paths"]["apis/coordination/v1"]["serverRelativeUrl"],
         "/openapi/v3/apis/coordination/v1"
     );
+    assert_eq!(
+        openapi_discovery["paths"]["apis/authorization/v1"]["serverRelativeUrl"],
+        "/openapi/v3/apis/authorization/v1"
+    );
 
     Ok(())
 }
@@ -112,7 +145,7 @@ async fn openapi_core_schema_includes_core_resource_definitions() -> Result<(), 
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let schema = get_json(&client, &ctx.base_url, "/openapi/v3/api/v1").await?;
 
     assert!(schema["paths"]["/api/v1/nodes"].is_object());
@@ -120,6 +153,27 @@ async fn openapi_core_schema_includes_core_resource_definitions() -> Result<(), 
     assert!(schema["paths"]["/api/v1/namespaces/{namespace}/ships"].is_object());
     assert!(schema["components"]["schemas"]["Ship"].is_object());
     assert!(schema["components"]["schemas"]["Node"].is_object());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn openapi_authorization_schema_includes_rbac_resource_definitions() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let client = ctx.http_client()?;
+    let schema = get_json(&client, &ctx.base_url, "/openapi/v3/apis/authorization/v1").await?;
+
+    assert!(schema["paths"]["/apis/authorization/v1/clusterroles"].is_object());
+    assert!(schema["paths"]["/apis/authorization/v1/clusterrolebindings"].is_object());
+    assert!(schema["paths"]["/apis/authorization/v1/namespaces/{namespace}/roles"].is_object());
+    assert!(
+        schema["paths"]["/apis/authorization/v1/namespaces/{namespace}/rolebindings"].is_object()
+    );
+    assert!(schema["components"]["schemas"]["Role"].is_object());
+    assert!(schema["components"]["schemas"]["ClusterRole"].is_object());
 
     Ok(())
 }
@@ -135,7 +189,7 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     Ok(Some(ctx))
 }
 
-async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, DynError> {
+async fn get_json(client: &SecureClient, base_url: &str, path: &str) -> Result<Value, DynError> {
     let response = client.get(format!("{base_url}{path}")).send().await?;
     assert_eq!(
         response.status(),

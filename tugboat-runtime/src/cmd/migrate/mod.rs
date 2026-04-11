@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::load_config_or_panic;
+use crate::config::load_config;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
 use qapi::futures::QmpStreamTokio;
@@ -35,7 +35,7 @@ pub struct MigrateArgs {
 }
 
 pub async fn migrate(config: QemuVmConfig, args: MigrateArgs) -> crate::Result<()> {
-    let req: VmMigrateRequest = load_config_or_panic(args.config);
+    let req: VmMigrateRequest = load_config(args.config)?;
     crate::validate::validate_safe_id(&req.id, "vm id")?;
     let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
         .await

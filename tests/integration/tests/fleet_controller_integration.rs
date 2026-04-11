@@ -5,8 +5,9 @@ use std::error::Error;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, Response, StatusCode};
+use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -18,7 +19,7 @@ async fn fleet_controller_creates_replicasets_and_ships_for_components() -> Resu
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -109,7 +110,7 @@ async fn fleet_controller_injects_shared_network_and_reports_status() -> Result<
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -184,7 +185,7 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -340,7 +341,7 @@ async fn fleet_controller_preserves_migrating_ship_during_rollout() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -550,7 +551,7 @@ async fn fleet_controller_deletes_managed_replicasets_and_ships_on_deletion() ->
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
@@ -644,7 +645,7 @@ fn test_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 async fn wait_for_owned_replicaset_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     fleet_name: &str,
@@ -668,7 +669,7 @@ async fn wait_for_owned_replicaset_count(
 }
 
 async fn wait_for_owned_replicaset<F>(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     fleet_name: &str,
@@ -698,7 +699,7 @@ where
 }
 
 async fn wait_for_owned_ship_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -722,7 +723,7 @@ async fn wait_for_owned_ship_count(
 }
 
 async fn wait_for_fleet_status(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     name: &str,
@@ -754,7 +755,7 @@ async fn wait_for_fleet_status(
 }
 
 async fn list_owned_replicasets(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     fleet_name: &str,
@@ -787,7 +788,7 @@ async fn list_owned_replicasets(
 }
 
 async fn list_owned_ships(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -820,7 +821,7 @@ async fn list_owned_ships(
 }
 
 async fn mark_fleet_ships_running(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     fleet_name: &str,
@@ -876,7 +877,11 @@ async fn mark_fleet_ships_running(
     Ok(())
 }
 
-async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result<Value, DynError> {
+async fn create_namespace(
+    client: &SecureClient,
+    base_url: &str,
+    name: &str,
+) -> Result<Value, DynError> {
     request_json(
         client,
         Method::POST,
@@ -888,7 +893,7 @@ async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result
 }
 
 async fn create_cluster_network_class(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     name: &str,
 ) -> Result<Value, DynError> {
@@ -902,7 +907,7 @@ async fn create_cluster_network_class(
 }
 
 async fn create_resource(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     body: &Value,
@@ -917,7 +922,7 @@ async fn create_resource(
     .await
 }
 
-async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, DynError> {
+async fn get_json(client: &SecureClient, base_url: &str, path: &str) -> Result<Value, DynError> {
     request_json(
         client,
         Method::GET,
@@ -929,7 +934,7 @@ async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, 
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,
@@ -941,14 +946,11 @@ async fn request_json(
     }
 
     let response = request.send().await?;
-    assert_status(response, expected_status, url).await
+    assert_status(response, expected_status).await
 }
 
-async fn assert_status(
-    response: Response,
-    expected_status: StatusCode,
-    url: &str,
-) -> Result<Value, DynError> {
+async fn assert_status(response: Response, expected_status: StatusCode) -> Result<Value, DynError> {
+    let url = response.url().clone();
     let status = response.status();
     let text = response.text().await?;
     assert_eq!(

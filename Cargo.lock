@@ -3264,9 +3264,11 @@ dependencies = [
 name = "tugboat-apiserver"
 version = "0.1.0"
 dependencies = [
+ "actix-tls",
  "actix-web",
  "actix-web-lab",
  "async-stream",
+ "async-trait",
  "base64 0.22.1",
  "clap",
  "json_value_merge",
@@ -3371,6 +3373,8 @@ dependencies = [
 name = "tugboat-integration-tests"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "openssl",
  "reqwest 0.13.2",
  "serde_json",
  "tokio",
@@ -3378,6 +3382,7 @@ dependencies = [
  "tugboat-apiserver",
  "tugboat-client",
  "tugboat-controller-manager",
+ "tugboat-resource-store",
  "tugboat-resources",
  "tugboat-scheduler",
 ]

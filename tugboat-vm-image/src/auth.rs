@@ -92,8 +92,11 @@ struct HelperOutput {
 
 async fn call_helper(helper: &str, host: &str) -> Option<RegistryAuth> {
     use std::process::Stdio;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::process::Command;
+    use tokio::time::{Duration, timeout};
+
+    const HELPER_TIMEOUT: Duration = Duration::from_secs(30);
 
     let mut child = Command::new(format!("docker-credential-{}", helper))
         .arg("get")
@@ -103,14 +106,30 @@ async fn call_helper(helper: &str, host: &str) -> Option<RegistryAuth> {
         .ok()?;
 
     let mut stdin = child.stdin.take()?;
+    let mut stdout = child.stdout.take()?;
     stdin.write_all(host.as_bytes()).await.ok()?;
     drop(stdin);
 
-    let output = child.wait_with_output().await.ok()?;
-    if !output.status.success() {
+    let stdout_task = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes).await;
+        bytes
+    });
+
+    let status = match timeout(HELPER_TIMEOUT, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(_)) => return None,
+        Err(_) => {
+            let _ = child.kill().await;
+            return None;
+        }
+    };
+
+    if !status.success() {
         return None;
     }
 
-    let res: HelperOutput = serde_json::from_slice(&output.stdout).ok()?;
+    let stdout = stdout_task.await.ok()?;
+    let res: HelperOutput = serde_json::from_slice(&stdout).ok()?;
     Some(RegistryAuth::Basic(res.username, res.secret))
 }

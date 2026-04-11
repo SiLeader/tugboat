@@ -22,6 +22,8 @@ pub enum Error {
     ProtobufDeserialization(#[from] prost::DecodeError),
     #[error("Required field missing: field: '{0}'")]
     FieldMissing(String),
+    #[error("Invalid field value: field: '{0}', reason: '{1}'")]
+    InvalidField(String, String),
     #[error("Etcd error: {0}")]
     Etcd(#[from] etcd_client::Error),
     #[error("Event emit error: {0}")]

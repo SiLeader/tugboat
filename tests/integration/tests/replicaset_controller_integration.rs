@@ -5,8 +5,9 @@ use std::error::Error;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, Response, StatusCode};
+use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -18,7 +19,7 @@ async fn replicaset_controller_creates_ships_for_desired_replicas() -> Result<()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -71,7 +72,7 @@ async fn replicaset_controller_scales_up_and_down() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -159,7 +160,7 @@ async fn replicaset_controller_recreates_deleted_ship() -> Result<(), DynError> 
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -225,7 +226,7 @@ async fn replicaset_controller_deletes_owned_ships_when_replicaset_is_deleted()
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _controller_manager = ctx.start_controller_manager().await?;
 
@@ -301,7 +302,7 @@ fn test_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 async fn wait_for_owned_ship_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -325,7 +326,7 @@ async fn wait_for_owned_ship_count(
 }
 
 async fn list_owned_ships(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -357,7 +358,11 @@ async fn list_owned_ships(
         .collect())
 }
 
-async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result<Value, DynError> {
+async fn create_namespace(
+    client: &SecureClient,
+    base_url: &str,
+    name: &str,
+) -> Result<Value, DynError> {
     request_json(
         client,
         Method::POST,
@@ -369,7 +374,7 @@ async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result
 }
 
 async fn create_resource(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     body: &Value,
@@ -384,7 +389,7 @@ async fn create_resource(
     .await
 }
 
-async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, DynError> {
+async fn get_json(client: &SecureClient, base_url: &str, path: &str) -> Result<Value, DynError> {
     request_json(
         client,
         Method::GET,
@@ -396,7 +401,7 @@ async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, 
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,
@@ -408,14 +413,11 @@ async fn request_json(
     }
 
     let response = request.send().await?;
-    assert_status(response, expected_status, url).await
+    assert_status(response, expected_status).await
 }
 
-async fn assert_status(
-    response: Response,
-    expected_status: StatusCode,
-    url: &str,
-) -> Result<Value, DynError> {
+async fn assert_status(response: Response, expected_status: StatusCode) -> Result<Value, DynError> {
+    let url = response.url().clone();
     let status = response.status();
     let text = response.text().await?;
     assert_eq!(

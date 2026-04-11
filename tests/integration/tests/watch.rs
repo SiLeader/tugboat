@@ -4,8 +4,9 @@ mod helpers;
 use std::error::Error;
 use std::time::Duration;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, Response, StatusCode};
+use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -16,7 +17,7 @@ async fn ship_watch_emits_added_events() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let mut watch = start_watch(
@@ -65,7 +66,7 @@ async fn ship_watch_emits_modified_events() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let created = create_resource(
         &client,
@@ -130,7 +131,7 @@ async fn ship_watch_emits_deleted_events() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_resource(
         &client,
@@ -178,7 +179,7 @@ async fn ship_watch_respects_resource_version() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let created = create_resource(
@@ -244,7 +245,7 @@ async fn ship_watch_respects_label_selectors() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let mut watch = start_watch(
@@ -302,7 +303,7 @@ async fn ship_watch_supports_ndjson_mode() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let mut watch = start_watch(
@@ -385,7 +386,7 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
 }
 
 async fn start_watch(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     query: &[(&str, &str)],
@@ -409,7 +410,11 @@ async fn start_watch(
     })
 }
 
-async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result<Value, DynError> {
+async fn create_namespace(
+    client: &SecureClient,
+    base_url: &str,
+    name: &str,
+) -> Result<Value, DynError> {
     request_json(
         client,
         Method::POST,
@@ -421,7 +426,7 @@ async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result
 }
 
 async fn create_resource(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     body: &Value,
@@ -437,7 +442,7 @@ async fn create_resource(
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,
@@ -449,14 +454,11 @@ async fn request_json(
     }
 
     let response = request.send().await?;
-    assert_status(response, expected_status, url).await
+    assert_status(response, expected_status).await
 }
 
-async fn assert_status(
-    response: Response,
-    expected_status: StatusCode,
-    url: &str,
-) -> Result<Value, DynError> {
+async fn assert_status(response: Response, expected_status: StatusCode) -> Result<Value, DynError> {
+    let url = response.url().clone();
     let status = response.status();
     let text = response.text().await?;
     assert_eq!(

@@ -154,17 +154,14 @@ where
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
         let api_prefix = if T::group() == "core" || T::group().is_empty() {
-            format!("api/{}", T::version())
+            format!("/api/{}", T::version())
         } else {
-            format!("apis/{}/{}", T::group(), T::version())
+            format!("/apis/{}/{}", T::group(), T::version())
         };
         let path = if let Some(namespace) = &self.namespace {
-            format!(
-                "{api_prefix}/namespaces/{namespace}/{}?watch=true",
-                T::plural()
-            )
+            format!("{api_prefix}/namespaces/{namespace}/{}", T::plural())
         } else {
-            format!("{api_prefix}/{}?watch=true", T::plural())
+            format!("{api_prefix}/{}", T::plural())
         };
         self.client.watch_impl(path, params).await
     }

@@ -25,6 +25,7 @@ mod persistent_volume;
 mod persistent_volume_claim;
 mod runtime_class;
 mod secret;
+mod service_account;
 mod ship;
 mod shipclass;
 mod storage_class;
@@ -93,6 +94,13 @@ mod storage_class;
         secret::handle_secret_patch,
         secret::handle_secret_read,
         secret::handle_secret_replace,
+        service_account::handle_service_account_create,
+        service_account::handle_service_account_delete,
+        service_account::handle_service_account_list,
+        service_account::handle_service_account_list_all,
+        service_account::handle_service_account_patch,
+        service_account::handle_service_account_read,
+        service_account::handle_service_account_replace,
         storage_class::handle_storage_class_create,
         storage_class::handle_storage_class_delete,
         storage_class::handle_storage_class_list,
@@ -119,6 +127,7 @@ mod storage_class;
         tugboat_resources::manifests::core::v1::ConfigMap,
         tugboat_resources::manifests::core::v1::Node,
         tugboat_resources::manifests::core::v1::Secret,
+        tugboat_resources::manifests::core::v1::ServiceAccount,
         tugboat_resources::manifests::core::v1::RuntimeClass,
         tugboat_resources::manifests::core::v1::StorageClass,
         tugboat_resources::manifests::core::v1::Ship,
@@ -236,6 +245,17 @@ pub(super) fn register_runtimeclass(service: &mut ServiceConfig) {
         .service(runtime_class::handle_runtimeclass_read);
 }
 
+pub(super) fn register_service_account(service: &mut ServiceConfig) {
+    service
+        .service(service_account::handle_service_account_create)
+        .service(service_account::handle_service_account_delete)
+        .service(service_account::handle_service_account_list)
+        .service(service_account::handle_service_account_list_all)
+        .service(service_account::handle_service_account_patch)
+        .service(service_account::handle_service_account_read)
+        .service(service_account::handle_service_account_replace);
+}
+
 pub(super) fn register_storage_class(service: &mut ServiceConfig) {
     service
         .service(storage_class::handle_storage_class_create)
@@ -278,6 +298,7 @@ pub(super) fn register_v1_core(service: &mut ServiceConfig) {
         .configure(register_networkclass)
         .configure(register_runtimeclass)
         .configure(register_secret)
+        .configure(register_service_account)
         .configure(register_storage_class)
         .configure(register_ship)
         .configure(register_shipclass);

@@ -84,9 +84,7 @@ impl WatchMuxAggregator {
             let mut client = client;
             let mut current_revision = start_revision;
             loop {
-                if !watch_mux.has_receivers() {
-                    debug!("No active receivers for watch key: {key}, stopping watch task");
-                    aggregator_mux.lock().await.remove(&key);
+                if stop_watch_if_unused(&watch_mux, &aggregator_mux, &key).await {
                     break;
                 }
                 let mut options = WatchOptions::default().with_prefix().with_prev_key();
@@ -94,6 +92,9 @@ impl WatchMuxAggregator {
                     options = options.with_start_revision(rev);
                 }
                 let Ok(mut stream) = client.watch(key.as_str(), Some(options)).await else {
+                    if stop_watch_if_unused(&watch_mux, &aggregator_mux, &key).await {
+                        break;
+                    }
                     sleep(Duration::from_millis(500)).await;
                     continue;
                 };
@@ -110,11 +111,7 @@ impl WatchMuxAggregator {
                                 .filter_map(transform_event)
                                 .collect::<Vec<_>>();
                             if watch_mux.emit(events).is_err() {
-                                debug!(
-                                    "All receivers dropped for watch key: {key}, \
-                                     stopping watch task"
-                                );
-                                aggregator_mux.lock().await.remove(&key);
+                                cleanup_watch(&aggregator_mux, &key).await;
                                 return;
                             }
                         }
@@ -124,10 +121,32 @@ impl WatchMuxAggregator {
                         }
                     }
                 }
+
+                if stop_watch_if_unused(&watch_mux, &aggregator_mux, &key).await {
+                    break;
+                }
             }
         });
         Ok(receiver)
     }
+}
+
+async fn stop_watch_if_unused(
+    watch_mux: &WatchMux,
+    aggregator_mux: &Arc<Mutex<HashMap<String, Arc<WatchMux>>>>,
+    key: &str,
+) -> bool {
+    if watch_mux.has_receivers() {
+        return false;
+    }
+
+    debug!("No active receivers for watch key: {key}, stopping watch task");
+    cleanup_watch(aggregator_mux, key).await;
+    true
+}
+
+async fn cleanup_watch(aggregator_mux: &Arc<Mutex<HashMap<String, Arc<WatchMux>>>>, key: &str) {
+    aggregator_mux.lock().await.remove(key);
 }
 
 fn transform_event(event: &etcd_client::Event) -> Option<WatchEvent> {
@@ -188,5 +207,47 @@ impl WatchMux {
 impl Default for WatchMux {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WatchMux, cleanup_watch};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[test]
+    fn watch_mux_tracks_receivers() {
+        let mux = WatchMux::new();
+        assert!(!mux.has_receivers());
+
+        let receiver = mux.receiver();
+        assert!(mux.has_receivers());
+
+        drop(receiver);
+        assert!(!mux.has_receivers());
+    }
+
+    #[test]
+    fn emit_fails_when_no_receivers_exist() {
+        let mux = WatchMux::new();
+
+        let result = mux.emit(vec![]);
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn cleanup_watch_removes_mux_entry() {
+        let mux_map = Arc::new(Mutex::new(HashMap::new()));
+        mux_map
+            .lock()
+            .await
+            .insert("/demo".to_string(), Arc::new(WatchMux::new()));
+
+        cleanup_watch(&mux_map, "/demo").await;
+
+        assert!(!mux_map.lock().await.contains_key("/demo"));
     }
 }

@@ -12,18 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::TlsConfig;
+use crate::auth::middleware::{
+    AuthenticationMiddleware, AuthorizationMiddleware, ClientCertificateInfo,
+};
+use crate::config::{AuthenticationConfig, AuthorizationConfig, TlsConfig};
 use crate::data::StatusResponse;
 use crate::operator::ApiOperator;
 use actix_web::error::InternalError;
 use actix_web::middleware::Logger;
 use actix_web::web::{Data, JsonConfig};
-use actix_web::{App, HttpResponse, HttpServer, get};
+use actix_web::{App, HttpResponse, HttpServer, dev::Extensions, get};
 use openssl::ssl::{SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod, SslVerifyMode};
 use openssl::x509::X509;
+use std::any::Any;
 use std::net::TcpListener;
 use utoipa_actix_web::AppExt;
 
+pub mod auth;
 pub mod config;
 mod data;
 mod endpoints;
@@ -34,22 +39,45 @@ pub struct ApiServer {
     listen: String,
     operator: ApiOperator,
     tls: Option<TlsConfig>,
+    authentication: AuthenticationConfig,
+    authorization: AuthorizationConfig,
 }
 
 impl ApiServer {
-    fn new(listen: String, operator: ApiOperator, tls: Option<TlsConfig>) -> Self {
+    fn new(
+        listen: String,
+        operator: ApiOperator,
+        tls: Option<TlsConfig>,
+        authentication: AuthenticationConfig,
+        authorization: AuthorizationConfig,
+    ) -> Self {
         Self {
             listen,
             operator,
             tls,
+            authentication,
+            authorization,
         }
     }
 
     pub async fn run(self) {
+        crate::auth::bootstrap::bootstrap_default_rbac(&self.operator.store)
+            .await
+            .expect("Failed to bootstrap default RBAC resources");
         let data = Data::new(self.operator);
+        let authentication = self.authentication.clone();
+        let authorization = self.authorization.clone();
         let server = HttpServer::new(move || {
             App::new()
                 .wrap(Logger::default().exclude("/healthz"))
+                .wrap(AuthorizationMiddleware::new(
+                    data.clone(),
+                    authorization.clone(),
+                ))
+                .wrap(AuthenticationMiddleware::new(
+                    data.clone(),
+                    authentication.clone(),
+                ))
                 .app_data(data.clone())
                 .app_data(json_config())
                 .service(health_check)
@@ -57,7 +85,8 @@ impl ApiServer {
                 .into_utoipa_app()
                 .configure(endpoints::register_endpoints)
                 .into_app()
-        });
+        })
+        .on_connect(store_client_certificate_info);
         if let Some(tls) = self.tls {
             let builder = build_tls_acceptor(tls);
             server
@@ -77,23 +106,73 @@ impl ApiServer {
     }
 
     pub async fn run_with_listener(self, listener: TcpListener) {
-        let data = Data::new(self.operator);
-        HttpServer::new(move || {
-            App::new()
-                .wrap(Logger::default().exclude("/healthz"))
-                .app_data(data.clone())
-                .app_data(json_config())
-                .service(health_check)
-                .configure(endpoints::register_openapi_endpoints)
-                .into_utoipa_app()
-                .configure(endpoints::register_endpoints)
-                .into_app()
-        })
-        .listen(listener)
-        .expect("Failed to listen on provided socket")
-        .run()
+        let Self {
+            operator,
+            tls,
+            authentication,
+            authorization,
+            ..
+        } = self;
+        run_with_bound_listener(operator, authentication, authorization, listener, tls).await;
+    }
+
+    pub async fn run_with_tls_listener(self, listener: TcpListener, tls: TlsConfig) {
+        let Self {
+            operator,
+            authentication,
+            authorization,
+            ..
+        } = self;
+        run_with_bound_listener(operator, authentication, authorization, listener, Some(tls)).await;
+    }
+}
+
+async fn run_with_bound_listener(
+    operator: ApiOperator,
+    authentication: AuthenticationConfig,
+    authorization: AuthorizationConfig,
+    listener: TcpListener,
+    tls: Option<TlsConfig>,
+) {
+    crate::auth::bootstrap::bootstrap_default_rbac(&operator.store)
         .await
-        .expect("Failed to run server");
+        .expect("Failed to bootstrap default RBAC resources");
+    let data = Data::new(operator);
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(Logger::default().exclude("/healthz"))
+            .wrap(AuthorizationMiddleware::new(
+                data.clone(),
+                authorization.clone(),
+            ))
+            .wrap(AuthenticationMiddleware::new(
+                data.clone(),
+                authentication.clone(),
+            ))
+            .app_data(data.clone())
+            .app_data(json_config())
+            .service(health_check)
+            .configure(endpoints::register_openapi_endpoints)
+            .into_utoipa_app()
+            .configure(endpoints::register_endpoints)
+            .into_app()
+    })
+    .on_connect(store_client_certificate_info);
+    if let Some(tls) = tls {
+        let builder = build_tls_acceptor(tls);
+        server
+            .listen_openssl(listener, builder)
+            .expect("Failed to listen on provided socket with TLS")
+            .run()
+            .await
+            .expect("Failed to run server");
+    } else {
+        server
+            .listen(listener)
+            .expect("Failed to listen on provided socket")
+            .run()
+            .await
+            .expect("Failed to run server");
     }
 }
 
@@ -131,15 +210,33 @@ fn build_tls_acceptor(tls: TlsConfig) -> SslAcceptorBuilder {
 fn configure_client_certificate_auth(builder: &mut SslAcceptorBuilder, client_ca_file: &str) {
     let file = std::fs::read(client_ca_file).expect("Failed to read client CA file");
     let certs = X509::stack_from_pem(file.as_slice()).expect("Failed to parse client CA file");
+    // set_ca_file sets the trust store used to verify the client certificate chain.
     builder
         .set_ca_file(client_ca_file)
         .expect("Failed to set client CA file");
+    // add_client_ca populates the list of acceptable CAs sent to the client
+    // in the TLS CertificateRequest message, allowing it to select the right
+    // certificate to present. Both calls are needed for full mTLS support.
     for cert in certs {
         builder
             .add_client_ca(cert.as_ref())
             .expect("Failed to add client CA");
     }
+    // Require a client certificate; connections without one are rejected at the
+    // TLS handshake level. This makes bearer-token auth incompatible with mTLS
+    // mode — choose one or the other in [http.tls].
     builder.set_verify(SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT);
+}
+
+fn store_client_certificate_info(connection: &dyn Any, data: &mut Extensions) {
+    let Some(stream) = connection
+        .downcast_ref::<actix_tls::accept::openssl::TlsStream<actix_web::rt::net::TcpStream>>()
+    else {
+        return;
+    };
+    if let Some(cert) = stream.ssl().peer_certificate() {
+        data.insert(ClientCertificateInfo::from_x509(&cert));
+    }
 }
 
 #[cfg(test)]

@@ -202,7 +202,7 @@ impl Scheduler {
             }
             Err(tugboat_client::Error::Api(ref status)) if status.code == 409 => {
                 tracing::info!(
-                    "Conflict binding ship {ship_namespace}/{ship_name}: already modified, will retry"
+                    "Conflict binding ship {ship_namespace}/{ship_name}: already modified, will retry on the next scheduling loop"
                 );
             }
             Err(e) => {

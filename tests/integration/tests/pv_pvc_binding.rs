@@ -3,8 +3,9 @@ mod helpers;
 
 use std::error::Error;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, Response, StatusCode};
+use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -15,7 +16,7 @@ async fn persistent_volume_supports_status_updates() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -84,7 +85,7 @@ async fn persistent_volume_claim_supports_binding_status_updates() -> Result<(),
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -185,7 +186,7 @@ async fn persistent_volume_can_be_deleted() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -229,7 +230,7 @@ async fn persistent_volume_claim_can_be_deleted() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_resource(
         &client,
         &ctx.base_url,
@@ -282,7 +283,11 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     Ok(Some(ctx))
 }
 
-async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result<Value, DynError> {
+async fn create_namespace(
+    client: &SecureClient,
+    base_url: &str,
+    name: &str,
+) -> Result<Value, DynError> {
     request_json(
         client,
         Method::POST,
@@ -294,7 +299,7 @@ async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result
 }
 
 async fn create_resource(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     body: &Value,
@@ -309,7 +314,7 @@ async fn create_resource(
     .await
 }
 
-async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, DynError> {
+async fn get_json(client: &SecureClient, base_url: &str, path: &str) -> Result<Value, DynError> {
     request_json(
         client,
         Method::GET,
@@ -321,7 +326,7 @@ async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, 
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,
@@ -333,14 +338,11 @@ async fn request_json(
     }
 
     let response = request.send().await?;
-    assert_status(response, expected_status, url).await
+    assert_status(response, expected_status).await
 }
 
-async fn assert_status(
-    response: Response,
-    expected_status: StatusCode,
-    url: &str,
-) -> Result<Value, DynError> {
+async fn assert_status(response: Response, expected_status: StatusCode) -> Result<Value, DynError> {
+    let url = response.url().clone();
     let status = response.status();
     let text = response.text().await?;
     assert_eq!(

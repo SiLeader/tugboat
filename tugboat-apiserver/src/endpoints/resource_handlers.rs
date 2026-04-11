@@ -452,6 +452,7 @@ where
         ..Default::default()
     };
     let patched = ResourceUpdater::new(&current, options).apply_patch(patch)?;
+    validate_resource(&patched)?;
 
     let patched = if current != patched {
         operator
@@ -478,7 +479,8 @@ where
         + StaticResource
         + Serialize
         + DeserializeOwned
-        + PartialEq,
+        + PartialEq
+        + Validatable,
 {
     let current = operator
         .store
@@ -501,6 +503,7 @@ where
 
     let replaced =
         ResourceUpdater::new(&current, ReplaceOptions::default()).apply_status_update(status)?;
+    validate_resource(&replaced)?;
 
     let replaced = if current != replaced {
         operator
@@ -644,10 +647,16 @@ fn next_generation(current: Option<i64>) -> Option<i64> {
 fn rfc7396_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
     match patch {
         serde_json::Value::Object(patch_map) => {
-            if !target.is_object() {
-                *target = serde_json::Value::Object(serde_json::Map::new());
-            }
-            let target_map = target.as_object_mut().expect("checked above");
+            let target_map = match target {
+                serde_json::Value::Object(map) => map,
+                _ => {
+                    *target = serde_json::Value::Object(serde_json::Map::new());
+                    match target {
+                        serde_json::Value::Object(map) => map,
+                        _ => unreachable!("target was just set to object"),
+                    }
+                }
+            };
             for (key, value) in patch_map {
                 if value.is_null() {
                     target_map.remove(key);

@@ -14,6 +14,8 @@ pub(crate) enum ControllerError {
     MissingFleetSpec { namespace: String, name: String },
     #[error("Deployment '{namespace}/{name}' is missing spec")]
     MissingDeploymentSpec { namespace: String, name: String },
+    #[error("Deployment '{namespace}/{name}' is missing spec.ship_template")]
+    MissingDeploymentTemplate { namespace: String, name: String },
     #[error("ReplicaSet '{namespace}/{name}' is missing spec")]
     MissingReplicaSetSpec { namespace: String, name: String },
     #[error("PersistentVolumeClaim '{namespace}/{name}' is missing spec")]

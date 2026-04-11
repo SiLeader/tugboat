@@ -3,8 +3,9 @@ mod helpers;
 
 use std::error::Error;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, Response, StatusCode};
+use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -15,7 +16,7 @@ async fn rejects_invalid_resource_name() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let response = client
@@ -55,7 +56,7 @@ async fn rejects_request_without_metadata() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let response = client
@@ -87,7 +88,7 @@ async fn rejects_namespaced_create_for_missing_namespace() -> Result<(), DynErro
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let response = client
         .post(format!(
             "{}/api/v1/namespaces/missing-ns/ships",
@@ -120,7 +121,7 @@ async fn rejects_invalid_json_body_with_status_response() -> Result<(), DynError
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
 
     let response = client
@@ -151,7 +152,7 @@ async fn rejects_url_and_body_name_mismatch() -> Result<(), DynError> {
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_resource(
         &client,
@@ -198,7 +199,7 @@ async fn rejects_namespace_on_cluster_scoped_resource_create() -> Result<(), Dyn
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     let response = client
         .post(format!("{}/api/v1/shipclasses", ctx.base_url))
         .json(&json!({
@@ -240,7 +241,11 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     Ok(Some(ctx))
 }
 
-async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result<Value, DynError> {
+async fn create_namespace(
+    client: &SecureClient,
+    base_url: &str,
+    name: &str,
+) -> Result<Value, DynError> {
     request_json(
         client,
         Method::POST,
@@ -258,7 +263,7 @@ async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result
 }
 
 async fn create_resource(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     body: &Value,
@@ -274,7 +279,7 @@ async fn create_resource(
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,
@@ -290,9 +295,13 @@ async fn request_json(
 }
 
 async fn assert_status(response: Response, expected_status: StatusCode) -> Result<Value, DynError> {
+    let url = response.url().clone();
     let status = response.status();
     let text = response.text().await?;
-    assert_eq!(status, expected_status, "unexpected status: {text}");
+    assert_eq!(
+        status, expected_status,
+        "unexpected status for {url}: {text}"
+    );
     Ok(serde_json::from_str(&text)?)
 }
 

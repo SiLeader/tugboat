@@ -5,8 +5,9 @@ use std::error::Error;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use helpers::setup::SecureClient;
 use helpers::setup::TestContext;
-use reqwest::{Client, Method, Response, StatusCode};
+use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -18,7 +19,7 @@ async fn ship_lifecycle_covers_scheduling_status_and_deletion() -> Result<(), Dy
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     let _scheduler = ctx.start_scheduler()?;
@@ -183,7 +184,7 @@ async fn deployment_lifecycle_covers_rollout_and_cleanup() -> Result<(), DynErro
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_resource(
@@ -372,7 +373,7 @@ async fn fleet_lifecycle_covers_managed_ships_and_cleanup() -> Result<(), DynErr
         return Ok(());
     };
 
-    let client = Client::new();
+    let client = ctx.http_client()?;
     create_namespace(&client, &ctx.base_url, "tugboat-system").await?;
     create_namespace(&client, &ctx.base_url, "test-ns").await?;
     create_cluster_network_class(&client, &ctx.base_url, "tenant-net").await?;
@@ -533,7 +534,7 @@ fn test_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 async fn wait_for_ship<F>(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     name: &str,
@@ -561,7 +562,11 @@ where
     }
 }
 
-async fn wait_for_missing(client: &Client, url: &str, timeout: Duration) -> Result<(), DynError> {
+async fn wait_for_missing(
+    client: &SecureClient,
+    url: &str,
+    timeout: Duration,
+) -> Result<(), DynError> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let response = client.get(url).send().await?;
@@ -577,7 +582,7 @@ async fn wait_for_missing(client: &Client, url: &str, timeout: Duration) -> Resu
 }
 
 async fn wait_for_owned_deployment_replicaset_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     deployment_name: &str,
@@ -602,7 +607,7 @@ async fn wait_for_owned_deployment_replicaset_count(
 }
 
 async fn wait_for_owned_deployment_replicaset<F>(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     deployment_name: &str,
@@ -630,7 +635,7 @@ where
 }
 
 async fn wait_for_owned_fleet_replicaset_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     fleet_name: &str,
@@ -655,7 +660,7 @@ async fn wait_for_owned_fleet_replicaset_count(
 }
 
 async fn wait_for_owned_fleet_replicaset<F>(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     fleet_name: &str,
@@ -686,7 +691,7 @@ where
 }
 
 async fn wait_for_owned_ship_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -710,7 +715,7 @@ async fn wait_for_owned_ship_count(
 }
 
 async fn wait_for_owned_scheduled_ship_count(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -738,7 +743,7 @@ async fn wait_for_owned_scheduled_ship_count(
 }
 
 async fn wait_for_fleet_status(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     name: &str,
@@ -770,7 +775,7 @@ async fn wait_for_fleet_status(
 }
 
 async fn list_owned_deployment_replicasets(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     deployment_name: &str,
@@ -803,7 +808,7 @@ async fn list_owned_deployment_replicasets(
 }
 
 async fn list_owned_fleet_replicasets(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     fleet_name: &str,
@@ -836,7 +841,7 @@ async fn list_owned_fleet_replicasets(
 }
 
 async fn list_owned_ships(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     owner_name: &str,
@@ -869,7 +874,7 @@ async fn list_owned_ships(
 }
 
 async fn mark_ship_running(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     name: &str,
@@ -901,7 +906,7 @@ async fn mark_ship_running(
 }
 
 async fn mark_labeled_ships_running(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     label_key: &str,
@@ -942,7 +947,7 @@ async fn mark_labeled_ships_running(
 }
 
 async fn mark_fleet_ships_running(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     namespace: &str,
     fleet_name: &str,
@@ -950,7 +955,11 @@ async fn mark_fleet_ships_running(
     mark_labeled_ships_running(client, base_url, namespace, "fleet-name", fleet_name).await
 }
 
-async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result<Value, DynError> {
+async fn create_namespace(
+    client: &SecureClient,
+    base_url: &str,
+    name: &str,
+) -> Result<Value, DynError> {
     request_json(
         client,
         Method::POST,
@@ -962,7 +971,7 @@ async fn create_namespace(client: &Client, base_url: &str, name: &str) -> Result
 }
 
 async fn create_cluster_network_class(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     name: &str,
 ) -> Result<Value, DynError> {
@@ -976,7 +985,7 @@ async fn create_cluster_network_class(
 }
 
 async fn create_resource(
-    client: &Client,
+    client: &SecureClient,
     base_url: &str,
     path: &str,
     body: &Value,
@@ -991,7 +1000,7 @@ async fn create_resource(
     .await
 }
 
-async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, DynError> {
+async fn get_json(client: &SecureClient, base_url: &str, path: &str) -> Result<Value, DynError> {
     request_json(
         client,
         Method::GET,
@@ -1003,7 +1012,7 @@ async fn get_json(client: &Client, base_url: &str, path: &str) -> Result<Value, 
 }
 
 async fn request_json(
-    client: &Client,
+    client: &SecureClient,
     method: Method,
     url: &str,
     expected_status: StatusCode,
@@ -1015,14 +1024,11 @@ async fn request_json(
     }
 
     let response = request.send().await?;
-    assert_status(response, expected_status, url).await
+    assert_status(response, expected_status).await
 }
 
-async fn assert_status(
-    response: Response,
-    expected_status: StatusCode,
-    url: &str,
-) -> Result<Value, DynError> {
+async fn assert_status(response: Response, expected_status: StatusCode) -> Result<Value, DynError> {
+    let url = response.url().clone();
     let status = response.status();
     let text = response.text().await?;
     assert_eq!(

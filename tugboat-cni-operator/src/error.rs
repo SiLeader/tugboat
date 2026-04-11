@@ -22,4 +22,6 @@ pub enum Error {
     InvalidConfiguration(String),
     #[error("Command failed: {0}")]
     CommandFailed(std::process::ExitStatus, String, String),
+    #[error("Command timed out: {0}")]
+    CommandTimeout(String),
 }

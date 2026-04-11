@@ -32,6 +32,10 @@ mod validate;
 pub enum Error {
     #[error("IO Error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("JSON Error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("TOML Error: {0}")]
+    Toml(#[from] toml::de::Error),
     #[error("System call Error: {0}")]
     Syscall(#[from] Errno),
     #[error("Failed to setup network: {0}")]
@@ -79,10 +83,18 @@ struct Config {
 
 pub async fn run() {
     let args = Args::parse();
-    let config = {
-        let file = std::fs::read_to_string(args.config).expect("Failed to read config file");
-        let config: Config = toml::from_str(&file).expect("Failed to parse config file as TOML");
-        config
+    let config = (|| -> Result<Config> {
+        let file = std::fs::read_to_string(&args.config)?;
+        let config: Config = toml::from_str(&file)?;
+        Ok(config)
+    })();
+
+    let config = match config {
+        Ok(config) => config,
+        Err(e) => {
+            error!("Runtime error: {e}");
+            std::process::exit(1);
+        }
     };
 
     if let Err(e) = match args.subcommand {

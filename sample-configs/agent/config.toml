@@ -22,7 +22,16 @@ executable = "./target/debug/tugboat-runtime"
 args = ["--config", "./tugboat-runtime/sample-config.toml"]
 
 [apiserver]
-url = "http://apiserver:8080"
+url = "https://apiserver:8443"
+
+[apiserver.tls]
+# CA certificate used to verify the apiserver TLS certificate.
+ca_cert_path = "/etc/tugboat/pki/ca.crt"
+
+[apiserver.auth]
+# Use the mounted service account token when talking to an RBAC-enabled apiserver.
+type = "service-account"
+token_path = "/var/run/secrets/tugboat.cloud/serviceaccount/token"
 
 [image]
 cache_dir = "/tmp"
