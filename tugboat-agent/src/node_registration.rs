@@ -357,7 +357,12 @@ fn probe_flannel_plugin(
     let binary_ready = binary.try_exists()?;
     let subnet_ready = subnet_file.try_exists()?;
     let data_dir_ready = data_dir.try_exists()?;
-    let ready = binary_ready && subnet_ready && data_dir_ready;
+    let subnet_content_ready = if subnet_ready {
+        validate_flannel_subnet_file(subnet_file)?
+    } else {
+        false
+    };
+    let ready = binary_ready && subnet_ready && subnet_content_ready && data_dir_ready;
 
     let mut missing = Vec::new();
     if !binary_ready {
@@ -365,6 +370,11 @@ fn probe_flannel_plugin(
     }
     if !subnet_ready {
         missing.push(format!("subnet file '{}'", subnet_file.display()));
+    } else if !subnet_content_ready {
+        missing.push(format!(
+            "valid FLANNEL_NETWORK CIDR in '{}'",
+            subnet_file.display()
+        ));
     }
     if !data_dir_ready {
         missing.push(format!("data dir '{}'", data_dir.display()));
@@ -383,6 +393,41 @@ fn probe_flannel_plugin(
             format!("Missing flannel prerequisites: {}.", missing.join(", "))
         },
     })
+}
+
+fn validate_flannel_subnet_file(subnet_file: &Path) -> Result<bool, io::Error> {
+    let content = std::fs::read_to_string(subnet_file)?;
+    let network = content
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("FLANNEL_NETWORK=").map(str::trim));
+
+    Ok(network.is_some_and(is_valid_cidr))
+}
+
+fn is_valid_cidr(value: &str) -> bool {
+    let mut parts = value.split('/');
+    let Some(ip) = parts.next() else {
+        return false;
+    };
+    let Some(prefix) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+
+    let Ok(ip) = ip.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    let Ok(prefix) = prefix.parse::<u8>() else {
+        return false;
+    };
+
+    match ip {
+        std::net::IpAddr::V4(_) => prefix <= 32,
+        std::net::IpAddr::V6(_) => prefix <= 128,
+    }
 }
 
 fn detect_node_capacity() -> Result<NodeCapacity, io::Error> {
@@ -682,6 +727,33 @@ mod tests {
         assert!(ready);
         assert!(flannel.message.contains("runtime state"));
         assert_eq!(status.conditions[0].status, "True");
+
+        cleanup_test_dir(&base);
+    }
+
+    #[test]
+    fn build_node_status_reports_invalid_flannel_subnet_file() {
+        let base = test_dir("flannel-invalid-subnet");
+        let bin = base.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for plugin in ["bridge", "loopback", "flannel", "portmap"] {
+            std::fs::write(bin.join(plugin), "").unwrap();
+        }
+        let subnet = base.join("subnet.env");
+        let data_dir = base.join("flannel");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(&subnet, "FLANNEL_NETWORK=not-a-cidr").unwrap();
+
+        let config = test_cni_config(&bin);
+        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+
+        let flannel = status
+            .cni_plugins
+            .iter()
+            .find(|plugin| plugin.name == "flannel")
+            .expect("flannel plugin should exist");
+        assert_eq!(flannel.ready, Some(false));
+        assert!(flannel.message.contains("FLANNEL_NETWORK CIDR"));
 
         cleanup_test_dir(&base);
     }

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use sha2::Digest;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tugboat_cni_operator::{
     CniConfContent, CniConfHeader, CniFlannelDelegate, CniIpam, CniIpamRoute, CniNetConfList,
     CniPortmapCapabilities, TugboatCniOperator,
@@ -115,11 +115,34 @@ impl CniWrapper {
         ship_id: &str,
         config: Vec<PlannedNetworkConfig>,
     ) -> Result<(), tugboat_cni_operator::Error> {
+        let mut errors = Vec::new();
         for c in config.into_iter().rev() {
-            self.del_single(ship_id, c).await?;
+            let iface_name = c.vm.iface_name.clone();
+            if let Err(err) = self.del_single(ship_id, c).await {
+                warn!(
+                    "Failed to delete CNI config for ship '{}' iface '{}': {}",
+                    ship_id, iface_name, err
+                );
+                errors.push(format!("{iface_name}: {err}"));
+            }
         }
-        self.del_loopback(ship_id).await?;
-        Ok(())
+
+        if let Err(err) = self.del_loopback(ship_id).await {
+            warn!(
+                "Failed to delete loopback CNI config for ship '{}': {}",
+                ship_id, err
+            );
+            errors.push(format!("lo: {err}"));
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(tugboat_cni_operator::Error::InvalidConfiguration(format!(
+                "CNI delete completed with failures: {}",
+                errors.join("; ")
+            )))
+        }
     }
 
     async fn add_loopback(&self, ship_id: &str) -> Result<(), tugboat_cni_operator::Error> {

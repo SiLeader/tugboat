@@ -895,19 +895,39 @@ impl ShipReconciler {
         fallback_published_volumes: &[PublishedVolume],
         volumes: &[VolumeInfo],
     ) -> Result<(), ReconcileError> {
-        let mut runtime_published_volumes =
-            self.runtime_operator.delete(ship_id.to_string()).await?;
-
         let ship = self.ship_all_api.get(ship_id).await?;
         let namespace = ship
             .as_ref()
             .and_then(|s| s.object_meta().as_ref().and_then(|m| m.namespace.as_ref()))
-            .map(|s| s.as_str())
-            .unwrap_or("default");
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "default".to_string());
+
+        if let Some(spec) = ship.as_ref().and_then(|s| s.spec.as_ref()) {
+            match self.get_related_network_classes(&namespace, spec).await {
+                Ok(network_classes) => {
+                    let networks = self.cni.create_network_configs(ship_id, network_classes);
+                    if let Err(err) = self.cni.del(ship_id, networks).await {
+                        warn!(
+                            "Failed to tear down CNI networks for ship '{}' during add cleanup: {}",
+                            ship_id, err
+                        );
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        "Failed to resolve network classes for ship '{}' during add cleanup: {}",
+                        ship_id, err
+                    );
+                }
+            }
+        }
+
+        let mut runtime_published_volumes =
+            self.runtime_operator.delete(ship_id.to_string()).await?;
 
         let controller_publish_secrets = self
             .controller_publish_secret_map(
-                namespace,
+                &namespace,
                 volumes,
                 if runtime_published_volumes.is_empty() {
                     fallback_published_volumes
