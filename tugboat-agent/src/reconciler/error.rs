@@ -50,7 +50,9 @@ pub(crate) struct InvalidSecretVolumeDataError {
 
 #[derive(Debug, Error)]
 pub(crate) enum ReconcileError {
-    #[error("Failed to clean up CSI volumes after volume setup error (original error: {original_error}): {cleanup_errors}")]
+    #[error(
+        "Failed to clean up CSI volumes after volume setup error (original error: {original_error}): {cleanup_errors}"
+    )]
     VolumeSetupCleanupFailed {
         original_error: Box<ReconcileError>,
         cleanup_errors: String,
@@ -188,7 +190,7 @@ pub(crate) enum ReconcileError {
     #[error("Failed to clean up one or more published CSI volumes: {0}")]
     PublishedVolumeCleanupFailed(String),
     #[error(
-        "CSI volume '{volume_id}' is mounted on node but state persistence failed ({reason}); Ship will be retried"
+        "CSI volume '{volume_id}' is mounted on node but state persistence failed ({reason}); the next reconciliation can recover it"
     )]
     CsiVolumePartiallyPublished { volume_id: String, reason: String },
     #[error("Finalizer error: {0}")]

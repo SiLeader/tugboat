@@ -56,7 +56,8 @@ fn best_effort_stale_volume_cleanup<T>(
             // and blocking cleanup would permanently leak the volume attachment.
             warn!(
                 "Failed to resolve stale volume '{}' secrets in namespace '{}', \
-                 proceeding with empty secrets for best-effort cleanup: {}",
+                 proceeding with empty secrets for best-effort cleanup. \
+                 ControllerUnpublishVolume may fail and manual CSI cleanup may be required: {}",
                 claim_name, namespace, err
             );
             None
@@ -124,14 +125,20 @@ fn controller_publish_secrets_for_cleanup(
 ) -> Result<HashMap<String, String>, String> {
     match controller_publish_secrets.get(&volume.claim_name) {
         Some(secrets) => Ok(secrets.clone()),
-        None if !volume.controller_published
-            || matches!(policy, CleanupSecretPolicy::BestEffort) =>
-        {
+        None if !volume.controller_published => Ok(HashMap::new()),
+        None if matches!(policy, CleanupSecretPolicy::BestEffort) => {
+            warn!(
+                "Missing controller publish secrets for stale CSI volume alias '{}' \
+                 (driver='{}', volume_id='{}'); cleanup will continue best-effort with empty \
+                 secrets and may require manual detach",
+                volume.claim_name, volume.driver, volume.volume_id
+            );
             Ok(HashMap::new())
         }
         None => Err(format!(
-            "missing controller publish secrets for claim alias '{}' (volume '{}')",
-            volume.claim_name, volume.volume_id
+            "missing controller publish secrets for claim alias '{}' \
+             (driver='{}', volume_id='{}', target_path='{}')",
+            volume.claim_name, volume.driver, volume.volume_id, volume.target_path
         )),
     }
 }
@@ -1032,6 +1039,8 @@ mod tests {
         .expect_err("active cleanup should reject missing controller publish secrets");
 
         assert!(err.contains("missing controller publish secrets"));
+        assert!(err.contains("example.csi"));
+        assert!(err.contains("/var/lib/tugboat-agent/csi/ship-uid/data.fs"));
     }
 
     #[test]
