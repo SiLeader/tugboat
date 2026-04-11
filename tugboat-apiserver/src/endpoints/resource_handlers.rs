@@ -452,6 +452,7 @@ where
         ..Default::default()
     };
     let patched = ResourceUpdater::new(&current, options).apply_patch(patch)?;
+    validate_resource(&patched)?;
 
     let patched = if current != patched {
         operator
@@ -478,7 +479,8 @@ where
         + StaticResource
         + Serialize
         + DeserializeOwned
-        + PartialEq,
+        + PartialEq
+        + Validatable,
 {
     let current = operator
         .store
@@ -501,6 +503,7 @@ where
 
     let replaced =
         ResourceUpdater::new(&current, ReplaceOptions::default()).apply_status_update(status)?;
+    validate_resource(&replaced)?;
 
     let replaced = if current != replaced {
         operator
