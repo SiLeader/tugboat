@@ -562,6 +562,7 @@ impl PvcProvisionerReconciler {
                             err
                         );
                     }
+                    return false;
                 }
             }
         }
