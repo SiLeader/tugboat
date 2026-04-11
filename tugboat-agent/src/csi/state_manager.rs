@@ -73,6 +73,14 @@ impl StateManager {
         let _guard = lock.lock().await;
         operation()
     }
+
+    /// Remove the lock entry for a ship once its backing state directory is gone.
+    /// This prevents the per-ship lock map from growing indefinitely in long-running
+    /// agents with high ship churn. Ship IDs are UUIDs that are never reused, so no
+    /// further state operations can occur for this ship after cleanup.
+    pub(crate) fn remove_lock(&self, ship_id: &str) {
+        self.locks.remove(ship_id);
+    }
 }
 
 impl Clone for StateManager {
@@ -113,22 +121,6 @@ pub(crate) fn atomic_write_json<T: serde::Serialize>(
             let _ = remove_file(&temp_path);
             Err(CsiError::Io(e))
         }
-    }
-}
-
-/// Read JSON file, returning the parsed value and a flag indicating if it was partially published.
-/// Partial publish means the file exists but is marked as incomplete.
-#[allow(dead_code)]
-pub(crate) fn read_json_with_partial_flag<T: serde::de::DeserializeOwned>(
-    path: &Path,
-) -> Result<Option<(T, bool)>, CsiError> {
-    match std::fs::read(path) {
-        Ok(contents) => {
-            let value: T = serde_json::from_slice(&contents)?;
-            Ok(Some((value, false))) // Currently no partial flag in file format yet
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(CsiError::Io(e)),
     }
 }
 

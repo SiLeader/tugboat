@@ -2,8 +2,8 @@ use crate::base::TugboatController;
 use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use crate::provisioning::{
-    PV_FINALIZER, is_managed_pv, load_secret_reference, managed_pv_label_selector,
-    provisioner_config, pv_provisioner, should_delete_backing_volume,
+    PV_FINALIZER, is_managed_pv, is_retryable_csi_cleanup_error, load_secret_reference,
+    managed_pv_label_selector, provisioner_config, pv_provisioner, should_delete_backing_volume,
 };
 use std::time::Duration;
 use tokio::time::sleep;
@@ -285,28 +285,9 @@ impl PersistentVolumeCleanupReconciler {
     }
 }
 
-fn is_retryable_csi_cleanup_error(error: &tugboat_csi_operator::Error) -> bool {
-    match error {
-        tugboat_csi_operator::Error::RpcTimeout
-        | tugboat_csi_operator::Error::SocketConnectionTimeout
-        | tugboat_csi_operator::Error::GrpcTransport(_) => true,
-        tugboat_csi_operator::Error::Grpc(status) => matches!(
-            status.code(),
-            tonic::Code::Cancelled
-                | tonic::Code::Unavailable
-                | tonic::Code::DeadlineExceeded
-                | tonic::Code::Aborted
-                | tonic::Code::ResourceExhausted
-                | tonic::Code::Unknown
-                | tonic::Code::Internal
-        ),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::is_retryable_csi_cleanup_error;
+    use crate::provisioning::is_retryable_csi_cleanup_error;
     use tonic::{Code, Status};
 
     #[test]

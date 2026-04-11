@@ -3,9 +3,10 @@ use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use crate::provisioning::{
     build_persistent_volume, claim_access_modes, claim_access_type, dynamic_volume_name,
-    existing_pv_matches_claim, load_secret_reference, persistent_volume_capacity_bytes,
-    provisioner_config, pvc_identity, reclaim_policy_from_storage_class, requested_capacity_bytes,
-    storage_class_csi_config, storage_class_provisioner,
+    existing_pv_matches_claim, is_retryable_csi_cleanup_error, load_secret_reference,
+    persistent_volume_capacity_bytes, provisioner_config, pvc_identity,
+    reclaim_policy_from_storage_class, requested_capacity_bytes, storage_class_csi_config,
+    storage_class_provisioner,
 };
 use std::time::Duration;
 use tokio::time::sleep;
@@ -565,53 +566,6 @@ impl PvcProvisionerReconciler {
             }
         }
         false
-    }
-}
-
-fn is_retryable_csi_cleanup_error(error: &tugboat_csi_operator::Error) -> bool {
-    match error {
-        tugboat_csi_operator::Error::RpcTimeout
-        | tugboat_csi_operator::Error::SocketConnectionTimeout
-        | tugboat_csi_operator::Error::GrpcTransport(_) => true,
-        tugboat_csi_operator::Error::Grpc(status) => matches!(
-            status.code(),
-            tonic::Code::Cancelled
-                | tonic::Code::Unavailable
-                | tonic::Code::DeadlineExceeded
-                | tonic::Code::Aborted
-                | tonic::Code::ResourceExhausted
-                | tonic::Code::Unknown
-                | tonic::Code::Internal
-        ),
-        _ => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_retryable_csi_cleanup_error;
-    use tonic::{Code, Status};
-
-    #[test]
-    fn classifies_retryable_csi_cleanup_errors() {
-        assert!(is_retryable_csi_cleanup_error(
-            &tugboat_csi_operator::Error::RpcTimeout
-        ));
-        assert!(is_retryable_csi_cleanup_error(
-            &tugboat_csi_operator::Error::Grpc(Status::new(Code::Cancelled, "transient"))
-        ));
-        assert!(is_retryable_csi_cleanup_error(
-            &tugboat_csi_operator::Error::Grpc(Status::new(Code::Unavailable, "transient"))
-        ));
-        assert!(!is_retryable_csi_cleanup_error(
-            &tugboat_csi_operator::Error::VolumeNotFound
-        ));
-        assert!(!is_retryable_csi_cleanup_error(
-            &tugboat_csi_operator::Error::Grpc(Status::new(Code::InvalidArgument, "fatal"))
-        ));
-        assert!(!is_retryable_csi_cleanup_error(
-            &tugboat_csi_operator::Error::InvalidSocketPath("x".to_string())
-        ));
     }
 }
 

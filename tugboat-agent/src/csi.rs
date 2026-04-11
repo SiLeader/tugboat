@@ -287,8 +287,8 @@ impl CsiWrapper {
                 Ok(_) => {}
                 Err(err) => {
                     let context = "controller-published volume after stage failure";
-                    if published.controller_published {
-                        if let Err(rollback_err) = self
+                    if published.controller_published
+                        && let Err(rollback_err) = self
                             .retry_csi_operation(
                                 "rollback controller unpublish after stage failure",
                                 &published.volume_id,
@@ -313,14 +313,13 @@ impl CsiWrapper {
                                 },
                             )
                             .await
-                        {
-                            let _ = cleanup_directory_path(staging_target_path);
-                            return Err(CsiError::RollbackFailed {
-                                context: context.to_string(),
-                                original: err.to_string(),
-                                rollback: rollback_err.to_string(),
-                            });
-                        }
+                    {
+                        let _ = cleanup_directory_path(staging_target_path);
+                        return Err(CsiError::RollbackFailed {
+                            context: context.to_string(),
+                            original: err.to_string(),
+                            rollback: rollback_err.to_string(),
+                        });
                     }
                     let _ = cleanup_directory_path(staging_target_path);
                     return Err(err);
@@ -803,6 +802,8 @@ impl CsiWrapper {
         })?;
 
         let path = self.state_path_for_volume(volume)?;
+        // Capture parent before path is moved into the closure.
+        let parent_dir = path.parent().map(|p| p.to_path_buf());
         let state_manager = self.state_manager.clone();
 
         state_manager
@@ -813,7 +814,19 @@ impl CsiWrapper {
                 }
                 Ok(())
             })
-            .await
+            .await?;
+
+        // Once the per-ship state directory is gone there will be no further
+        // state operations for this ship (IDs are UUIDs, never reused). Remove
+        // the lock entry to prevent unbounded map growth in long-running agents
+        // with high ship churn.
+        if let Some(parent) = parent_dir
+            && !parent.exists()
+        {
+            self.state_manager.remove_lock(ship_id);
+        }
+
+        Ok(())
     }
 
     fn state_path_for_volume(&self, volume: &PublishedVolume) -> Result<PathBuf, CsiError> {
