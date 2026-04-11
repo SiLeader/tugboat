@@ -219,9 +219,10 @@ fn required_plugins(spec: Option<&NetworkClassSpec>) -> Result<Vec<&'static str>
         return Err("NetworkClass spec is missing.".to_string());
     };
 
-    match normalized_plugin(spec) {
-        "bridge" => Ok(vec!["bridge", "loopback"]),
-        "flannel" => {
+    let plugin = normalized_plugin(spec);
+    if plugin.eq_ignore_ascii_case("bridge") {
+        Ok(vec!["bridge", "loopback"])
+    } else if plugin.eq_ignore_ascii_case("flannel") {
             let mut plugins = vec!["bridge", "flannel", "loopback"];
             if spec
                 .flannel
@@ -232,11 +233,11 @@ fn required_plugins(spec: Option<&NetworkClassSpec>) -> Result<Vec<&'static str>
                 plugins.push("portmap");
             }
             Ok(plugins)
-        }
-        other => Err(format!(
+    } else {
+        Err(format!(
             "Unsupported cniPlugin '{}'. Supported values are bridge and flannel.",
-            other
-        )),
+            plugin
+        ))
     }
 }
 
@@ -297,6 +298,24 @@ mod tests {
 
         assert_eq!(status.conditions[0].status, "False");
         assert!(status.conditions[0].message.contains("Unsupported"));
+    }
+
+    #[test]
+    fn flannel_plugin_name_is_case_insensitive() {
+        let status = build_network_class_status(
+            Some(&NetworkClassSpec {
+                cni_plugin: "FlAnNeL".to_string(),
+                ..Default::default()
+            }),
+            &[node_with_plugins(&[
+                ("bridge", true),
+                ("loopback", true),
+                ("flannel", true),
+            ])],
+        );
+
+        assert_eq!(status.conditions[0].status, "True");
+        assert_eq!(status.conditions[1].status, "True");
     }
 
     #[test]

@@ -168,28 +168,24 @@ fn collect_required_plugins(
     network_ref: &ShipNetworkClassReference,
 ) -> Result<(), String> {
     let plugin = normalized_plugin(spec);
-    match plugin {
-        "bridge" => {
-            required_plugins.insert("bridge".to_string());
+    if plugin.eq_ignore_ascii_case("bridge") {
+        required_plugins.insert("bridge".to_string());
+    } else if plugin.eq_ignore_ascii_case("flannel") {
+        required_plugins.insert("bridge".to_string());
+        required_plugins.insert("flannel".to_string());
+        if spec
+            .flannel
+            .as_ref()
+            .and_then(|flannel| flannel.port_mappings)
+            .unwrap_or(false)
+        {
+            required_plugins.insert("portmap".to_string());
         }
-        "flannel" => {
-            required_plugins.insert("bridge".to_string());
-            required_plugins.insert("flannel".to_string());
-            if spec
-                .flannel
-                .as_ref()
-                .and_then(|flannel| flannel.port_mappings)
-                .unwrap_or(false)
-            {
-                required_plugins.insert("portmap".to_string());
-            }
-        }
-        other => {
-            return Err(format!(
-                "network reference '{}' requests unsupported cniPlugin '{}'",
-                network_ref.name, other
-            ));
-        }
+    } else {
+        return Err(format!(
+            "network reference '{}' requests unsupported cniPlugin '{}'",
+            network_ref.name, plugin
+        ));
     }
 
     Ok(())
@@ -284,6 +280,37 @@ mod tests {
             FilterResult::Reject(reason) => assert!(reason.contains("portmap")),
             FilterResult::Accept => panic!("expected node to be rejected"),
         }
+    }
+
+    #[test]
+    fn accepts_mixed_case_flannel_plugin_name() {
+        let filter = NetworkFitFilter;
+        let ctx = scheduling_context(
+            vec![],
+            vec![ClusterNetworkClass {
+                object_meta: Some(ObjectMeta {
+                    name: Some("overlay".to_string()),
+                    ..Default::default()
+                }),
+                spec: Some(NetworkClassSpec {
+                    cni_plugin: "FlAnNeL".to_string(),
+                    ..Default::default()
+                }),
+                status: Some(NetworkClassStatus {
+                    ready_nodes: vec!["node-a".to_string()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ship(vec![network_ref("ClusterNetworkClass", "overlay")]),
+        );
+        let node = node_with_plugins(&[
+            ("loopback", true, "ready"),
+            ("bridge", true, "ready"),
+            ("flannel", true, "ready"),
+        ]);
+
+        assert!(matches!(filter.filter(&ctx, &node), FilterResult::Accept));
     }
 
     #[test]

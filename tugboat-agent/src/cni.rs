@@ -22,6 +22,8 @@ use tugboat_resources::manifests::core::v1::NetworkClassSpec;
 use tugboat_vm_runtime_interface::run::VmNetworkConfig;
 
 const CNI_VERSION: &str = "1.0.0";
+const DEFAULT_FLANNEL_SUBNET_FILE: &str = "/run/flannel/subnet.env";
+const DEFAULT_FLANNEL_DATA_DIR: &str = "/run/flannel";
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniWrapper {
@@ -243,20 +245,10 @@ impl CniWrapper {
         let flannel = config.info.spec.flannel.as_ref();
         let subnet_file = flannel
             .and_then(|settings| option_if_not_empty(&settings.subnet_file))
-            .ok_or_else(|| {
-                tugboat_cni_operator::Error::InvalidConfiguration(format!(
-                    "NetworkClass '{}' uses flannel but 'flannel.subnet_file' is required",
-                    network_class_identifier(&config.info)
-                ))
-            })?;
+            .unwrap_or_else(|| DEFAULT_FLANNEL_SUBNET_FILE.to_string());
         let data_dir = flannel
             .and_then(|settings| option_if_not_empty(&settings.data_dir))
-            .ok_or_else(|| {
-                tugboat_cni_operator::Error::InvalidConfiguration(format!(
-                    "NetworkClass '{}' uses flannel but 'flannel.data_dir' is required",
-                    network_class_identifier(&config.info)
-                ))
-            })?;
+            .unwrap_or_else(|| DEFAULT_FLANNEL_DATA_DIR.to_string());
         let default_gateway = flannel
             .and_then(|settings| settings.default_gateway)
             .unwrap_or(config.info.spec.cluster_network.unwrap_or(true));
@@ -299,7 +291,8 @@ impl CniWrapper {
 }
 
 fn option_if_not_empty(value: &str) -> Option<String> {
-    (!value.trim().is_empty()).then(|| value.to_string())
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn network_class_identifier(info: &NetworkClassInfo) -> String {
@@ -456,8 +449,8 @@ mod tests {
     }
 
     #[test]
-    fn flannel_requires_subnet_file() {
-        let err = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
+    fn flannel_uses_default_subnet_file_when_missing() {
+        let conf = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
             cni_plugin: "flannel".to_string(),
             flannel: Some(FlannelNetworkClass {
                 subnet_file: " ".to_string(),
@@ -466,18 +459,18 @@ mod tests {
             }),
             ..Default::default()
         }))
-        .unwrap_err();
+        .unwrap();
 
         assert!(matches!(
-            err,
-            tugboat_cni_operator::Error::InvalidConfiguration(message)
-                if message.contains("flannel.subnet_file")
+            &conf.plugins[0],
+            CniConfContent::Flannel { subnet_file, .. }
+                if subnet_file.as_deref() == Some(super::DEFAULT_FLANNEL_SUBNET_FILE)
         ));
     }
 
     #[test]
-    fn flannel_requires_data_dir() {
-        let err = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
+    fn flannel_uses_default_data_dir_when_missing() {
+        let conf = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
             cni_plugin: "flannel".to_string(),
             flannel: Some(FlannelNetworkClass {
                 subnet_file: "/run/flannel/subnet.env".to_string(),
@@ -486,12 +479,12 @@ mod tests {
             }),
             ..Default::default()
         }))
-        .unwrap_err();
+        .unwrap();
 
         assert!(matches!(
-            err,
-            tugboat_cni_operator::Error::InvalidConfiguration(message)
-                if message.contains("flannel.data_dir")
+            &conf.plugins[0],
+            CniConfContent::Flannel { data_dir, .. }
+                if data_dir.as_deref() == Some(super::DEFAULT_FLANNEL_DATA_DIR)
         ));
     }
 
