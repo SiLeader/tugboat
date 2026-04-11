@@ -363,11 +363,21 @@ impl ShipReconciler {
             })
             .collect::<Vec<_>>();
         for plan in removed_network_plans {
+            let iface_name = plan.vm.iface_name.clone();
+            let network_key = network_class_info_key(&plan.info);
             if let Err(err) = self.cni.del_single(ship_id, plan).await {
-                warn!(
-                    "Failed to clean up hotplugged NIC resources for ship '{}': {}",
-                    ship_id, err
-                );
+                self.handle_hotplug_recreate_failure(
+                    ship,
+                    ship_id,
+                    namespace,
+                    &prepared,
+                    format!(
+                        "Failed to clean up removed hotplug network '{network_key}' ({iface_name}): {err}"
+                    ),
+                    "Hotplug cleanup failed",
+                )
+                .await?;
+                return Ok(true);
             }
         }
 

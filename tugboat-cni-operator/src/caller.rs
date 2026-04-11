@@ -17,6 +17,7 @@ use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniCaller {
@@ -72,13 +73,14 @@ impl CniCaller {
         config_file: impl AsRef<Path>,
     ) -> Result<(), crate::error::Error> {
         let file = std::fs::File::open(config_file)?;
-        println!("===== BEGIN DUMP NETNS DIR =====");
-        if let Ok(rd) = self.net_ns_base_path.read_dir() {
-            for entry in rd.flatten() {
-                println!("Netns: {:?}", entry.path());
-            }
-        }
-        println!("===== END DUMP NETNS DIR =====");
+        debug!(
+            "Executing CNI command '{}' for type '{}' container '{}' iface '{}': netns base '{}'",
+            command,
+            cni_type,
+            id,
+            iface_name,
+            self.net_ns_base_path.display()
+        );
 
         let mut child = Command::new(self.bin_path.join(cni_type))
             .env("CNI_COMMAND", command)
