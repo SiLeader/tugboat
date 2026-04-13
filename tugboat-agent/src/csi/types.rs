@@ -72,7 +72,6 @@ pub(crate) enum CsiError {
     #[error(
         "Failed to persist published volume state for '{volume_id}' (mounted on node but state file write failed): {reason}"
     )]
-    #[allow(dead_code)]
     PublishPartialState {
         volume_id: String,
         reason: String,
