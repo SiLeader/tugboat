@@ -15,13 +15,11 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, NamespacedPathParams};
+use crate::endpoints::{ListQuery, NamespacedNamePathParams, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::apps::v1::Deployment;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -44,12 +42,6 @@ pub(super) async fn handle_deployment_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct DeploymentPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = Deployment),
@@ -63,7 +55,7 @@ pub(super) struct DeploymentPathParams {
     )]
 #[delete("/apis/apps/v1/namespaces/{namespace}/deployments/{name}")]
 pub(super) async fn handle_deployment_delete(
-    path: Path<DeploymentPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Deployment>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -131,7 +123,7 @@ pub(super) async fn handle_deployment_list_all(
     )]
 #[get("/apis/apps/v1/namespaces/{namespace}/deployments/{name}")]
 pub(super) async fn handle_deployment_read(
-    path: Path<DeploymentPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Deployment>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -152,7 +144,7 @@ pub(super) async fn handle_deployment_read(
     )]
 #[put("/apis/apps/v1/namespaces/{namespace}/deployments/{name}")]
 pub(super) async fn handle_deployment_replace(
-    path: Path<DeploymentPathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<Deployment>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Deployment>, Box<StatusResponse>> {
@@ -163,7 +155,7 @@ pub(super) async fn handle_deployment_replace(
         path.name,
         replacement.into_inner(),
         ReplaceOptions {
-            preserve_status: false,
+            preserve_status: true,
             use_client_resource_version: true,
             update_generation: true,
         },
@@ -185,7 +177,7 @@ pub(super) async fn handle_deployment_replace(
     )]
 #[patch("/apis/apps/v1/namespaces/{namespace}/deployments/{name}")]
 pub(super) async fn handle_deployment_patch(
-    path: Path<DeploymentPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Deployment>, Box<StatusResponse>> {
@@ -196,7 +188,7 @@ pub(super) async fn handle_deployment_patch(
         path.name,
         patch.into_inner(),
         ReplaceOptions {
-            preserve_status: false,
+            preserve_status: true,
             use_client_resource_version: true,
             update_generation: true,
         },
@@ -218,7 +210,7 @@ pub(super) async fn handle_deployment_patch(
     )]
 #[patch("/apis/apps/v1/namespaces/{namespace}/deployments/{name}/status")]
 pub(super) async fn handle_deployment_status_patch(
-    path: Path<DeploymentPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Deployment>, Box<StatusResponse>> {
@@ -246,7 +238,7 @@ pub(super) async fn handle_deployment_status_patch(
     )]
 #[put("/apis/apps/v1/namespaces/{namespace}/deployments/{name}/status")]
 pub(super) async fn handle_deployment_status_replace(
-    path: Path<DeploymentPathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<Deployment>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Deployment>, Box<StatusResponse>> {

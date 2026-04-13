@@ -13,13 +13,11 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
-use crate::endpoints::{ListQuery, resource_handlers};
+use crate::endpoints::{ClusterNamePathParams, ListQuery, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, post};
-use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::RuntimeClass;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -37,11 +35,6 @@ pub(super) async fn handle_runtimeclass_create(
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct RuntimeClassDeletePathParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = RuntimeClass),
@@ -54,7 +47,7 @@ pub(super) struct RuntimeClassDeletePathParams {
     )]
 #[delete("/api/v1/runtimeclasses/{name}")]
 pub(super) async fn handle_runtimeclass_delete(
-    path: Path<RuntimeClassDeletePathParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<RuntimeClass>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<RuntimeClass>(&operator, None, path.into_inner().name)
@@ -81,11 +74,6 @@ pub(super) async fn handle_runtimeclass_list(
     resource_handlers::list_resources::<RuntimeClass>(&operator, query.into_inner(), None).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ReadParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = RuntimeClass),
@@ -98,7 +86,7 @@ pub(super) struct ReadParams {
     )]
 #[get("/api/v1/runtimeclasses/{name}")]
 pub(super) async fn handle_runtimeclass_read(
-    path: Path<ReadParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<RuntimeClass>, Box<StatusResponse>> {
     resource_handlers::read_resource::<RuntimeClass>(&operator, None, path.into_inner().name).await

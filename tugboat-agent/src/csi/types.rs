@@ -61,6 +61,22 @@ pub(crate) enum CsiError {
     Join(#[from] tokio::task::JoinError),
     #[error("Mount namespace error: {0}")]
     MountNamespace(#[from] mountns::Error),
+    #[error(
+        "CSI operation failed and rollback also failed ({context}); original: {original}; rollback: {rollback}"
+    )]
+    RollbackFailed {
+        context: String,
+        original: String,
+        rollback: String,
+    },
+    #[error(
+        "Failed to persist published volume state for '{volume_id}' (mounted on node but state file write failed): {reason}"
+    )]
+    PublishPartialState {
+        volume_id: String,
+        reason: String,
+        published: Box<PublishedVolume>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +113,13 @@ impl PublishedVolume {
     /// volumes persisted before the `pvc_name` field was introduced.
     pub fn effective_pvc_name(&self) -> &str {
         self.pvc_name.as_deref().unwrap_or(&self.claim_name)
+    }
+
+    /// Extracts the ship ID from the mount namespace path.
+    /// Mount namespace path is typically `/var/run/tugboat/mntns/{ship-id}`.
+    pub fn extract_ship_id(&self) -> Option<&str> {
+        let path = std::path::Path::new(&self.mount_namespace_path);
+        path.file_name()?.to_str()
     }
 }
 

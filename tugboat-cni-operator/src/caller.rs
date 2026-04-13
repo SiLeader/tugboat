@@ -17,6 +17,7 @@ use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniCaller {
@@ -26,6 +27,35 @@ pub(crate) struct CniCaller {
 
 impl CniCaller {
     const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+    const MAX_CAPTURE_BYTES: usize = 64 * 1024;
+
+    async fn read_capped<R>(reader: &mut R, cap: usize) -> Vec<u8>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        let mut out = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        loop {
+            match reader.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if n >= cap {
+                        out.clear();
+                        out.extend_from_slice(&chunk[n - cap..n]);
+                        continue;
+                    }
+                    let total = out.len() + n;
+                    if total > cap {
+                        let drop_len = total - cap;
+                        out.drain(..drop_len);
+                    }
+                    out.extend_from_slice(&chunk[..n]);
+                }
+                Err(_) => break,
+            }
+        }
+        out
+    }
 
     pub(crate) fn new(bin_path: impl AsRef<Path>, net_ns_base_path: impl AsRef<Path>) -> Self {
         Self {
@@ -43,13 +73,14 @@ impl CniCaller {
         config_file: impl AsRef<Path>,
     ) -> Result<(), crate::error::Error> {
         let file = std::fs::File::open(config_file)?;
-        println!("===== BEGIN DUMP NETNS DIR =====");
-        if let Ok(rd) = self.net_ns_base_path.read_dir() {
-            for entry in rd.flatten() {
-                println!("Netns: {:?}", entry.path());
-            }
-        }
-        println!("===== END DUMP NETNS DIR =====");
+        debug!(
+            "Executing CNI command '{}' for type '{}' container '{}' iface '{}': netns base '{}'",
+            command,
+            cni_type,
+            id,
+            iface_name,
+            self.net_ns_base_path.display()
+        );
 
         let mut child = Command::new(self.bin_path.join(cni_type))
             .env("CNI_COMMAND", command)
@@ -71,16 +102,14 @@ impl CniCaller {
             .take()
             .ok_or_else(|| crate::Error::InvalidConfiguration("stderr is not piped".to_string()))?;
 
-        let stdout_task = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            let _ = stdout.read_to_end(&mut bytes).await;
-            bytes
-        });
-        let stderr_task = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            let _ = stderr.read_to_end(&mut bytes).await;
-            bytes
-        });
+        let stdout_task =
+            tokio::spawn(
+                async move { Self::read_capped(&mut stdout, Self::MAX_CAPTURE_BYTES).await },
+            );
+        let stderr_task =
+            tokio::spawn(
+                async move { Self::read_capped(&mut stderr, Self::MAX_CAPTURE_BYTES).await },
+            );
 
         let status = match timeout(Self::COMMAND_TIMEOUT, child.wait()).await {
             Ok(Ok(status)) => status,

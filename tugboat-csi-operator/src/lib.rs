@@ -18,16 +18,50 @@ pub use error::Error;
 use hyper_util::rt::TokioIo;
 use std::collections::HashMap;
 use std::io;
+use std::path::Path;
+use std::sync::Arc;
 use tokio::net::UnixStream;
+use tokio::sync::RwLock;
+use tokio::time::{Duration, timeout};
 use tonic::Code;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
 
+const DEFAULT_SOCKET_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(not(test))]
+const DEFAULT_RPC_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const DEFAULT_RPC_CALL_TIMEOUT: Duration = Duration::from_millis(200);
+
 mod error;
 mod proto;
 
-#[derive(Clone, Default)]
-pub struct TugboatCsiOperator {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CsiTimeouts {
+    pub socket_connect_timeout: Duration,
+    pub rpc_call_timeout: Duration,
+}
+
+impl Default for CsiTimeouts {
+    fn default() -> Self {
+        Self {
+            socket_connect_timeout: DEFAULT_SOCKET_CONNECT_TIMEOUT,
+            rpc_call_timeout: DEFAULT_RPC_CALL_TIMEOUT,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TugboatCsiOperator {
+    timeouts: CsiTimeouts,
+    channel_cache: Arc<RwLock<HashMap<String, Channel>>>,
+}
+
+impl Default for TugboatCsiOperator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CsiAccessMode {
@@ -100,6 +134,47 @@ pub struct NodeVolumeStats {
 }
 
 impl TugboatCsiOperator {
+    pub fn new() -> Self {
+        Self::with_timeouts(CsiTimeouts::default())
+    }
+
+    pub fn with_timeouts(timeouts: CsiTimeouts) -> Self {
+        Self {
+            timeouts,
+            channel_cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    async fn connect_node_client(
+        &self,
+        socket_path: &str,
+    ) -> Result<NodeClient<Channel>, error::Error> {
+        Ok(NodeClient::new(self.connect_channel(socket_path).await?))
+    }
+
+    async fn connect_controller_client(
+        &self,
+        socket_path: &str,
+    ) -> Result<ControllerClient<Channel>, error::Error> {
+        Ok(ControllerClient::new(
+            self.connect_channel(socket_path).await?,
+        ))
+    }
+
+    async fn connect_channel(&self, socket_path: &str) -> Result<Channel, error::Error> {
+        let socket_path = normalize_socket_path(socket_path)?;
+
+        if let Some(cached) = self.channel_cache.read().await.get(&socket_path).cloned() {
+            return Ok(cached);
+        }
+
+        let channel =
+            connect_channel_once(&socket_path, self.timeouts.socket_connect_timeout).await?;
+        let mut cache = self.channel_cache.write().await;
+        let entry = cache.entry(socket_path).or_insert_with(|| channel.clone());
+        Ok(entry.clone())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn create_volume(
         &self,
@@ -112,6 +187,10 @@ impl TugboatCsiOperator {
         secrets: HashMap<String, String>,
         mount_flags: Vec<String>,
     ) -> Result<ProvisionedVolume, error::Error> {
+        validate_volume_name(&name)?;
+        validate_optional_capacity_bytes(capacity_bytes)?;
+        validate_access_modes(&access_modes)?;
+
         let req = CreateVolumeRequest {
             name,
             capacity_range: capacity_bytes.map(|required_bytes| CapacityRange {
@@ -131,13 +210,16 @@ impl TugboatCsiOperator {
             mutable_parameters: Default::default(),
         };
 
-        let mut client = connect_controller_client(socket_path).await?;
-        let response = client
-            .create_volume(req)
+        let mut client = self.connect_controller_client(socket_path).await?;
+        let response = timeout(self.timeouts.rpc_call_timeout, client.create_volume(req))
             .await
+            .map_err(|_| error::Error::RpcTimeout)?
             .map_err(map_controller_grpc_error)?
             .into_inner();
         let volume = response.volume.ok_or(error::Error::MissingVolume)?;
+        if volume.volume_id.trim().is_empty() {
+            return Err(error::Error::MissingVolumeId);
+        }
 
         Ok(ProvisionedVolume {
             volume_id: volume.volume_id,
@@ -154,10 +236,10 @@ impl TugboatCsiOperator {
     ) -> Result<(), error::Error> {
         let req = DeleteVolumeRequest { volume_id, secrets };
 
-        let mut client = connect_controller_client(socket_path).await?;
-        client
-            .delete_volume(req)
+        let mut client = self.connect_controller_client(socket_path).await?;
+        timeout(self.timeouts.rpc_call_timeout, client.delete_volume(req))
             .await
+            .map_err(|_| error::Error::RpcTimeout)?
             .map(|_| ())
             .map_err(map_controller_grpc_error)
     }
@@ -166,10 +248,13 @@ impl TugboatCsiOperator {
         &self,
         socket_path: &str,
     ) -> Result<Vec<ControllerCapability>, error::Error> {
-        let mut client = connect_controller_client(socket_path).await?;
-        let response = match client
-            .controller_get_capabilities(ControllerGetCapabilitiesRequest {})
-            .await
+        let mut client = self.connect_controller_client(socket_path).await?;
+        let response = match timeout(
+            self.timeouts.rpc_call_timeout,
+            client.controller_get_capabilities(ControllerGetCapabilitiesRequest {}),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
         {
             Ok(response) => response.into_inner(),
             Err(status) if status.code() == Code::Unimplemented => return Ok(Vec::new()),
@@ -227,12 +312,15 @@ impl TugboatCsiOperator {
             volume_context,
         };
 
-        let mut client = connect_controller_client(socket_path).await?;
-        let response = client
-            .controller_publish_volume(req)
-            .await
-            .map_err(map_controller_grpc_error)?
-            .into_inner();
+        let mut client = self.connect_controller_client(socket_path).await?;
+        let response = timeout(
+            self.timeouts.rpc_call_timeout,
+            client.controller_publish_volume(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map_err(map_controller_grpc_error)?
+        .into_inner();
         Ok(response.publish_context)
     }
 
@@ -249,12 +337,15 @@ impl TugboatCsiOperator {
             secrets,
         };
 
-        let mut client = connect_controller_client(socket_path).await?;
-        client
-            .controller_unpublish_volume(req)
-            .await
-            .map(|_| ())
-            .map_err(map_controller_grpc_error)
+        let mut client = self.connect_controller_client(socket_path).await?;
+        timeout(
+            self.timeouts.rpc_call_timeout,
+            client.controller_unpublish_volume(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map(|_| ())
+        .map_err(map_controller_grpc_error)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -269,6 +360,8 @@ impl TugboatCsiOperator {
         mount_flags: Vec<String>,
         secrets: HashMap<String, String>,
     ) -> Result<ControllerExpandedVolume, error::Error> {
+        validate_required_capacity_bytes(capacity_bytes)?;
+
         let req = ControllerExpandVolumeRequest {
             volume_id,
             capacity_range: Some(CapacityRange {
@@ -284,12 +377,15 @@ impl TugboatCsiOperator {
             )),
         };
 
-        let mut client = connect_controller_client(socket_path).await?;
-        let response = client
-            .controller_expand_volume(req)
-            .await
-            .map_err(map_controller_grpc_error)?
-            .into_inner();
+        let mut client = self.connect_controller_client(socket_path).await?;
+        let response = timeout(
+            self.timeouts.rpc_call_timeout,
+            client.controller_expand_volume(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map_err(map_controller_grpc_error)?
+        .into_inner();
         Ok(ControllerExpandedVolume {
             capacity_bytes: response.capacity_bytes,
             node_expansion_required: response.node_expansion_required,
@@ -300,12 +396,18 @@ impl TugboatCsiOperator {
         &self,
         socket_path: &str,
     ) -> Result<Vec<NodeCapability>, error::Error> {
-        let mut client = connect_node_client(socket_path).await?;
-        let response = client
-            .node_get_capabilities(NodeGetCapabilitiesRequest {})
-            .await
-            .map_err(map_grpc_error)?
-            .into_inner();
+        let mut client = self.connect_node_client(socket_path).await?;
+        let response = match timeout(
+            self.timeouts.rpc_call_timeout,
+            client.node_get_capabilities(NodeGetCapabilitiesRequest {}),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        {
+            Ok(response) => response.into_inner(),
+            Err(status) if status.code() == Code::Unimplemented => return Ok(Vec::new()),
+            Err(status) => return Err(map_grpc_error(status)),
+        };
 
         Ok(response
             .capabilities
@@ -371,12 +473,15 @@ impl TugboatCsiOperator {
             staging_target_path: staging_target_path.unwrap_or_default(),
         };
 
-        let mut client = connect_node_client(socket_path).await?;
-        client
-            .node_publish_volume(req)
-            .await
-            .map(|_| ())
-            .map_err(map_grpc_error)
+        let mut client = self.connect_node_client(socket_path).await?;
+        timeout(
+            self.timeouts.rpc_call_timeout,
+            client.node_publish_volume(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map(|_| ())
+        .map_err(map_grpc_error)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -407,12 +512,15 @@ impl TugboatCsiOperator {
             volume_context,
         };
 
-        let mut client = connect_node_client(socket_path).await?;
-        client
-            .node_stage_volume(req)
-            .await
-            .map(|_| ())
-            .map_err(map_grpc_error)
+        let mut client = self.connect_node_client(socket_path).await?;
+        timeout(
+            self.timeouts.rpc_call_timeout,
+            client.node_stage_volume(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map(|_| ())
+        .map_err(map_grpc_error)
     }
 
     pub async fn unpublish(
@@ -426,12 +534,15 @@ impl TugboatCsiOperator {
             target_path,
         };
 
-        let mut client = connect_node_client(socket_path).await?;
-        client
-            .node_unpublish_volume(req)
-            .await
-            .map(|_| ())
-            .map_err(map_grpc_error)
+        let mut client = self.connect_node_client(socket_path).await?;
+        timeout(
+            self.timeouts.rpc_call_timeout,
+            client.node_unpublish_volume(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map(|_| ())
+        .map_err(map_grpc_error)
     }
 
     pub async fn unstage(
@@ -445,12 +556,15 @@ impl TugboatCsiOperator {
             staging_target_path,
         };
 
-        let mut client = connect_node_client(socket_path).await?;
-        client
-            .node_unstage_volume(req)
-            .await
-            .map(|_| ())
-            .map_err(map_grpc_error)
+        let mut client = self.connect_node_client(socket_path).await?;
+        timeout(
+            self.timeouts.rpc_call_timeout,
+            client.node_unstage_volume(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map(|_| ())
+        .map_err(map_grpc_error)
     }
 
     pub async fn node_volume_stats(
@@ -466,12 +580,15 @@ impl TugboatCsiOperator {
             staging_target_path: staging_target_path.unwrap_or_default(),
         };
 
-        let mut client = connect_node_client(socket_path).await?;
-        let response = client
-            .node_get_volume_stats(req)
-            .await
-            .map_err(map_grpc_error)?
-            .into_inner();
+        let mut client = self.connect_node_client(socket_path).await?;
+        let response = timeout(
+            self.timeouts.rpc_call_timeout,
+            client.node_get_volume_stats(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map_err(map_grpc_error)?
+        .into_inner();
         Ok(NodeVolumeStats {
             usage: response
                 .usage
@@ -509,6 +626,8 @@ impl TugboatCsiOperator {
         fs_type: Option<String>,
         secrets: HashMap<String, String>,
     ) -> Result<i64, error::Error> {
+        validate_required_capacity_bytes(capacity_bytes)?;
+
         let req = NodeExpandVolumeRequest {
             volume_id,
             volume_path,
@@ -526,12 +645,15 @@ impl TugboatCsiOperator {
             secrets,
         };
 
-        let mut client = connect_node_client(socket_path).await?;
-        let response = client
-            .node_expand_volume(req)
-            .await
-            .map_err(map_grpc_error)?
-            .into_inner();
+        let mut client = self.connect_node_client(socket_path).await?;
+        let response = timeout(
+            self.timeouts.rpc_call_timeout,
+            client.node_expand_volume(req),
+        )
+        .await
+        .map_err(|_| error::Error::RpcTimeout)?
+        .map_err(map_grpc_error)?
+        .into_inner();
         Ok(response.capacity_bytes)
     }
 }
@@ -561,41 +683,77 @@ fn volume_capability(
     }
 }
 
-async fn connect_node_client(socket_path: &str) -> Result<NodeClient<Channel>, error::Error> {
-    Ok(NodeClient::new(connect_channel(socket_path).await?))
-}
-
-async fn connect_controller_client(
+async fn connect_channel_once(
     socket_path: &str,
-) -> Result<ControllerClient<Channel>, error::Error> {
-    Ok(ControllerClient::new(connect_channel(socket_path).await?))
+    socket_connect_timeout: Duration,
+) -> Result<Channel, error::Error> {
+    let socket_path = socket_path.to_string();
+    let endpoint =
+        Endpoint::try_from("http://localhost").expect("static tonic endpoint should be valid");
+    let connect_fut = endpoint.connect_with_connector(service_fn(move |_: Uri| {
+        let socket_path = socket_path.clone();
+        async move {
+            let stream = UnixStream::connect(socket_path).await?;
+            Ok::<_, io::Error>(TokioIo::new(stream))
+        }
+    }));
+    timeout(socket_connect_timeout, connect_fut)
+        .await
+        .map_err(|_| error::Error::SocketConnectionTimeout)?
+        .map_err(error::Error::GrpcTransport)
 }
 
-async fn connect_channel(socket_path: &str) -> Result<Channel, error::Error> {
-    let socket_path = normalize_socket_path(socket_path);
-    let channel = Endpoint::try_from("http://[::]:50051")
-        .expect("static tonic endpoint should be valid")
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let socket_path = socket_path.clone();
-            async move {
-                let stream = UnixStream::connect(socket_path).await?;
-                Ok::<_, io::Error>(TokioIo::new(stream))
-            }
-        }))
-        .await?;
-    Ok(channel)
+fn normalize_socket_path(socket_path: &str) -> Result<String, error::Error> {
+    let trimmed = socket_path.trim();
+    let normalized = if let Some(path) = trimmed.strip_prefix("unix://") {
+        path
+    } else if trimmed.contains("://") {
+        return Err(error::Error::InvalidSocketPath(socket_path.to_string()));
+    } else {
+        trimmed
+    };
+
+    if normalized.is_empty() {
+        return Err(error::Error::InvalidSocketPath(socket_path.to_string()));
+    }
+    if !Path::new(normalized).is_absolute() {
+        return Err(error::Error::InvalidSocketPath(socket_path.to_string()));
+    }
+
+    Ok(normalized.to_string())
 }
 
-fn normalize_socket_path(socket_path: &str) -> String {
-    socket_path
-        .strip_prefix("unix://")
-        .unwrap_or(socket_path)
-        .to_string()
+fn validate_volume_name(name: &str) -> Result<(), error::Error> {
+    if name.trim().is_empty() {
+        return Err(error::Error::InvalidVolumeName(name.to_string()));
+    }
+    Ok(())
+}
+
+fn validate_access_modes(access_modes: &[CsiAccessMode]) -> Result<(), error::Error> {
+    if access_modes.is_empty() {
+        return Err(error::Error::MissingAccessModes);
+    }
+    Ok(())
+}
+
+fn validate_optional_capacity_bytes(capacity_bytes: Option<i64>) -> Result<(), error::Error> {
+    if let Some(value) = capacity_bytes {
+        validate_required_capacity_bytes(value)?;
+    }
+    Ok(())
+}
+
+fn validate_required_capacity_bytes(capacity_bytes: i64) -> Result<(), error::Error> {
+    if capacity_bytes <= 0 {
+        return Err(error::Error::InvalidCapacityBytes(capacity_bytes));
+    }
+    Ok(())
 }
 
 fn map_grpc_error(error: tonic::Status) -> error::Error {
     match error.code() {
-        Code::Ok => unreachable!("successful responses are not routed through map_grpc_error"),
+        Code::DeadlineExceeded => error::Error::RpcTimeout,
         Code::AlreadyExists => error::Error::TargetPathAlreadyExists,
         Code::NotFound => error::Error::TargetPathNotFound,
         Code::FailedPrecondition => error::Error::FailedPrecondition,
@@ -605,7 +763,7 @@ fn map_grpc_error(error: tonic::Status) -> error::Error {
 
 fn map_controller_grpc_error(error: tonic::Status) -> error::Error {
     match error.code() {
-        Code::Ok => unreachable!("successful responses are not routed through map_grpc_error"),
+        Code::DeadlineExceeded => error::Error::RpcTimeout,
         Code::AlreadyExists => error::Error::VolumeAlreadyExists,
         Code::NotFound => error::Error::VolumeNotFound,
         Code::FailedPrecondition => error::Error::FailedPrecondition,

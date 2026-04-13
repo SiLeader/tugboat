@@ -2,9 +2,11 @@ use crate::base::TugboatController;
 use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use crate::provisioning::{
-    PV_FINALIZER, is_managed_pv, load_secret_reference, managed_pv_label_selector,
-    provisioner_config, pv_provisioner, should_delete_backing_volume,
+    PV_FINALIZER, is_managed_pv, is_retryable_csi_cleanup_error, load_secret_reference,
+    managed_pv_label_selector, provisioner_config, pv_provisioner, should_delete_backing_volume,
 };
+use std::time::Duration;
+use tokio::time::sleep;
 use tugboat_client::runtime::{
     Action, Controller, FinalizerEvent, ReconcileEvent, Reconciler, finalizer,
 };
@@ -156,17 +158,90 @@ impl PersistentVolumeCleanupReconciler {
         if csi.volume_handle.is_empty() {
             return Err(ControllerError::MissingVolumeHandle { name });
         }
-        let controller_create_secrets =
-            load_secret_reference(&self.client, csi.controller_create_secret_ref.as_ref()).await?;
+        let controller_create_secrets = match load_secret_reference(
+            &self.client,
+            csi.controller_create_secret_ref.as_ref(),
+        )
+        .await
+        {
+            Ok(secrets) => secrets,
+            Err(ControllerError::Client(tugboat_client::Error::Api(status)))
+                if status.code == 404 =>
+            {
+                tracing::warn!(
+                    "CSI cleanup secret for PersistentVolume '{}' was not found (404); retrying cleanup with empty secrets",
+                    name
+                );
+                std::collections::HashMap::new()
+            }
+            Err(err) => return Err(err),
+        };
 
-        self.csi_operator
-            .delete_volume(
-                &provisioner_config.socket_path,
-                csi.volume_handle.clone(),
-                controller_create_secrets,
-            )
-            .await?;
+        self.delete_volume_with_retry(
+            &name,
+            &provisioner_config.socket_path,
+            csi.volume_handle.clone(),
+            controller_create_secrets,
+        )
+        .await?;
         Ok(Action::await_change())
+    }
+
+    async fn delete_volume_with_retry(
+        &self,
+        persistent_volume_name: &str,
+        socket_path: &str,
+        volume_handle: String,
+        secrets: std::collections::HashMap<String, String>,
+    ) -> Result<(), ControllerError> {
+        const MAX_RETRIES: usize = 4;
+        const BASE_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+        for attempt in 1..=MAX_RETRIES {
+            match self
+                .csi_operator
+                .delete_volume(socket_path, volume_handle.clone(), secrets.clone())
+                .await
+            {
+                Ok(()) | Err(tugboat_csi_operator::Error::VolumeNotFound) => return Ok(()),
+                Err(err) if attempt < MAX_RETRIES && is_retryable_csi_cleanup_error(&err) => {
+                    tracing::warn!(
+                        "Failed to delete CSI backing volume '{}' for PersistentVolume '{}' (attempt {}/{}): {}",
+                        volume_handle,
+                        persistent_volume_name,
+                        attempt,
+                        MAX_RETRIES,
+                        err
+                    );
+                    let delay = BASE_RETRY_DELAY.saturating_mul(2u32.pow((attempt - 1) as u32));
+                    sleep(delay).await;
+                }
+                Err(err) => {
+                    if is_retryable_csi_cleanup_error(&err) {
+                        tracing::error!(
+                            "Failed to delete CSI backing volume '{}' for PersistentVolume '{}' after {} attempts: {}",
+                            volume_handle,
+                            persistent_volume_name,
+                            attempt,
+                            err
+                        );
+                    } else {
+                        tracing::error!(
+                            "Failed to delete CSI backing volume '{}' for PersistentVolume '{}' due to non-retryable \
+                             error on attempt {}/{}: {}",
+                            volume_handle,
+                            persistent_volume_name,
+                            attempt,
+                            MAX_RETRIES,
+                            err
+                        );
+                    }
+                    return Err(err.into());
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn bound_claim_exists(
@@ -207,5 +282,33 @@ impl PersistentVolumeCleanupReconciler {
         updated.remove_finalizer(PV_FINALIZER);
         api.replace(&name, updated).await?;
         Ok(Action::await_change())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::provisioning::is_retryable_csi_cleanup_error;
+    use tonic::{Code, Status};
+
+    #[test]
+    fn classifies_retryable_csi_cleanup_errors() {
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::RpcTimeout
+        ));
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::Grpc(Status::new(Code::Cancelled, "transient"))
+        ));
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::Grpc(Status::new(Code::Unavailable, "transient"))
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::VolumeNotFound
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::Grpc(Status::new(Code::PermissionDenied, "fatal"))
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::InvalidVolumeName("bad".to_string())
+        ));
     }
 }

@@ -15,13 +15,11 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, NamespacedPathParams};
+use crate::endpoints::{ListQuery, NamespacedNamePathParams, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::ServiceAccount;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -44,12 +42,6 @@ pub(super) async fn handle_service_account_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ServiceAccountDeletePathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = ServiceAccount),
@@ -63,7 +55,7 @@ pub(super) struct ServiceAccountDeletePathParams {
     )]
 #[delete("/api/v1/namespaces/{namespace}/serviceaccounts/{name}")]
 pub(super) async fn handle_service_account_delete(
-    path: Path<ServiceAccountDeletePathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ServiceAccount>, Box<StatusResponse>> {
     let params = path.into_inner();
@@ -122,12 +114,6 @@ pub(super) async fn handle_service_account_list_all(
     resource_handlers::list_resources::<ServiceAccount>(&operator, query.into_inner(), None).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ServiceAccountReadPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = ServiceAccount),
@@ -141,18 +127,12 @@ pub(super) struct ServiceAccountReadPathParams {
     )]
 #[get("/api/v1/namespaces/{namespace}/serviceaccounts/{name}")]
 pub(super) async fn handle_service_account_read(
-    path: Path<ServiceAccountReadPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ServiceAccount>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<ServiceAccount>(&operator, Some(path.namespace), path.name)
         .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ServiceAccountReplacePathParams {
-    namespace: String,
-    name: String,
 }
 
 #[utoipa::path(
@@ -169,7 +149,7 @@ pub(super) struct ServiceAccountReplacePathParams {
     )]
 #[put("/api/v1/namespaces/{namespace}/serviceaccounts/{name}")]
 pub(super) async fn handle_service_account_replace(
-    path: Path<ServiceAccountReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<ServiceAccount>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ServiceAccount>, Box<StatusResponse>> {
@@ -202,7 +182,7 @@ pub(super) async fn handle_service_account_replace(
     )]
 #[patch("/api/v1/namespaces/{namespace}/serviceaccounts/{name}")]
 pub(super) async fn handle_service_account_patch(
-    path: Path<ServiceAccountReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ServiceAccount>, Box<StatusResponse>> {

@@ -14,7 +14,7 @@
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, resource_handlers};
+use crate::endpoints::{ClusterNamePathParams, ListQuery, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
@@ -94,11 +94,6 @@ pub(super) async fn handle_node_create(
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
-#[derive(serde::Deserialize, ToSchema)]
-pub(super) struct NodeDeletePathParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = Node),
@@ -111,7 +106,7 @@ pub(super) struct NodeDeletePathParams {
     )]
 #[delete("/api/v1/nodes/{name}")]
 pub(super) async fn handle_node_delete(
-    path: Path<NodeDeletePathParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Node>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<Node>(&operator, None, path.into_inner().name).await
@@ -137,11 +132,6 @@ pub(super) async fn handle_node_list(
     resource_handlers::list_resources::<Node>(&operator, query.into_inner(), None).await
 }
 
-#[derive(serde::Deserialize, ToSchema)]
-pub(super) struct ReadParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = Node),
@@ -154,15 +144,10 @@ pub(super) struct ReadParams {
     )]
 #[get("/api/v1/nodes/{name}")]
 pub(super) async fn handle_node_read(
-    path: Path<ReadParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Node>, Box<StatusResponse>> {
     resource_handlers::read_resource::<Node>(&operator, None, path.into_inner().name).await
-}
-
-#[derive(serde::Deserialize, ToSchema)]
-pub(super) struct NodeReplacePathParams {
-    name: String,
 }
 
 #[utoipa::path(
@@ -178,7 +163,7 @@ pub(super) struct NodeReplacePathParams {
     )]
 #[put("/api/v1/nodes/{name}")]
 pub(super) async fn handle_node_replace(
-    path: Path<NodeReplacePathParams>,
+    path: Path<ClusterNamePathParams>,
     replacement: Json<Node>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Node>, Box<StatusResponse>> {
@@ -209,7 +194,7 @@ pub(super) async fn handle_node_replace(
     )]
 #[patch("/api/v1/nodes/{name}")]
 pub(super) async fn handle_node_patch(
-    path: Path<NodePatchPathParams>,
+    path: Path<ClusterNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Node>, Box<StatusResponse>> {
@@ -227,11 +212,6 @@ pub(super) async fn handle_node_patch(
     .await
 }
 
-#[derive(serde::Deserialize, ToSchema)]
-pub(super) struct NodePatchPathParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource updated", body = NodeDrainResponse),
@@ -244,7 +224,7 @@ pub(super) struct NodePatchPathParams {
     )]
 #[post("/api/v1/nodes/{name}/drain")]
 pub(super) async fn handle_node_drain(
-    path: Path<NodePatchPathParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<NodeDrainResponse>, Box<StatusResponse>> {
     let node_name = path.into_inner().name;
@@ -319,7 +299,7 @@ pub(super) async fn handle_node_drain(
     )]
 #[patch("/api/v1/nodes/{name}/status")]
 pub(super) async fn handle_node_status_patch(
-    path: Path<NodePatchPathParams>,
+    path: Path<ClusterNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Node>, Box<StatusResponse>> {
@@ -330,11 +310,6 @@ pub(super) async fn handle_node_status_patch(
         patch.into_inner(),
     )
     .await
-}
-
-#[derive(serde::Deserialize, ToSchema)]
-pub(super) struct NodeStatusReplacePathParams {
-    name: String,
 }
 
 #[utoipa::path(
@@ -350,7 +325,7 @@ pub(super) struct NodeStatusReplacePathParams {
     )]
 #[put("/api/v1/nodes/{name}/status")]
 pub(super) async fn handle_node_status_replace(
-    path: Path<NodeStatusReplacePathParams>,
+    path: Path<ClusterNamePathParams>,
     replacement: Json<Node>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Node>, Box<StatusResponse>> {
@@ -485,41 +460,68 @@ fn plan_node_drain(
             });
             continue;
         };
-
-        if target_node_name == node_name {
-            warnings.push(NodeDrainWarning {
-                ship: ship_key,
-                reason: "selected target node matched the drained node".to_string(),
-            });
-            continue;
+        match build_planned_migration(node_name, ship, &ship_key, target_node_name.clone()) {
+            Ok(migration) => {
+                started.push(migration);
+                shadow_ships.push(reserve_ship_on_target(ship, target_node_name));
+            }
+            Err(warning) => warnings.push(warning),
         }
-
-        let ship_namespace = ship
-            .object_meta
-            .as_ref()
-            .and_then(|meta| meta.namespace.clone())
-            .unwrap_or_else(|| "default".to_string());
-        let ship_name = ship
-            .object_meta
-            .as_ref()
-            .and_then(|meta| meta.name.clone())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        started.push(PlannedMigration {
-            ship_key: ship_key.clone(),
-            ship_namespace,
-            ship_name,
-            target_node_name: target_node_name.clone(),
-        });
-
-        let mut reserved = ship.clone();
-        let reserved_spec = reserved.spec.get_or_insert_with(Default::default);
-        reserved_spec.node_name = Some(target_node_name);
-        reserved_spec.target_node_name = None;
-        shadow_ships.push(reserved);
     }
 
     DrainPlan { started, warnings }
+}
+
+fn build_planned_migration(
+    drained_node_name: &str,
+    ship: &Ship,
+    ship_key: &str,
+    target_node_name: String,
+) -> Result<PlannedMigration, NodeDrainWarning> {
+    if target_node_name == drained_node_name {
+        return Err(NodeDrainWarning {
+            ship: ship_key.to_string(),
+            reason: "selected target node matched the drained node".to_string(),
+        });
+    }
+
+    let ship_namespace = match ship
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.namespace.clone())
+    {
+        Some(ns) => ns,
+        None => {
+            return Err(NodeDrainWarning {
+                ship: ship_key.to_string(),
+                reason: "ship is missing namespace metadata".to_string(),
+            });
+        }
+    };
+    let ship_name = match ship.object_meta.as_ref().and_then(|meta| meta.name.clone()) {
+        Some(name) => name,
+        None => {
+            return Err(NodeDrainWarning {
+                ship: ship_key.to_string(),
+                reason: "ship is missing name metadata".to_string(),
+            });
+        }
+    };
+
+    Ok(PlannedMigration {
+        ship_key: ship_key.to_string(),
+        ship_namespace,
+        ship_name,
+        target_node_name,
+    })
+}
+
+fn reserve_ship_on_target(ship: &Ship, target_node_name: String) -> Ship {
+    let mut reserved = ship.clone();
+    let reserved_spec = reserved.spec.get_or_insert_with(Default::default);
+    reserved_spec.node_name = Some(target_node_name);
+    reserved_spec.target_node_name = None;
+    reserved
 }
 
 fn ensure_ship_supports_migration_storage(

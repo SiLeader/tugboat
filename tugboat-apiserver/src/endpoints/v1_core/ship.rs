@@ -15,17 +15,15 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::{
-    ReplaceOptions, ResourceUpdater, validate_resource_name,
+    ReplaceOptions, ResourceUpdater, validate_resource, validate_resource_name,
 };
-use crate::endpoints::{ListQuery, NamespacedPathParams};
+use crate::endpoints::{ListQuery, NamespacedNamePathParams, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::ShipMigrationExt;
 use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
 use tugboat_resources::manifests::meta::v1::Time;
-use utoipa::ToSchema;
 
 const PHASE_FAILED: &str = "Failed";
 const CONDITION_VM_MIGRATION_ABORTED: &str = "VmMigrationAborted";
@@ -52,12 +50,6 @@ pub(super) async fn handle_ship_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ShipDeletePathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = Ship),
@@ -71,7 +63,7 @@ pub(super) struct ShipDeletePathParams {
     )]
 #[delete("/api/v1/namespaces/{namespace}/ships/{name}")]
 pub(super) async fn handle_ship_delete(
-    path: Path<ShipDeletePathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Ship>, Box<StatusResponse>> {
     let params = path.into_inner();
@@ -125,12 +117,6 @@ pub(super) async fn handle_ship_list_all(
     resource_handlers::list_resources::<Ship>(&operator, query.into_inner(), None).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ShipReadPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = Ship),
@@ -144,17 +130,11 @@ pub(super) struct ShipReadPathParams {
     )]
 #[get("/api/v1/namespaces/{namespace}/ships/{name}")]
 pub(super) async fn handle_ship_read(
-    path: Path<ShipReadPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Ship>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<Ship>(&operator, Some(path.namespace), path.name).await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ShipReplacePathParams {
-    namespace: String,
-    name: String,
 }
 
 #[utoipa::path(
@@ -173,7 +153,7 @@ pub(super) struct ShipReplacePathParams {
     )]
 #[put("/api/v1/namespaces/{namespace}/ships/{name}")]
 pub(super) async fn handle_ship_replace(
-    path: Path<ShipReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<Ship>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
@@ -192,6 +172,7 @@ pub(super) async fn handle_ship_replace(
         },
     )
     .apply_replacement(&replacement)?;
+    validate_resource(&replaced)?;
     validate_ship_target_node_name_update(&current, &replaced)?;
 
     let replaced = if current != replaced {
@@ -224,7 +205,7 @@ pub(super) async fn handle_ship_replace(
     )]
 #[patch("/api/v1/namespaces/{namespace}/ships/{name}")]
 pub(super) async fn handle_ship_patch(
-    path: Path<ShipReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
@@ -241,6 +222,7 @@ pub(super) async fn handle_ship_patch(
         },
     )
     .apply_patch(patch.into_inner())?;
+    validate_resource(&patched)?;
     validate_ship_target_node_name_update(&current, &patched)?;
 
     let patched = if current != patched {
@@ -271,7 +253,7 @@ pub(super) async fn handle_ship_patch(
     )]
 #[post("/api/v1/namespaces/{namespace}/ships/{name}/migrate/abort")]
 pub(super) async fn handle_ship_migration_abort(
-    path: Path<ShipReadPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
     let path = path.into_inner();
@@ -300,12 +282,6 @@ pub(super) async fn handle_ship_migration_abort(
     Ok(ModifyResponse::Updated(aborted))
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ShipPatchPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource updated", body = Ship),
@@ -320,7 +296,7 @@ pub(super) struct ShipPatchPathParams {
     )]
 #[patch("/api/v1/namespaces/{namespace}/ships/{name}/status")]
 pub(super) async fn handle_ship_status_patch(
-    path: Path<ShipPatchPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
@@ -348,7 +324,7 @@ pub(super) async fn handle_ship_status_patch(
     )]
 #[put("/api/v1/namespaces/{namespace}/ships/{name}/status")]
 pub(super) async fn handle_ship_status_replace(
-    path: Path<ShipReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<Ship>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {

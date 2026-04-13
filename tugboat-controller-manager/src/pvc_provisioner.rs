@@ -3,10 +3,13 @@ use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use crate::provisioning::{
     build_persistent_volume, claim_access_modes, claim_access_type, dynamic_volume_name,
-    existing_pv_matches_claim, load_secret_reference, persistent_volume_capacity_bytes,
-    provisioner_config, pvc_identity, reclaim_policy_from_storage_class, requested_capacity_bytes,
-    storage_class_csi_config, storage_class_provisioner,
+    existing_pv_matches_claim, is_retryable_csi_cleanup_error, load_secret_reference,
+    persistent_volume_capacity_bytes, provisioner_config, pvc_identity,
+    reclaim_policy_from_storage_class, requested_capacity_bytes, storage_class_csi_config,
+    storage_class_provisioner,
 };
+use std::time::Duration;
+use tokio::time::sleep;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_csi_operator::TugboatCsiOperator;
@@ -152,7 +155,7 @@ impl PvcProvisionerReconciler {
             );
             return Ok(self.requeue_action());
         } else {
-            let provisioned_volume = self
+            let provisioned_volume = match self
                 .csi_operator
                 .create_volume(
                     &provisioner_config.socket_path,
@@ -164,7 +167,34 @@ impl PvcProvisionerReconciler {
                     controller_create_secrets.clone(),
                     csi_config.mount_options.clone(),
                 )
-                .await?;
+                .await
+            {
+                Ok(volume) => volume,
+                Err(tugboat_csi_operator::Error::VolumeAlreadyExists) => {
+                    let Some(existing) = pv_api.get(&pv_name).await? else {
+                        tracing::warn!(
+                            "CSI volume for PersistentVolume '{}' already exists but API object is not visible yet; requeueing",
+                            pv_name
+                        );
+                        return Ok(self.requeue_action());
+                    };
+                    if !existing_pv_matches_claim(
+                        &existing,
+                        &namespace,
+                        &name,
+                        &storage_class_name,
+                    )? {
+                        return Err(ControllerError::ExistingVolumeConflict {
+                            name: pv_name.clone(),
+                            namespace: namespace.clone(),
+                            claim: name.clone(),
+                        });
+                    }
+                    // Another reconciler already provisioned this volume/PV pair.
+                    return Ok(self.requeue_action());
+                }
+                Err(err) => return Err(err.into()),
+            };
             let volume_id = provisioned_volume.volume_id.clone();
             provisioned_volume_id = Some(volume_id.clone());
 
@@ -189,12 +219,18 @@ impl PvcProvisionerReconciler {
                 }
                 Err(tugboat_client::Error::Api(status)) if status.code == 409 => {
                     let Some(existing) = pv_api.get(&pv_name).await? else {
-                        self.cleanup_csi_volume_with_retry(
-                            &provisioner_config.socket_path,
-                            &volume_id,
-                            &controller_create_secrets,
-                        )
-                        .await;
+                        if !self
+                            .cleanup_csi_volume_with_retry(
+                                &provisioner_config.socket_path,
+                                &volume_id,
+                                &controller_create_secrets,
+                            )
+                            .await
+                        {
+                            return Err(ControllerError::ProvisioningCleanupFailed {
+                                volume_id: volume_id.clone(),
+                            });
+                        }
                         return Err(ControllerError::ExistingVolumeConflict {
                             name: pv_name.clone(),
                             namespace: namespace.clone(),
@@ -207,12 +243,18 @@ impl PvcProvisionerReconciler {
                         &name,
                         &storage_class_name,
                     )? {
-                        self.cleanup_csi_volume_with_retry(
-                            &provisioner_config.socket_path,
-                            &volume_id,
-                            &controller_create_secrets,
-                        )
-                        .await;
+                        if !self
+                            .cleanup_csi_volume_with_retry(
+                                &provisioner_config.socket_path,
+                                &volume_id,
+                                &controller_create_secrets,
+                            )
+                            .await
+                        {
+                            return Err(ControllerError::ProvisioningCleanupFailed {
+                                volume_id: volume_id.clone(),
+                            });
+                        }
                         return Err(ControllerError::ExistingVolumeConflict {
                             name: pv_name.clone(),
                             namespace: namespace.clone(),
@@ -221,12 +263,18 @@ impl PvcProvisionerReconciler {
                     }
                 }
                 Err(err) => {
-                    self.cleanup_csi_volume_with_retry(
-                        &provisioner_config.socket_path,
-                        &volume_id,
-                        &controller_create_secrets,
-                    )
-                    .await;
+                    if !self
+                        .cleanup_csi_volume_with_retry(
+                            &provisioner_config.socket_path,
+                            &volume_id,
+                            &controller_create_secrets,
+                        )
+                        .await
+                    {
+                        return Err(ControllerError::ProvisioningCleanupFailed {
+                            volume_id: volume_id.clone(),
+                        });
+                    }
                     return Err(err.into());
                 }
             }
@@ -248,7 +296,7 @@ impl PvcProvisionerReconciler {
                     &pv_api,
                     &pv_name,
                 )
-                .await;
+                .await?;
             }
             return Ok(Action::await_change());
         };
@@ -267,7 +315,7 @@ impl PvcProvisionerReconciler {
                     &pv_api,
                     &pv_name,
                 )
-                .await;
+                .await?;
             }
             return Ok(Action::await_change());
         }
@@ -310,7 +358,7 @@ impl PvcProvisionerReconciler {
                         &pv_api,
                         &pv_name,
                     )
-                    .await;
+                    .await?;
                 }
                 return Ok(Action::await_change());
             }
@@ -453,30 +501,19 @@ impl PvcProvisionerReconciler {
         volume_delete_secrets: &std::collections::HashMap<String, String>,
         pv_api: &Api<PersistentVolume>,
         pv_name: &str,
-    ) {
-        if let Some(volume_id) = volume_id
-            && let Err(cleanup_err) = self
-                .csi_operator
-                .delete_volume(
-                    socket_path,
-                    volume_id.to_string(),
-                    volume_delete_secrets.clone(),
-                )
-                .await
-        {
-            tracing::warn!(
-                "Failed to clean up orphaned CSI volume '{}': {}",
-                volume_id,
-                cleanup_err
-            );
+    ) -> Result<(), ControllerError> {
+        if let Some(volume_id) = volume_id {
+            let deleted = self
+                .cleanup_csi_volume_with_retry(socket_path, volume_id, volume_delete_secrets)
+                .await;
+            if !deleted {
+                return Err(ControllerError::ProvisioningCleanupFailed {
+                    volume_id: volume_id.to_string(),
+                });
+            }
         }
-        if let Err(cleanup_err) = pv_api.delete(pv_name).await {
-            tracing::warn!(
-                "Failed to clean up orphaned PersistentVolume '{}': {}",
-                pv_name,
-                cleanup_err
-            );
-        }
+        pv_api.delete(pv_name).await?;
+        Ok(())
     }
 
     /// Attempts to delete a CSI volume with up to 3 retries on failure.
@@ -485,16 +522,17 @@ impl PvcProvisionerReconciler {
         socket_path: &str,
         volume_id: &str,
         secrets: &std::collections::HashMap<String, String>,
-    ) {
+    ) -> bool {
         const MAX_RETRIES: usize = 3;
+        const BASE_RETRY_DELAY: Duration = Duration::from_millis(200);
         for attempt in 1..=MAX_RETRIES {
             match self
                 .csi_operator
                 .delete_volume(socket_path, volume_id.to_string(), secrets.clone())
                 .await
             {
-                Ok(()) => return,
-                Err(err) if attempt < MAX_RETRIES => {
+                Ok(()) | Err(tugboat_csi_operator::Error::VolumeNotFound) => return true,
+                Err(err) if attempt < MAX_RETRIES && is_retryable_csi_cleanup_error(&err) => {
                     tracing::warn!(
                         "Failed to clean up orphaned CSI volume '{}' (attempt {}/{}): {}",
                         volume_id,
@@ -502,18 +540,33 @@ impl PvcProvisionerReconciler {
                         MAX_RETRIES,
                         err
                     );
+                    let delay = BASE_RETRY_DELAY.saturating_mul(2u32.pow((attempt - 1) as u32));
+                    sleep(delay).await;
                 }
                 Err(err) => {
-                    tracing::error!(
-                        "Failed to clean up orphaned CSI volume '{}' after {} attempts: {}; \
-                         manual intervention may be required",
-                        volume_id,
-                        MAX_RETRIES,
-                        err
-                    );
+                    if is_retryable_csi_cleanup_error(&err) {
+                        tracing::error!(
+                            "Failed to clean up orphaned CSI volume '{}' after {} attempts: {}; \
+                             manual intervention may be required",
+                            volume_id,
+                            attempt,
+                            err
+                        );
+                    } else {
+                        tracing::error!(
+                            "Failed to clean up orphaned CSI volume '{}' due to non-retryable \
+                             error on attempt {}/{}: {}; manual intervention may be required",
+                            volume_id,
+                            attempt,
+                            MAX_RETRIES,
+                            err
+                        );
+                    }
+                    return false;
                 }
             }
         }
+        false
     }
 }
 

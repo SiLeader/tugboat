@@ -15,6 +15,7 @@
 use super::{
     CSI_VOLUME_HEALTH_CONDITION, CSI_VOLUME_STATS_CONDITION,
     apply_persistent_volume_claim_csi_observation, apply_persistent_volume_csi_observation,
+    find_recovered_published_volume,
     validate_recovered_published_volumes,
 };
 use crate::csi::{PublishedAccessType, PublishedVolume};
@@ -37,6 +38,7 @@ fn published_volume(target_path: &str) -> PublishedVolume {
         mount_namespace_path: "/var/run/tugboat/mntns/ship-uid".to_string(),
         staging_target_path: Some(format!("{target_path}.staging")),
         controller_published: false,
+        pvc_name: Some("pvc-data".to_string()),
     }
 }
 
@@ -195,3 +197,52 @@ fn recovered_volumes_accept_matching_persisted_state() {
 
     assert_eq!(recovered, persisted);
 }
+
+#[test]
+fn recovered_volumes_accept_volume_id_match_with_different_metadata() {
+    let mut persisted = published_volume("/var/lib/tugboat-agent/csi/ship-uid/old-data.fs");
+    let planned = published_volume("/var/lib/tugboat-agent/csi/ship-uid/new-data.fs");
+    persisted.volume_id = planned.volume_id.clone();
+    persisted.claim_name = "legacy-alias".to_string();
+    persisted.pvc_name = None;
+    persisted.staging_target_path = None;
+
+    let recovered = validate_recovered_published_volumes("ship-uid", vec![persisted.clone()], &[planned])
+        .expect("volume_id match should be accepted for recovered state");
+
+    assert_eq!(recovered, vec![persisted]);
+}
+
+#[test]
+fn recovered_volumes_reject_duplicate_volume_ids() {
+    let mut first = published_volume("/var/lib/tugboat-agent/csi/ship-uid/data-a.fs");
+    let mut second = published_volume("/var/lib/tugboat-agent/csi/ship-uid/data-b.fs");
+    second.volume_id = first.volume_id.clone();
+
+    let err = validate_recovered_published_volumes("ship-uid", vec![first, second], &[])
+        .expect_err("duplicate volume IDs should fail recovered-state matching");
+
+    assert!(matches!(
+        err,
+        ReconcileError::RecoveredPublishedVolumeStateMismatch(ship)
+        if ship == "ship-uid"
+    ));
+}
+
+#[test]
+fn find_recovered_volume_falls_back_to_volume_id() {
+    let mut recovered = published_volume("/var/lib/tugboat-agent/csi/ship-uid/data.fs");
+    recovered.claim_name = "legacy-alias".to_string();
+    recovered.volume_id = "volume-stable-id".to_string();
+
+    let recovered_volumes = vec![recovered.clone()];
+    let found = find_recovered_published_volume(
+        &recovered_volumes,
+        "new-claim-name",
+        &recovered.volume_id,
+    )
+    .expect("volume_id fallback lookup should find recovered volume");
+
+    assert_eq!(found, &recovered);
+}
+

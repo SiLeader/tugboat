@@ -48,7 +48,8 @@ impl Selector {
             }
             Selector::NotEqual(key, value) => {
                 let Some(actual_value) = meta.labels.get(key) else {
-                    return false;
+                    // A missing label is not equal to any value, so it matches.
+                    return true;
                 };
                 actual_value != value
             }

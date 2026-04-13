@@ -261,6 +261,7 @@ fn bearer_token(req: &HttpRequest) -> Result<Option<String>, Box<StatusResponse>
             None,
         )));
     };
+    let token = token.trim();
     if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() {
         return Err(Box::new(StatusResponse::unauthorized(
             "Authorization header must use the Bearer scheme",

@@ -21,7 +21,10 @@ use serde::Serialize;
 use std::process::{ExitStatus, Stdio};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
+use tokio::time::{Duration, timeout};
 use tracing::{debug, error};
+
+const COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct VmRuntimeOperator {
@@ -41,6 +44,8 @@ pub enum Error {
     CommandFailed(ExitStatus, String, String),
     #[error("Pid is missing")]
     PidMissing,
+    #[error("Timed out waiting for runtime command response")]
+    Timeout,
 }
 
 impl VmRuntimeOperator {
@@ -60,11 +65,9 @@ impl VmRuntimeOperator {
     {
         let vm_config = serde_json::to_string(args)?;
         debug!("Calling VM Runtime: {op}({vm_config})");
-        let mut child = self
-            .run_command()
-            .args([op, "-"])
-            .stdin(Stdio::piped())
-            .spawn()?;
+        let mut command = self.run_command();
+        command.kill_on_drop(true);
+        let mut child = command.args([op, "-"]).stdin(Stdio::piped()).spawn()?;
         match &mut child.stdin {
             Some(stdin) => {
                 debug!("Writing config to stdin: {vm_config}");
@@ -175,7 +178,9 @@ async fn kill_impl(mut child: Child) -> Result<(), Error> {
 }
 
 async fn handle_command_response(child: Child) -> Result<(), Error> {
-    let output = child.wait_with_output().await?;
+    let output = timeout(COMMAND_RESPONSE_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| Error::Timeout)??;
     handle_output(output)
 }
 

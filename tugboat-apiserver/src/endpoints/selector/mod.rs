@@ -33,8 +33,20 @@ impl Selector {
         let mut selectors = Vec::new();
         for fragment in s.split(',') {
             if let Some((key, value)) = fragment.split_once("!=") {
+                if key.is_empty() {
+                    return Err(Box::new(StatusResponse::bad_request(
+                        "Invalid selector format: key must not be empty",
+                        None,
+                    )));
+                }
                 selectors.push(Selector::NotEqual(key.to_string(), value.to_string()));
-            } else if let Some((key, value)) = fragment.split_once("=") {
+            } else if let Some((key, value)) = fragment.split_once('=') {
+                if key.is_empty() {
+                    return Err(Box::new(StatusResponse::bad_request(
+                        "Invalid selector format: key must not be empty",
+                        None,
+                    )));
+                }
                 selectors.push(Selector::Equal(key.to_string(), value.to_string()));
             } else {
                 return Err(Box::new(StatusResponse::bad_request(

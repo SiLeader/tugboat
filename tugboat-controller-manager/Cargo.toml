@@ -14,6 +14,7 @@ sha2.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
 rand.workspace = true
+tonic.workspace = true
 
 thiserror.workspace = true
 tracing.workspace = true

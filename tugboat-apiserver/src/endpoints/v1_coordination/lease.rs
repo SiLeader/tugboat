@@ -15,13 +15,11 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, NamespacedPathParams};
+use crate::endpoints::{ListQuery, NamespacedNamePathParams, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::coordination::v1::Lease;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -44,12 +42,6 @@ pub(super) async fn handle_lease_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct LeaseDeletePathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = Lease),
@@ -63,7 +55,7 @@ pub(super) struct LeaseDeletePathParams {
     )]
 #[delete("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
 pub(super) async fn handle_lease_delete(
-    path: Path<LeaseDeletePathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Lease>, Box<StatusResponse>> {
     let params = path.into_inner();
@@ -118,12 +110,6 @@ pub(super) async fn handle_lease_list_all(
     resource_handlers::list_resources::<Lease>(&operator, query.into_inner(), None).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct LeaseReadPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = Lease),
@@ -137,17 +123,11 @@ pub(super) struct LeaseReadPathParams {
     )]
 #[get("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
 pub(super) async fn handle_lease_read(
-    path: Path<LeaseReadPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<Lease>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<Lease>(&operator, Some(path.namespace), path.name).await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct LeaseReplacePathParams {
-    namespace: String,
-    name: String,
 }
 
 #[utoipa::path(
@@ -164,7 +144,7 @@ pub(super) struct LeaseReplacePathParams {
     )]
 #[put("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
 pub(super) async fn handle_lease_replace(
-    path: Path<LeaseReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<Lease>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Lease>, Box<StatusResponse>> {
@@ -197,7 +177,7 @@ pub(super) async fn handle_lease_replace(
     )]
 #[patch("/apis/coordination/v1/namespaces/{namespace}/leases/{name}")]
 pub(super) async fn handle_lease_patch(
-    path: Path<LeaseReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Lease>, Box<StatusResponse>> {

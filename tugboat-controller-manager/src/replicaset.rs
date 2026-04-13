@@ -7,7 +7,9 @@ use std::time::Duration;
 use tracing::debug;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
-use tugboat_resources::manifests::apps::v1::{ReplicaSet, ReplicaSetStatus, ShipTemplateSpec};
+use tugboat_resources::manifests::apps::v1::{
+    ReplicaSet, ReplicaSetSpec, ReplicaSetStatus, ShipTemplateSpec,
+};
 use tugboat_resources::manifests::core::v1::{RuntimeClass, Ship, ShipSpec};
 use tugboat_resources::manifests::meta::v1::OwnerReference;
 use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta, ShipMigrationExt};
@@ -266,32 +268,11 @@ impl ReplicaSetReconciler {
             matching = matching_ships.len(),
             "reconciling replicaset"
         );
-
-        for _ in matching_ships.len()..desired {
-            let ship = build_ship(&rs, &rs_spec.ship_template.clone().unwrap_or_default());
-            debug!(
-                rs = rs.name().unwrap_or_default(),
-                ship = ship.name().unwrap_or_default(),
-                "creating ship for replicaset"
-            );
-            match ship_api.create(ship).await {
-                Ok(_) => {}
-                Err(tugboat_client::Error::Api(status)) if status.code == 409 => {}
-                Err(err) => return Err(err.into()),
-            }
-        }
-
-        if matching_ships.len() > desired {
-            let excess = matching_ships.len() - desired;
-            let to_delete = excess_ships_to_delete(&matching_ships, desired);
-            for ship in &to_delete {
-                if let Some(name) = ship.name() {
-                    delete_ship_ignore_not_found(&ship_api, name).await?;
-                }
-            }
-            if to_delete.len() < excess {
-                return Ok(Action::requeue(Duration::from_secs(5)));
-            }
+        if let Some(action) = self
+            .reconcile_ship_count(&ship_api, &rs, rs_spec, &matching_ships, desired)
+            .await?
+        {
+            return Ok(action);
         }
 
         let template_spec = rs_spec
@@ -336,77 +317,18 @@ impl ReplicaSetReconciler {
             return Ok(Action::requeue(Duration::from_secs(5)));
         }
 
-        match change_kind {
-            TemplateChangeKind::NoChange => {}
-            TemplateChangeKind::RequiresRotation => {
-                if update_strategy(&rs) == Some(UPDATE_STRATEGY_ALL) {
-                    let mut updated_any = false;
-                    for ship in &matching_ships {
-                        if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
-                            continue;
-                        }
-                        let Some(name) = ship.name() else {
-                            continue;
-                        };
-                        let mut updated = (*ship).clone();
-                        apply_template_spec(&mut updated, &template_spec);
-                        ship_api.replace(name, updated).await?;
-                        updated_any = true;
-                    }
-                    if updated_any {
-                        return Ok(Action::requeue(Duration::from_secs(5)));
-                    }
-                }
-
-                let mut updated_any = false;
-                for ship in &matching_ships {
-                    if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
-                        continue;
-                    }
-                    let Some(name) = ship.name() else {
-                        continue;
-                    };
-                    let mut updated = (*ship).clone();
-                    apply_template_spec(&mut updated, &template_spec);
-                    ship_api.replace(name, updated).await?;
-                    updated_any = true;
-                    break;
-                }
-
-                if updated_any {
-                    return Ok(Action::requeue(Duration::from_secs(5)));
-                }
-            }
-            TemplateChangeKind::InPlace | TemplateChangeKind::Hotplug => {
-                let update_all = update_strategy(&rs) == Some(UPDATE_STRATEGY_ALL)
-                    || change_kind == TemplateChangeKind::Hotplug;
-                let mut updated_any = false;
-
-                for ship in &matching_ships {
-                    if ship.has_active_migration() || !ship_needs_update(ship, &template_spec) {
-                        continue;
-                    }
-                    let Some(name) = ship.name() else {
-                        continue;
-                    };
-
-                    let mut updated = (*ship).clone();
-                    apply_template_spec(&mut updated, &template_spec);
-                    ship_api.patch(name, &updated).await?;
-                    updated_any = true;
-
-                    if !update_all {
-                        break;
-                    }
-                }
-
-                if updated_any {
-                    return Ok(Action::requeue(Duration::from_secs(5)));
-                }
-                if migration_blocks_update {
-                    return Ok(Action::requeue(Duration::from_secs(5)));
-                }
-            }
+        if let Some(action) = self
+            .reconcile_template_updates(
+                &ship_api,
+                &rs,
+                &matching_ships,
+                &template_spec,
+                change_kind,
+                migration_blocks_update,
+            )
+            .await?
+        {
+            return Ok(action);
         }
 
         let new_status = build_replicaset_status(&matching_ships);
@@ -426,6 +348,125 @@ impl ReplicaSetReconciler {
         }
 
         Ok(Action::await_change())
+    }
+
+    async fn reconcile_ship_count(
+        &self,
+        ship_api: &Api<Ship>,
+        rs: &ReplicaSet,
+        rs_spec: &ReplicaSetSpec,
+        matching_ships: &[&Ship],
+        desired: usize,
+    ) -> Result<Option<Action>, ControllerError> {
+        for _ in matching_ships.len()..desired {
+            let ship = build_ship(rs, &rs_spec.ship_template.clone().unwrap_or_default());
+            debug!(
+                rs = rs.name().unwrap_or_default(),
+                ship = ship.name().unwrap_or_default(),
+                "creating ship for replicaset"
+            );
+            match ship_api.create(ship).await {
+                Ok(_) => {}
+                Err(tugboat_client::Error::Api(status)) if status.code == 409 => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        if matching_ships.len() <= desired {
+            return Ok(None);
+        }
+
+        let excess = matching_ships.len() - desired;
+        let to_delete = excess_ships_to_delete(matching_ships, desired);
+        for ship in &to_delete {
+            if let Some(name) = ship.name() {
+                delete_ship_ignore_not_found(ship_api, name).await?;
+            }
+        }
+        if to_delete.len() < excess {
+            return Ok(Some(Action::requeue(Duration::from_secs(5))));
+        }
+
+        Ok(None)
+    }
+
+    async fn reconcile_template_updates(
+        &self,
+        ship_api: &Api<Ship>,
+        rs: &ReplicaSet,
+        matching_ships: &[&Ship],
+        template_spec: &ShipSpec,
+        change_kind: TemplateChangeKind,
+        migration_blocks_update: bool,
+    ) -> Result<Option<Action>, ControllerError> {
+        match change_kind {
+            TemplateChangeKind::NoChange => Ok(None),
+            TemplateChangeKind::RequiresRotation => {
+                let update_all = update_strategy(rs) == Some(UPDATE_STRATEGY_ALL);
+                self.apply_template_updates(
+                    ship_api,
+                    matching_ships,
+                    template_spec,
+                    true,
+                    update_all,
+                )
+                .await
+            }
+            TemplateChangeKind::InPlace | TemplateChangeKind::Hotplug => {
+                let update_all = update_strategy(rs) == Some(UPDATE_STRATEGY_ALL)
+                    || change_kind == TemplateChangeKind::Hotplug;
+                let action = self
+                    .apply_template_updates(
+                        ship_api,
+                        matching_ships,
+                        template_spec,
+                        false,
+                        update_all,
+                    )
+                    .await?;
+                if action.is_none() && migration_blocks_update {
+                    return Ok(Some(Action::requeue(Duration::from_secs(5))));
+                }
+                Ok(action)
+            }
+        }
+    }
+
+    async fn apply_template_updates(
+        &self,
+        ship_api: &Api<Ship>,
+        matching_ships: &[&Ship],
+        template_spec: &ShipSpec,
+        replace: bool,
+        update_all: bool,
+    ) -> Result<Option<Action>, ControllerError> {
+        let mut updated_any = false;
+        for ship in matching_ships {
+            if ship.has_active_migration() || !ship_needs_update(ship, template_spec) {
+                continue;
+            }
+            let Some(name) = ship.name() else {
+                continue;
+            };
+
+            let mut updated = (*ship).clone();
+            apply_template_spec(&mut updated, template_spec);
+            if replace {
+                ship_api.replace(name, updated).await?;
+            } else {
+                ship_api.patch(name, &updated).await?;
+            }
+            updated_any = true;
+
+            if !update_all {
+                break;
+            }
+        }
+
+        if updated_any {
+            return Ok(Some(Action::requeue(Duration::from_secs(5))));
+        }
+        Ok(None)
     }
 
     async fn reconcile_deleted(&self, rs: ReplicaSet) -> Result<Action, ControllerError> {

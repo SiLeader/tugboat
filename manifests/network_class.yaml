@@ -28,6 +28,6 @@ spec:
   cniPlugin: flannel
   flannel:
     subnetFile: /run/flannel/subnet.env
-    dataDir: /run/flannel
+    dataDir: /var/lib/cni/flannel
     hairpinMode: true
     defaultGateway: true

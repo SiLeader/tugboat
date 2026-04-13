@@ -369,13 +369,23 @@ pub(crate) async fn load_secret_reference(
 
     let mut data = HashMap::new();
     for (key, value) in secret.data {
-        let decoded = BASE64_STANDARD
-            .decode(value)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok());
-        if let Some(decoded) = decoded {
-            data.insert(key, decoded);
-        }
+        let decoded =
+            BASE64_STANDARD
+                .decode(value)
+                .map_err(|err| ControllerError::InvalidSecretData {
+                    namespace: reference.namespace.clone(),
+                    name: reference.name.clone(),
+                    key: key.clone(),
+                    reason: err.to_string(),
+                })?;
+        let decoded =
+            String::from_utf8(decoded).map_err(|err| ControllerError::InvalidSecretData {
+                namespace: reference.namespace.clone(),
+                name: reference.name.clone(),
+                key: key.clone(),
+                reason: err.to_string(),
+            })?;
+        data.insert(key, decoded);
     }
     data.extend(secret.string_data);
     Ok(data)
@@ -615,5 +625,57 @@ mod tests {
                 .map(|r| (&r.namespace, &r.name)),
             Some((&"kube-system".to_string(), &"provisioner".to_string()))
         );
+    }
+}
+
+/// Returns true for transient CSI driver errors that are worth retrying.
+/// The caller is responsible for limiting the number of retries.
+pub(crate) fn is_retryable_csi_cleanup_error(error: &tugboat_csi_operator::Error) -> bool {
+    match error {
+        tugboat_csi_operator::Error::RpcTimeout
+        | tugboat_csi_operator::Error::SocketConnectionTimeout
+        | tugboat_csi_operator::Error::GrpcTransport(_) => true,
+        tugboat_csi_operator::Error::Grpc(status) => matches!(
+            status.code(),
+            tonic::Code::Cancelled
+                | tonic::Code::Unavailable
+                | tonic::Code::DeadlineExceeded
+                | tonic::Code::Aborted
+                | tonic::Code::ResourceExhausted
+                | tonic::Code::Unknown
+                | tonic::Code::Internal
+        ),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod retryable_error_tests {
+    use super::is_retryable_csi_cleanup_error;
+    use tonic::{Code, Status};
+
+    #[test]
+    fn classifies_retryable_csi_cleanup_errors() {
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::RpcTimeout
+        ));
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::Grpc(Status::new(Code::Cancelled, "transient"))
+        ));
+        assert!(is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::Grpc(Status::new(Code::Unavailable, "transient"))
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::VolumeNotFound
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::Grpc(Status::new(Code::PermissionDenied, "fatal"))
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::Grpc(Status::new(Code::InvalidArgument, "fatal"))
+        ));
+        assert!(!is_retryable_csi_cleanup_error(
+            &tugboat_csi_operator::Error::InvalidVolumeName("bad".to_string())
+        ));
     }
 }

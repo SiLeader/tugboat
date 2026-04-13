@@ -358,8 +358,7 @@ async fn deployment_controller_deletes_managed_replicasets_on_deletion() -> Resu
 async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup().await? else {
         eprintln!(
-            "skipping integration test: set {} or {} (or install docker) to enable",
-            "TUGBOAT_TEST_APISERVER_URL", "TUGBOAT_TEST_ETCD_ENDPOINT"
+            "skipping integration test: set TUGBOAT_TEST_APISERVER_URL or TUGBOAT_TEST_ETCD_ENDPOINT (or install docker) to enable"
         );
         return Ok(None);
     };
@@ -671,7 +670,7 @@ async fn assert_status(response: Response, expected_status: StatusCode) -> Resul
     Ok(serde_json::from_str(&text)?)
 }
 
-fn string_field<'a>(value: &'a Value, path: &[&str]) -> Result<String, DynError> {
+fn string_field(value: &Value, path: &[&str]) -> Result<String, DynError> {
     let mut current = value;
     for segment in path {
         current = &current[*segment];

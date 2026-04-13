@@ -258,11 +258,44 @@ pub(crate) fn validate_recovered_published_volumes(
     let mut planned_sorted = planned.to_vec();
     planned_sorted.sort_by(|left, right| left.target_path.cmp(&right.target_path));
 
-    if persisted != planned_sorted {
+    // Exact match: volumes fully published and recovered
+    if persisted == planned_sorted {
+        return Ok(persisted);
+    }
+
+    // Fallback recovery by volume_id is ambiguous when duplicates exist.
+    // In that case, fail fast and let reconcile trigger explicit cleanup.
+    if has_duplicate_volume_ids(&planned_sorted) || has_duplicate_volume_ids(&persisted) {
         return Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(
             ship_id.to_string(),
         ));
     }
 
-    Ok(persisted)
+    // Backward-compatible recovery: match planned volumes by volume_id even if
+    // persisted metadata (paths/aliases/optional fields) differs.
+    let persisted_by_volume_id = persisted
+        .into_iter()
+        .map(|volume| (volume.volume_id.clone(), volume))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut recovered_by_id = Vec::with_capacity(planned_sorted.len());
+    for planned_volume in &planned_sorted {
+        let Some(recovered) = persisted_by_volume_id.get(&planned_volume.volume_id) else {
+            return Err(ReconcileError::RecoveredPublishedVolumeStateMismatch(
+                ship_id.to_string(),
+            ));
+        };
+        recovered_by_id.push(recovered.clone());
+    }
+    recovered_by_id.sort_by(|left, right| left.target_path.cmp(&right.target_path));
+    Ok(recovered_by_id)
+}
+
+fn has_duplicate_volume_ids(volumes: &[PublishedVolume]) -> bool {
+    let mut seen = std::collections::HashSet::with_capacity(volumes.len());
+    for volume in volumes {
+        if !seen.insert(volume.volume_id.as_str()) {
+            return true;
+        }
+    }
+    false
 }

@@ -14,8 +14,9 @@
 
 use super::{
     CsiAccessMode, CsiAccessType, NodeVolumeStats, TugboatCsiOperator, VolumeHealthCondition,
-    VolumeUsageStats, VolumeUsageUnit, volume_capability,
+    VolumeUsageStats, VolumeUsageUnit, normalize_socket_path, volume_capability,
 };
+use crate::error::Error;
 use crate::proto::csi::v1::node_server::{Node, NodeServer};
 use crate::proto::csi::v1::volume_capability::AccessType;
 use crate::proto::csi::v1::volume_usage::Unit as VolumeUsageProtoUnit;
@@ -32,7 +33,7 @@ use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
 use tokio::time::{Duration, sleep};
 use tokio_stream::wrappers::UnixListenerStream;
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 
 #[derive(Debug, Clone)]
 enum RecordedCall {
@@ -48,6 +49,8 @@ enum RecordedCall {
 struct FakeNodeService {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     volume_stats_response: NodeGetVolumeStatsResponse,
+    publish_delay: Option<Duration>,
+    node_capabilities_error: Option<Code>,
 }
 
 #[tonic::async_trait]
@@ -82,6 +85,9 @@ impl Node for FakeNodeService {
             .lock()
             .expect("lock should be available")
             .push(RecordedCall::Publish(request.into_inner()));
+        if let Some(delay) = self.publish_delay {
+            sleep(delay).await;
+        }
         Ok(Response::new(NodePublishVolumeResponse {}))
     }
 
@@ -100,6 +106,9 @@ impl Node for FakeNodeService {
         &self,
         _request: Request<NodeGetCapabilitiesRequest>,
     ) -> Result<Response<NodeGetCapabilitiesResponse>, Status> {
+        if let Some(code) = self.node_capabilities_error {
+            return Err(Status::new(code, "injected failure"));
+        }
         Ok(Response::new(NodeGetCapabilitiesResponse::default()))
     }
 
@@ -137,6 +146,8 @@ impl Node for FakeNodeService {
 
 async fn spawn_node_server_with_volume_stats(
     volume_stats_response: NodeGetVolumeStatsResponse,
+    publish_delay: Option<Duration>,
+    node_capabilities_error: Option<Code>,
 ) -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
     let socket_path = std::env::temp_dir().join(format!(
         "tugboat-csi-operator-{}.sock",
@@ -152,6 +163,8 @@ async fn spawn_node_server_with_volume_stats(
     let service = FakeNodeService {
         calls: calls.clone(),
         volume_stats_response,
+        publish_delay,
+        node_capabilities_error,
     };
     tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -165,7 +178,7 @@ async fn spawn_node_server_with_volume_stats(
 }
 
 async fn spawn_node_server() -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
-    spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse::default()).await
+    spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse::default(), None, None).await
 }
 
 #[test]
@@ -297,26 +310,30 @@ async fn can_stage_and_publish_volume_over_uds() {
 #[tokio::test]
 async fn can_query_volume_stats_over_uds() {
     let operator = TugboatCsiOperator::default();
-    let (socket_path, calls) = spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse {
-        usage: vec![
-            VolumeUsage {
-                available: 3072,
-                total: 4096,
-                used: 1024,
-                unit: VolumeUsageProtoUnit::Bytes as i32,
-            },
-            VolumeUsage {
-                available: 90,
-                total: 100,
-                used: 10,
-                unit: VolumeUsageProtoUnit::Inodes as i32,
-            },
-        ],
-        volume_condition: Some(VolumeCondition {
-            abnormal: true,
-            message: "filesystem is read-only".to_string(),
-        }),
-    })
+    let (socket_path, calls) = spawn_node_server_with_volume_stats(
+        NodeGetVolumeStatsResponse {
+            usage: vec![
+                VolumeUsage {
+                    available: 3072,
+                    total: 4096,
+                    used: 1024,
+                    unit: VolumeUsageProtoUnit::Bytes as i32,
+                },
+                VolumeUsage {
+                    available: 90,
+                    total: 100,
+                    used: 10,
+                    unit: VolumeUsageProtoUnit::Inodes as i32,
+                },
+            ],
+            volume_condition: Some(VolumeCondition {
+                abnormal: true,
+                message: "filesystem is read-only".to_string(),
+            }),
+        },
+        None,
+        None,
+    )
     .await;
 
     let stats = operator
@@ -361,6 +378,145 @@ async fn can_query_volume_stats_over_uds() {
     assert_eq!(stats_request.volume_id, "volume-1");
     assert_eq!(stats_request.volume_path, "/publish/volume-1");
     assert_eq!(stats_request.staging_target_path, "/staging/volume-1");
+}
+
+#[tokio::test]
+async fn publish_times_out_when_driver_stalls() {
+    let operator = TugboatCsiOperator::default();
+    let (socket_path, _calls) = spawn_node_server_with_volume_stats(
+        NodeGetVolumeStatsResponse::default(),
+        Some(Duration::from_secs(1)),
+        None,
+    )
+    .await;
+
+    let result = operator
+        .publish(
+            &socket_path,
+            "volume-1".to_string(),
+            "/publish/volume-1".to_string(),
+            false,
+            CsiAccessMode::ReadWriteOnce,
+            CsiAccessType::Filesystem,
+            Some("xfs".to_string()),
+            vec!["noatime".to_string()],
+            Some("/staging/volume-1".to_string()),
+            HashMap::from([("token".to_string(), "secret".to_string())]),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .await;
+
+    assert!(matches!(result, Err(Error::RpcTimeout)));
+}
+
+#[test]
+fn normalize_socket_path_rejects_empty_path() {
+    let result = normalize_socket_path("unix://");
+
+    assert!(matches!(result, Err(Error::InvalidSocketPath(_))));
+}
+
+#[test]
+fn normalize_socket_path_strips_unix_prefix() {
+    let result = normalize_socket_path("unix:///var/run/csi.sock");
+
+    assert_eq!(result.expect("path should normalize"), "/var/run/csi.sock");
+}
+
+#[test]
+fn normalize_socket_path_rejects_relative_path() {
+    let result = normalize_socket_path("./csi.sock");
+
+    assert!(matches!(result, Err(Error::InvalidSocketPath(_))));
+}
+
+#[test]
+fn normalize_socket_path_rejects_unsupported_scheme() {
+    let result = normalize_socket_path("tcp://127.0.0.1:9000");
+
+    assert!(matches!(result, Err(Error::InvalidSocketPath(_))));
+}
+
+#[tokio::test]
+async fn create_volume_rejects_empty_name() {
+    let operator = TugboatCsiOperator::default();
+    let err = operator
+        .create_volume(
+            "/var/run/non-existent-csi.sock",
+            "   ".to_string(),
+            Some(1024),
+            HashMap::new(),
+            vec![CsiAccessMode::ReadWriteOnce],
+            CsiAccessType::Filesystem,
+            HashMap::new(),
+            Vec::new(),
+        )
+        .await
+        .expect_err("empty volume name should fail before RPC");
+
+    assert!(matches!(err, Error::InvalidVolumeName(_)));
+}
+
+#[tokio::test]
+async fn create_volume_rejects_empty_access_modes() {
+    let operator = TugboatCsiOperator::default();
+    let err = operator
+        .create_volume(
+            "/var/run/non-existent-csi.sock",
+            "volume-1".to_string(),
+            Some(1024),
+            HashMap::new(),
+            Vec::new(),
+            CsiAccessType::Filesystem,
+            HashMap::new(),
+            Vec::new(),
+        )
+        .await
+        .expect_err("missing access modes should fail before RPC");
+
+    assert!(matches!(err, Error::MissingAccessModes));
+}
+
+#[tokio::test]
+async fn create_volume_rejects_non_positive_capacity() {
+    let operator = TugboatCsiOperator::default();
+    let err = operator
+        .create_volume(
+            "/var/run/non-existent-csi.sock",
+            "volume-1".to_string(),
+            Some(0),
+            HashMap::new(),
+            vec![CsiAccessMode::ReadWriteOnce],
+            CsiAccessType::Filesystem,
+            HashMap::new(),
+            Vec::new(),
+        )
+        .await
+        .expect_err("non-positive capacity should fail before RPC");
+
+    assert!(matches!(err, Error::InvalidCapacityBytes(0)));
+}
+
+#[tokio::test]
+async fn node_expand_rejects_non_positive_capacity() {
+    let operator = TugboatCsiOperator::default();
+    let err = operator
+        .node_expand(
+            "/var/run/non-existent-csi.sock",
+            "volume-1".to_string(),
+            "/publish/volume-1".to_string(),
+            0,
+            None,
+            CsiAccessMode::ReadWriteOnce,
+            CsiAccessType::Filesystem,
+            None,
+            HashMap::new(),
+        )
+        .await
+        .expect_err("non-positive expansion capacity should fail before RPC");
+
+    assert!(matches!(err, Error::InvalidCapacityBytes(0)));
 }
 
 #[tokio::test]
@@ -433,4 +589,22 @@ async fn can_expand_volume_over_uds() {
             .map(|range| range.required_bytes),
         Some(4096)
     );
+}
+
+#[tokio::test]
+async fn node_capabilities_returns_empty_on_unimplemented() {
+    let operator = TugboatCsiOperator::default();
+    let (socket_path, _calls) = spawn_node_server_with_volume_stats(
+        NodeGetVolumeStatsResponse::default(),
+        None,
+        Some(Code::Unimplemented),
+    )
+    .await;
+
+    let capabilities = operator
+        .node_capabilities(&socket_path)
+        .await
+        .expect("unimplemented node capabilities should be treated as empty");
+
+    assert!(capabilities.is_empty());
 }

@@ -95,30 +95,31 @@ pub(crate) fn change_running_user_and_group(user: &VmExecUser) -> Result<(), cra
     Ok(())
 }
 
-pub(crate) fn daemonize() {
+pub(crate) fn daemonize() -> Result<(), crate::Error> {
     debug!("Daemonize start");
-    let pid = unsafe { fork() }.expect("Failed to fork");
+    let pid = unsafe { fork() }?;
     if pid.is_parent() {
         exit(0);
     }
 
-    setsid().expect("Failed to setsid");
+    setsid()?;
 
-    unsafe { signal(Signal::SIGHUP, SigHandler::SigIgn) }.expect("Failed to disable SIGHUP");
-    unsafe { signal(Signal::SIGCHLD, SigHandler::SigIgn) }.expect("Failed to disable SIGCHLD");
+    unsafe { signal(Signal::SIGHUP, SigHandler::SigIgn) }?;
+    unsafe { signal(Signal::SIGCHLD, SigHandler::SigIgn) }?;
 
-    let pid = unsafe { fork() }.expect("Failed to fork");
+    let pid = unsafe { fork() }?;
     if pid.is_parent() {
         exit(0);
     }
     unsafe { umask(0) };
-    chdir("/").expect("Failed to chdir");
-    let devnull = File::open("/dev/null").expect("Failed to open /dev/null");
+    chdir("/")?;
+    let devnull = File::open("/dev/null")?;
     let null_fd = devnull.as_raw_fd();
     unsafe {
-        dup2(null_fd, 0);
-        dup2(null_fd, 1);
-        dup2(null_fd, 2);
+        if dup2(null_fd, 0) == -1 || dup2(null_fd, 1) == -1 || dup2(null_fd, 2) == -1 {
+            return Err(std::io::Error::last_os_error().into());
+        }
     }
     info!("Successfully daemonized");
+    Ok(())
 }

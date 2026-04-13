@@ -2,8 +2,8 @@ use crate::base::TugboatController;
 use crate::config::ControllerManagerConfig;
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::core::v1::{
-    ClusterNetworkClass, NetworkClass, NetworkClassCondition, NetworkClassSpec, NetworkClassStatus,
-    Node, NodeCniPluginStatus,
+    ClusterNetworkClass, NetworkClass, NetworkClassCondition, NetworkClassNodePluginStatus,
+    NetworkClassSpec, NetworkClassStatus, Node, NodeCniPluginStatus,
 };
 use tugboat_resources::manifests::meta::v1::Time;
 
@@ -98,31 +98,41 @@ fn build_network_class_status(
     nodes: &[Node],
 ) -> NetworkClassStatus {
     let timestamp = Some(Time::now());
-    let Ok(required_plugins) = required_plugins(spec) else {
-        let reason = required_plugins(spec).unwrap_err();
-        return NetworkClassStatus {
-            conditions: vec![
-                NetworkClassCondition {
-                    r#type: "Accepted".to_string(),
-                    status: "False".to_string(),
-                    message: reason.clone(),
-                    timestamp,
-                },
-                NetworkClassCondition {
-                    r#type: "Ready".to_string(),
-                    status: "False".to_string(),
-                    message: reason,
-                    timestamp,
-                },
-            ],
-            ready_nodes: Vec::new(),
-        };
+    let required_plugins = match required_plugins(spec) {
+        Ok(required_plugins) => required_plugins,
+        Err(reason) => {
+            return NetworkClassStatus {
+                conditions: vec![
+                    NetworkClassCondition {
+                        r#type: "Accepted".to_string(),
+                        status: "False".to_string(),
+                        message: reason.clone(),
+                        timestamp,
+                    },
+                    NetworkClassCondition {
+                        r#type: "Ready".to_string(),
+                        status: "False".to_string(),
+                        message: reason,
+                        timestamp,
+                    },
+                ],
+                ready_nodes: Vec::new(),
+                nodes_status: Vec::new(),
+            };
+        }
     };
 
-    let ready_nodes = nodes
+    let nodes_status = build_nodes_status(nodes, &required_plugins);
+
+    let ready_nodes = nodes_status
         .iter()
-        .filter(|node| node_supports_plugins(node, &required_plugins))
-        .filter_map(|node| node.object_meta.as_ref().and_then(|meta| meta.name.clone()))
+        .filter(|status| {
+            status
+                .plugins
+                .iter()
+                .all(|plugin| plugin.ready.unwrap_or(false))
+        })
+        .map(|status| status.node_name.clone())
         .collect::<Vec<_>>();
 
     let ready_message = if ready_nodes.is_empty() {
@@ -161,7 +171,49 @@ fn build_network_class_status(
             },
         ],
         ready_nodes,
+        nodes_status,
     }
+}
+
+fn build_nodes_status(
+    nodes: &[Node],
+    required_plugins: &[&str],
+) -> Vec<NetworkClassNodePluginStatus> {
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let node_name = node
+                .object_meta
+                .as_ref()
+                .and_then(|meta| meta.name.as_ref())?
+                .clone();
+            let statuses = node
+                .status
+                .as_ref()
+                .map(|status| status.cni_plugins.as_slice())
+                .unwrap_or(&[]);
+
+            let plugins = required_plugins
+                .iter()
+                .map(|plugin| {
+                    statuses
+                        .iter()
+                        .find(|status| status.name == *plugin)
+                        .cloned()
+                        .unwrap_or_else(|| NodeCniPluginStatus {
+                            name: (*plugin).to_string(),
+                            ready: Some(false),
+                            message: format!(
+                                "Node does not advertise required CNI plugin '{}'.",
+                                plugin
+                            ),
+                        })
+                })
+                .collect::<Vec<_>>();
+
+            Some(NetworkClassNodePluginStatus { node_name, plugins })
+        })
+        .collect()
 }
 
 fn required_plugins(spec: Option<&NetworkClassSpec>) -> Result<Vec<&'static str>, String> {
@@ -169,48 +221,31 @@ fn required_plugins(spec: Option<&NetworkClassSpec>) -> Result<Vec<&'static str>
         return Err("NetworkClass spec is missing.".to_string());
     };
 
-    match normalized_plugin(spec) {
-        "bridge" => Ok(vec!["bridge", "loopback"]),
-        "flannel" => {
-            let mut plugins = vec!["bridge", "flannel", "loopback"];
-            if spec
-                .flannel
-                .as_ref()
-                .and_then(|flannel| flannel.port_mappings)
-                .unwrap_or(false)
-            {
-                plugins.push("portmap");
-            }
-            Ok(plugins)
+    let plugin = normalized_plugin(spec);
+    if plugin.eq_ignore_ascii_case("bridge") {
+        Ok(vec!["bridge", "loopback"])
+    } else if plugin.eq_ignore_ascii_case("flannel") {
+        let mut plugins = vec!["bridge", "flannel", "loopback"];
+        if spec
+            .flannel
+            .as_ref()
+            .and_then(|flannel| flannel.port_mappings)
+            .unwrap_or(false)
+        {
+            plugins.push("portmap");
         }
-        other => Err(format!(
+        Ok(plugins)
+    } else {
+        Err(format!(
             "Unsupported cniPlugin '{}'. Supported values are bridge and flannel.",
-            other
-        )),
+            plugin
+        ))
     }
 }
 
 fn normalized_plugin(spec: &NetworkClassSpec) -> &str {
     let plugin = spec.cni_plugin.trim();
     if plugin.is_empty() { "bridge" } else { plugin }
-}
-
-fn node_supports_plugins(node: &Node, required_plugins: &[&str]) -> bool {
-    let Some(status) = node.status.as_ref() else {
-        return false;
-    };
-
-    required_plugins
-        .iter()
-        .all(|plugin| plugin_ready(&status.cni_plugins, plugin))
-}
-
-fn plugin_ready(statuses: &[NodeCniPluginStatus], plugin: &str) -> bool {
-    statuses
-        .iter()
-        .find(|status| status.name == plugin)
-        .and_then(|status| status.ready)
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -265,6 +300,87 @@ mod tests {
 
         assert_eq!(status.conditions[0].status, "False");
         assert!(status.conditions[0].message.contains("Unsupported"));
+    }
+
+    #[test]
+    fn flannel_plugin_name_is_case_insensitive() {
+        let status = build_network_class_status(
+            Some(&NetworkClassSpec {
+                cni_plugin: "FlAnNeL".to_string(),
+                ..Default::default()
+            }),
+            &[node_with_plugins(&[
+                ("bridge", true),
+                ("loopback", true),
+                ("flannel", true),
+            ])],
+        );
+
+        assert_eq!(status.conditions[0].status, "True");
+        assert_eq!(status.conditions[1].status, "True");
+    }
+
+    #[test]
+    fn status_contains_per_node_plugin_details() {
+        let status = build_network_class_status(
+            Some(&NetworkClassSpec {
+                cni_plugin: "flannel".to_string(),
+                flannel: Some(FlannelNetworkClass {
+                    port_mappings: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            &[
+                node_with_plugins(&[
+                    ("bridge", true),
+                    ("loopback", true),
+                    ("flannel", true),
+                    ("portmap", true),
+                ]),
+                Node {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("node-b".to_string()),
+                        ..Default::default()
+                    }),
+                    status: Some(NodeStatus {
+                        cni_plugins: vec![
+                            NodeCniPluginStatus {
+                                name: "bridge".to_string(),
+                                ready: Some(true),
+                                ..Default::default()
+                            },
+                            NodeCniPluginStatus {
+                                name: "loopback".to_string(),
+                                ready: Some(true),
+                                ..Default::default()
+                            },
+                            NodeCniPluginStatus {
+                                name: "flannel".to_string(),
+                                ready: Some(false),
+                                message: "missing subnet file".to_string(),
+                            },
+                        ],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+        );
+
+        assert_eq!(status.nodes_status.len(), 2);
+        assert_eq!(status.ready_nodes, vec!["node-a".to_string()]);
+
+        let node_b = status
+            .nodes_status
+            .iter()
+            .find(|node| node.node_name == "node-b")
+            .expect("node-b status must exist");
+        assert!(node_b.plugins.iter().any(|plugin| {
+            plugin.name == "portmap"
+                && plugin.ready == Some(false)
+                && plugin.message.contains("does not advertise")
+        }));
     }
 
     fn node_with_plugins(plugins: &[(&str, bool)]) -> Node {

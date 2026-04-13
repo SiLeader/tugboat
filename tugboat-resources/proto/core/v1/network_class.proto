@@ -17,6 +17,7 @@ syntax = "proto3";
 import "meta/v1/type_meta.proto";
 import "meta/v1/object_meta.proto";
 import "meta/v1/time.proto";
+import "core/v1/node.proto";
 
 package tugboat.core.v1;
 
@@ -64,6 +65,12 @@ message FlannelNetworkClass {
 message NetworkClassStatus {
   repeated NetworkClassCondition conditions = 1;
   repeated string ready_nodes = 2;
+  repeated NetworkClassNodePluginStatus nodes_status = 3;
+}
+
+message NetworkClassNodePluginStatus {
+  string node_name = 1;
+  repeated NodeCniPluginStatus plugins = 2;
 }
 
 message NetworkClassCondition {

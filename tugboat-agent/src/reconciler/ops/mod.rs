@@ -31,13 +31,27 @@ pub(super) const PHASE_FAILED: &str = "Failed";
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::volume::normalized_ship_volumes;
 use serde::{Deserialize, Serialize};
-use tugboat_resources::manifests::core::v1::ShipSpec;
+use tugboat_resources::manifests::core::v1::{ShipCondition, ShipSpec};
+
+pub(super) fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
+    if let Some(existing) = conditions
+        .iter_mut()
+        .find(|existing| existing.status == condition.status)
+    {
+        *existing = condition;
+    } else {
+        conditions.push(condition);
+    }
+}
 
 fn sha256_fingerprint<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
     use sha2::Digest;
     let json = serde_json::to_string(value)?;
     let hash = sha2::Sha256::digest(json.as_bytes());
-    Ok(format!("{hash:x}"))
+    Ok(hash
+        .into_iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

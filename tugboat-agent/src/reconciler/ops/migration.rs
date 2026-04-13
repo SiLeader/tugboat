@@ -64,16 +64,7 @@ fn is_migration_timed_out(timestamp: &Option<Time>, timeout_secs: i64) -> bool {
     now.seconds - ts.seconds > timeout_secs
 }
 
-fn upsert_ship_condition(conditions: &mut Vec<ShipCondition>, condition: ShipCondition) {
-    if let Some(existing) = conditions
-        .iter_mut()
-        .find(|existing| existing.status == condition.status)
-    {
-        *existing = condition;
-    } else {
-        conditions.push(condition);
-    }
-}
+use super::upsert_ship_condition;
 
 #[async_trait]
 pub trait MigrationContext: Send + Sync {
@@ -1082,29 +1073,25 @@ fn validate_target_network_capability(
 
     for network_class in network_classes {
         let plugin = normalized_plugin(&network_class.spec);
-        match plugin {
-            "bridge" => {
-                required_plugins.insert("bridge".to_string());
+        if plugin.eq_ignore_ascii_case("bridge") {
+            required_plugins.insert("bridge".to_string());
+        } else if plugin.eq_ignore_ascii_case("flannel") {
+            required_plugins.insert("bridge".to_string());
+            required_plugins.insert("flannel".to_string());
+            if network_class
+                .spec
+                .flannel
+                .as_ref()
+                .and_then(|flannel| flannel.port_mappings)
+                .unwrap_or(false)
+            {
+                required_plugins.insert("portmap".to_string());
             }
-            "flannel" => {
-                required_plugins.insert("bridge".to_string());
-                required_plugins.insert("flannel".to_string());
-                if network_class
-                    .spec
-                    .flannel
-                    .as_ref()
-                    .and_then(|flannel| flannel.port_mappings)
-                    .unwrap_or(false)
-                {
-                    required_plugins.insert("portmap".to_string());
-                }
-            }
-            other => {
-                return Some(format!(
-                    "network class '{}' requires unsupported cniPlugin '{}'",
-                    network_class.name, other
-                ));
-            }
+        } else {
+            return Some(format!(
+                "network class '{}' requires unsupported cniPlugin '{}'",
+                network_class.name, plugin
+            ));
         }
     }
 

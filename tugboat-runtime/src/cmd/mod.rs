@@ -17,6 +17,7 @@ pub mod hotplug;
 pub mod migrate;
 pub mod migrate_cancel;
 pub mod migration_status;
+pub mod qmp;
 pub mod run;
 pub mod start;
 pub mod status;

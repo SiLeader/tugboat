@@ -34,7 +34,7 @@ pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
         config.apiserver.tls.clone(),
     )
     .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
-    let csi_operator = TugboatCsiOperator::default();
+    let csi_operator = TugboatCsiOperator::with_timeouts(config.csi.timeouts());
 
     let mut tcm = TugboatControllerManager::new();
     tcm.add_controller(NetworkClassStatusController::new(

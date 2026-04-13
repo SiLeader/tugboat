@@ -288,13 +288,12 @@ async fn deployment_lifecycle_covers_rollout_and_cleanup() -> Result<(), DynErro
             })
             .cloned();
 
-        if let (Some(old_rs), Some(new_rs)) = (old_rs, new_rs) {
-            if old_rs["spec"]["replicas"] == 0
-                && new_rs["spec"]["replicas"] == 2
-                && new_rs["status"]["readyReplicas"] == 2
-            {
-                break (old_rs, new_rs);
-            }
+        if let (Some(old_rs), Some(new_rs)) = (old_rs, new_rs)
+            && old_rs["spec"]["replicas"] == 0
+            && new_rs["spec"]["replicas"] == 2
+            && new_rs["status"]["readyReplicas"] == 2
+        {
+            break (old_rs, new_rs);
         }
 
         if tokio::time::Instant::now() >= deadline {
@@ -520,8 +519,7 @@ async fn fleet_lifecycle_covers_managed_ships_and_cleanup() -> Result<(), DynErr
 async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup().await? else {
         eprintln!(
-            "skipping integration test: set {} or {} (or install docker) to enable",
-            "TUGBOAT_TEST_APISERVER_URL", "TUGBOAT_TEST_ETCD_ENDPOINT"
+            "skipping integration test: set TUGBOAT_TEST_APISERVER_URL or TUGBOAT_TEST_ETCD_ENDPOINT (or install docker) to enable"
         );
         return Ok(None);
     };

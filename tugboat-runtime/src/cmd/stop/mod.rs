@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cmd::qmp::{connect_qmp, execute_with_timeout};
 use crate::config::load_config;
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
-use qapi::futures::QmpStreamTokio;
 use tracing::info;
 use tugboat_vm_runtime_interface::stop::{VmStopRequest, VmStopType};
 
@@ -29,27 +29,22 @@ pub async fn stop(config: QemuVmConfig, args: StopArgs) -> crate::Result<()> {
     let req: VmStopRequest = load_config(args.config)?;
     crate::validate::validate_safe_id(&req.id, "vm id")?;
 
-    let stream = QmpStreamTokio::open_uds(config.get_uds_path(&req.id))
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let stream = stream
-        .negotiate()
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let (qmp, _handle) = stream.spawn_tokio();
+    let (qmp, _handle) = connect_qmp(config.get_uds_path(&req.id))
+        .await?
+        .spawn_tokio();
 
     match req.stop_type {
         VmStopType::Shutdown => {
             info!("Sending system_powerdown to VM {}", req.id);
-            qmp.execute(qapi::qmp::system_powerdown {})
-                .await
-                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+            execute_with_timeout(
+                qmp.execute(qapi::qmp::system_powerdown {}),
+                "Timed out issuing system_powerdown",
+            )
+            .await?;
         }
         VmStopType::PowerOff => {
             info!("Sending quit to VM {}", req.id);
-            qmp.execute(qapi::qmp::quit {})
-                .await
-                .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+            execute_with_timeout(qmp.execute(qapi::qmp::quit {}), "Timed out issuing quit").await?;
         }
     }
 

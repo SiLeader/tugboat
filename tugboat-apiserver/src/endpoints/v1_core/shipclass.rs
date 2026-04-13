@@ -13,13 +13,11 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
-use crate::endpoints::{ListQuery, resource_handlers};
+use crate::endpoints::{ClusterNamePathParams, ListQuery, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, post};
-use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::ShipClass;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -37,11 +35,6 @@ pub(super) async fn handle_shipclass_create(
     resource_handlers::create_cluster(json.into_inner(), operator).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ShipClassDeletePathParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = ShipClass),
@@ -54,7 +47,7 @@ pub(super) struct ShipClassDeletePathParams {
     )]
 #[delete("/api/v1/shipclasses/{name}")]
 pub(super) async fn handle_shipclass_delete(
-    path: Path<ShipClassDeletePathParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ShipClass>, Box<StatusResponse>> {
     resource_handlers::delete_resource::<ShipClass>(&operator, None, path.into_inner().name).await
@@ -80,11 +73,6 @@ pub(super) async fn handle_shipclass_list(
     resource_handlers::list_resources::<ShipClass>(&operator, query.into_inner(), None).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ReadParams {
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = ShipClass),
@@ -97,7 +85,7 @@ pub(super) struct ReadParams {
     )]
 #[get("/api/v1/shipclasses/{name}")]
 pub(super) async fn handle_shipclass_read(
-    path: Path<ReadParams>,
+    path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ShipClass>, Box<StatusResponse>> {
     resource_handlers::read_resource::<ShipClass>(&operator, None, path.into_inner().name).await

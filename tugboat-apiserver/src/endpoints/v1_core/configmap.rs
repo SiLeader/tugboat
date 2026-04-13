@@ -15,13 +15,11 @@
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers;
 use crate::endpoints::resource_handlers::ReplaceOptions;
-use crate::endpoints::{ListQuery, NamespacedPathParams};
+use crate::endpoints::{ListQuery, NamespacedNamePathParams, NamespacedPathParams};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::ConfigMap;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -44,12 +42,6 @@ pub(super) async fn handle_configmap_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ConfigMapDeletePathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = ConfigMap),
@@ -63,7 +55,7 @@ pub(super) struct ConfigMapDeletePathParams {
     )]
 #[delete("/api/v1/namespaces/{namespace}/configmaps/{name}")]
 pub(super) async fn handle_configmap_delete(
-    path: Path<ConfigMapDeletePathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ConfigMap>, Box<StatusResponse>> {
     let params = path.into_inner();
@@ -118,12 +110,6 @@ pub(super) async fn handle_configmap_list_all(
     resource_handlers::list_resources::<ConfigMap>(&operator, query.into_inner(), None).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ConfigMapReadPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = ConfigMap),
@@ -137,17 +123,11 @@ pub(super) struct ConfigMapReadPathParams {
     )]
 #[get("/api/v1/namespaces/{namespace}/configmaps/{name}")]
 pub(super) async fn handle_configmap_read(
-    path: Path<ConfigMapReadPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<ConfigMap>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<ConfigMap>(&operator, Some(path.namespace), path.name).await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct ConfigMapReplacePathParams {
-    namespace: String,
-    name: String,
 }
 
 #[utoipa::path(
@@ -164,7 +144,7 @@ pub(super) struct ConfigMapReplacePathParams {
     )]
 #[put("/api/v1/namespaces/{namespace}/configmaps/{name}")]
 pub(super) async fn handle_configmap_replace(
-    path: Path<ConfigMapReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<ConfigMap>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ConfigMap>, Box<StatusResponse>> {
@@ -197,7 +177,7 @@ pub(super) async fn handle_configmap_replace(
     )]
 #[patch("/api/v1/namespaces/{namespace}/configmaps/{name}")]
 pub(super) async fn handle_configmap_patch(
-    path: Path<ConfigMapReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<ConfigMap>, Box<StatusResponse>> {

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cmd::qmp::{connect_qmp, execute_with_timeout};
 use crate::execute::vm::QemuVmConfig;
 use clap::Parser;
-use qapi::futures::QmpStreamTokio;
 
 #[derive(Debug, Parser)]
 pub struct MigrateCancelArgs {
@@ -24,18 +24,15 @@ pub struct MigrateCancelArgs {
 
 pub async fn migrate_cancel(config: QemuVmConfig, args: MigrateCancelArgs) -> crate::Result<()> {
     crate::validate::validate_safe_id(&args.id, "vm id")?;
-    let stream = QmpStreamTokio::open_uds(config.get_uds_path(&args.id))
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let stream = stream
-        .negotiate()
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
-    let (qmp, _handle) = stream.spawn_tokio();
+    let (qmp, _handle) = connect_qmp(config.get_uds_path(&args.id))
+        .await?
+        .spawn_tokio();
 
-    qmp.execute(qapi::qmp::migrate_cancel {})
-        .await
-        .map_err(|e| crate::Error::Qmp(e.to_string()))?;
+    execute_with_timeout(
+        qmp.execute(qapi::qmp::migrate_cancel {}),
+        "Timed out issuing migrate_cancel",
+    )
+    .await?;
 
     Ok(())
 }

@@ -50,6 +50,13 @@ pub(crate) struct InvalidSecretVolumeDataError {
 
 #[derive(Debug, Error)]
 pub(crate) enum ReconcileError {
+    #[error(
+        "Failed to clean up CSI volumes after volume setup error (original error: {original_error}): {cleanup_errors}"
+    )]
+    VolumeSetupCleanupFailed {
+        original_error: Box<ReconcileError>,
+        cleanup_errors: String,
+    },
     #[error("API error: {0}")]
     Api(#[from] tugboat_client::Error),
     #[error("Field '{1}' in '{0}' is missing")]
@@ -182,6 +189,10 @@ pub(crate) enum ReconcileError {
     InvalidSecretVolumeData(Box<InvalidSecretVolumeDataError>),
     #[error("Failed to clean up one or more published CSI volumes: {0}")]
     PublishedVolumeCleanupFailed(String),
+    #[error(
+        "CSI volume '{volume_id}' is mounted on node but state persistence failed ({reason}); the next reconciliation can recover it"
+    )]
+    CsiVolumePartiallyPublished { volume_id: String, reason: String },
     #[error("Finalizer error: {0}")]
     Finalizer(String),
     #[error("CNI error: {0}")]

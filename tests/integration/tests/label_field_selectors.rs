@@ -283,8 +283,7 @@ async fn ship_list_all_supports_label_selectors_across_namespaces() -> Result<()
 async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup().await? else {
         eprintln!(
-            "skipping integration test: set {} or {} (or install docker) to enable",
-            "TUGBOAT_TEST_APISERVER_URL", "TUGBOAT_TEST_ETCD_ENDPOINT"
+            "skipping integration test: set TUGBOAT_TEST_APISERVER_URL or TUGBOAT_TEST_ETCD_ENDPOINT (or install docker) to enable"
         );
         return Ok(None);
     };

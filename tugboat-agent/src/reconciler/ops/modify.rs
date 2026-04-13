@@ -23,12 +23,13 @@ use tracing::{debug, info, warn};
 use tugboat_client::Api;
 use tugboat_csi_operator::CsiAccessType;
 use tugboat_resources::manifests::core::v1::{
-    Node, RuntimeClass, Ship, ShipClass, ShipCondition, ShipSpec,
+    Node, RuntimeClass, Ship, ShipActualAllocation, ShipClass, ShipCondition, ShipSpec,
 };
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_resources::sized::SizedString;
 use tugboat_resources::{NODE_RUNTIME_CLASS_LABEL_KEY, ObjectMetaResource, ShipMigrationExt};
 use tugboat_vm_runtime_interface::hotplug::sanitize_identifier;
+use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
 use super::migration::MigrationStateMachine;
 use super::{PHASE_COMPLETED, PHASE_FAILED};
@@ -234,8 +235,229 @@ impl ShipReconciler {
             return Ok(true);
         }
 
-        let Some(old_spec) = self.runtime_operator.current_ship_spec(ship_id).await else {
+        let Some(prepared) = self
+            .prepare_hotplug_state(ship, ship_id, namespace, new_spec)
+            .await?
+        else {
             return Ok(false);
+        };
+
+        let baseline = HotplugBaseline {
+            current_cpu_cores: ship
+                .status
+                .as_ref()
+                .and_then(|status| status.actual_allocation.as_ref())
+                .and_then(|alloc| alloc.cpu_cores)
+                .unwrap_or(ship_class_cpu_cores(&prepared.old_class)?),
+            current_memory_bytes: ship
+                .status
+                .as_ref()
+                .and_then(|status| status.actual_allocation.as_ref())
+                .and_then(|alloc| alloc.memory_size.as_deref())
+                .and_then(parse_memory_size)
+                .unwrap_or(ship_class_memory_bytes(&prepared.old_class)?),
+            current_nic_ids: current_nic_ids(
+                ship,
+                ship_id,
+                &prepared.old_spec,
+                &prepared.old_network_classes,
+            ),
+            current_volume_ids: current_volume_ids(
+                ship,
+                &prepared.old_spec,
+                &prepared.current_published_volumes,
+            )?,
+        };
+
+        let plan = classify_hotplug_changes(
+            ship_id,
+            &prepared.old_spec,
+            new_spec,
+            &baseline,
+            &HotplugDesired {
+                desired_cpu_cores: ship_class_cpu_cores(&prepared.new_class)?,
+                desired_memory_bytes: ship_class_memory_bytes(&prepared.new_class)?,
+                memory_size: ship_class_memory_size_string(&prepared.new_class)?,
+                nics_added: prepared
+                    .added_network_plans
+                    .iter()
+                    .map(|plan| plan.vm.clone())
+                    .collect(),
+                volumes_added: prepared.added_vm_volumes.clone(),
+            },
+            prepared
+                .runtime_class
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.hotplug.as_ref()),
+            prepared.old_spec.image != new_spec.image
+                || prepared.old_spec.uefi != new_spec.uefi
+                || prepared.old_spec.target_node_name != new_spec.target_node_name
+                || ship_class_architecture(&prepared.old_class)?
+                    != ship_class_architecture(&prepared.new_class)?,
+        );
+
+        if plan.has_unsupported_changes {
+            best_effort_cleanup_hotplug_additions(
+                self,
+                ship_id,
+                namespace,
+                &prepared.added_network_plans,
+                &prepared.added_published_volumes,
+                &prepared.new_volumes,
+            )
+            .await;
+            return Ok(false);
+        }
+
+        let Some(hotplug_req) = plan.hotplug_req.clone() else {
+            best_effort_cleanup_hotplug_additions(
+                self,
+                ship_id,
+                namespace,
+                &prepared.added_network_plans,
+                &prepared.added_published_volumes,
+                &prepared.new_volumes,
+            )
+            .await;
+            return Ok(false);
+        };
+
+        for plan in &prepared.added_network_plans {
+            if let Err(err) = self.cni.add_single(ship_id, plan.clone()).await {
+                self.handle_hotplug_recreate_failure(
+                    ship,
+                    ship_id,
+                    namespace,
+                    &prepared,
+                    format!("Failed to prepare hotplug network: {err}"),
+                    "Hotplug preparation failed",
+                )
+                .await?;
+                return Ok(true);
+            }
+        }
+
+        if let Err(err) = self.runtime_operator.hotplug(hotplug_req).await {
+            self.handle_hotplug_recreate_failure(
+                ship,
+                ship_id,
+                namespace,
+                &prepared,
+                format!("Failed to hotplug VM resources: {err}"),
+                "Hotplug failed",
+            )
+            .await?;
+            return Ok(true);
+        }
+
+        let old_network_plans = self
+            .cni
+            .create_network_configs(ship_id, prepared.old_network_classes.clone());
+        let removed_network_plans = old_network_plans
+            .into_iter()
+            .filter(|plan| {
+                prepared
+                    .removed_network_keys
+                    .contains(&network_class_info_key(&plan.info))
+            })
+            .collect::<Vec<_>>();
+        for plan in removed_network_plans {
+            let iface_name = plan.vm.iface_name.clone();
+            let network_key = network_class_info_key(&plan.info);
+            if let Err(err) = self.cni.del_single(ship_id, plan).await {
+                self.handle_hotplug_recreate_failure(
+                    ship,
+                    ship_id,
+                    namespace,
+                    &prepared,
+                    format!(
+                        "Failed to clean up removed hotplug network '{network_key}' ({iface_name}): {err}"
+                    ),
+                    "Hotplug cleanup failed",
+                )
+                .await?;
+                return Ok(true);
+            }
+        }
+
+        let removed_published_volumes = prepared
+            .current_published_volumes
+            .iter()
+            .filter(|volume| prepared.removed_volume_aliases.contains(&volume.claim_name))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !removed_published_volumes.is_empty() {
+            let mut secrets =
+                std::collections::HashMap::with_capacity(removed_published_volumes.len());
+            for published in &removed_published_volumes {
+                let Some(volume) = prepared.old_volumes.iter().find_map(|volume| {
+                    let volume = volume.persistent_volume_claim()?;
+                    (volume.name == published.claim_name).then_some(volume)
+                }) else {
+                    return Err(ReconcileError::PersistentVolumeClaimNotFound(
+                        published.claim_name.clone(),
+                    ));
+                };
+                let resolved = self.resolve_csi_secrets(volume).await?;
+                secrets.insert(published.claim_name.clone(), resolved.controller_publish);
+            }
+
+            self.cleanup_published_volumes(&removed_published_volumes, &secrets)
+                .await?;
+
+            for volume in &prepared.old_volumes {
+                let Some(volume) = volume.persistent_volume_claim() else {
+                    continue;
+                };
+                if prepared.removed_volume_aliases.contains(&volume.name)
+                    && let Err(err) = self.mark_volume_attached(&volume.volume_name, false).await
+                {
+                    warn!(
+                        "Failed to clear attachment for hot-unplugged volume '{}' on ship '{}': {}",
+                        volume.volume_name, ship_id, err
+                    );
+                }
+            }
+        }
+
+        let mut next_published_volumes = prepared
+            .current_published_volumes
+            .into_iter()
+            .filter(|volume| !prepared.removed_volume_aliases.contains(&volume.claim_name))
+            .collect::<Vec<_>>();
+        next_published_volumes.extend(prepared.added_published_volumes);
+        self.runtime_operator
+            .update_runtime_state(
+                ship_id,
+                new_spec.clone(),
+                fingerprints.clone(),
+                next_published_volumes,
+            )
+            .await;
+
+        self.patch_hotplug_success_status(
+            namespace,
+            &prepared.ship_name,
+            ship,
+            plan.actual_allocation,
+        )
+        .await?;
+
+        self.check_pending_volume_expansions(ship_id, namespace, new_spec)
+            .await;
+        Ok(true)
+    }
+
+    async fn prepare_hotplug_state(
+        &self,
+        ship: &Ship,
+        ship_id: &str,
+        namespace: &str,
+        new_spec: &ShipSpec,
+    ) -> Result<Option<HotplugPreparedState>, ReconcileError> {
+        let Some(old_spec) = self.runtime_operator.current_ship_spec(ship_id).await else {
+            return Ok(None);
         };
 
         let Some(ship_meta) = ship.object_meta() else {
@@ -244,7 +466,7 @@ impl ShipReconciler {
                 "metadata".to_string(),
             ));
         };
-        let Some(ship_name) = ship_meta.name.as_deref() else {
+        let Some(ship_name) = ship_meta.name.clone() else {
             return Err(ReconcileError::FieldMissing(
                 "v1.Ship".to_string(),
                 "metadata.name".to_string(),
@@ -252,26 +474,61 @@ impl ShipReconciler {
         };
 
         let Some(old_class) = self.ship_class_api.get(&old_spec.ship_class).await? else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(new_class) = self.ship_class_api.get(&new_spec.ship_class).await? else {
-            return Ok(false);
+            return Ok(None);
         };
-
-        let runtime_class = match self.resolve_local_runtime_class(new_spec).await? {
-            Some(runtime_class) => runtime_class,
-            None => return Ok(false),
+        let Some(runtime_class) = self.resolve_local_runtime_class(new_spec).await? else {
+            return Ok(None);
         };
-
-        let old_cpu = ship_class_cpu_cores(&old_class)?;
-        let old_memory = ship_class_memory_bytes(&old_class)?;
-        let new_cpu = ship_class_cpu_cores(&new_class)?;
-        let new_memory = ship_class_memory_bytes(&new_class)?;
-        let new_memory_size = ship_class_memory_size_string(&new_class)?;
 
         let old_network_classes = self
             .get_related_network_classes(namespace, &old_spec)
             .await?;
+        let (added_network_plans, removed_network_keys) = self
+            .diff_hotplug_networks(ship_id, &old_spec, new_spec, namespace)
+            .await?;
+
+        let old_volumes = self.get_related_volumes(namespace, &old_spec).await?;
+        let new_volumes = self.get_related_volumes(namespace, new_spec).await?;
+        let Some((added_published_volumes, added_vm_volumes, removed_volume_aliases)) = self
+            .prepare_hotplug_volume_changes(ship_id, namespace, &old_spec, new_spec, &new_volumes)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let current_published_volumes = self
+            .runtime_operator
+            .current_published_volumes(ship_id)
+            .await
+            .unwrap_or_default();
+
+        Ok(Some(HotplugPreparedState {
+            ship_name,
+            old_spec,
+            old_class,
+            new_class,
+            runtime_class,
+            old_network_classes,
+            old_volumes,
+            new_volumes,
+            added_network_plans,
+            removed_network_keys,
+            current_published_volumes,
+            added_published_volumes,
+            added_vm_volumes,
+            removed_volume_aliases,
+        }))
+    }
+
+    async fn diff_hotplug_networks(
+        &self,
+        ship_id: &str,
+        old_spec: &ShipSpec,
+        new_spec: &ShipSpec,
+        namespace: &str,
+    ) -> Result<(Vec<crate::cni::PlannedNetworkConfig>, Vec<String>), ReconcileError> {
         let old_network_keys = old_spec
             .network_class_ref
             .iter()
@@ -306,9 +563,19 @@ impl ShipReconciler {
             added_network_classes,
         );
 
-        let old_volumes = self.get_related_volumes(namespace, &old_spec).await?;
-        let new_volumes = self.get_related_volumes(namespace, new_spec).await?;
-        let old_pvc_aliases = pvc_aliases(&old_spec)?;
+        Ok((added_network_plans, removed_network_keys))
+    }
+
+    async fn prepare_hotplug_volume_changes(
+        &self,
+        ship_id: &str,
+        namespace: &str,
+        old_spec: &ShipSpec,
+        new_spec: &ShipSpec,
+        new_volumes: &[VolumeInfo],
+    ) -> Result<Option<(Vec<PublishedVolume>, Vec<VmVolumeConfig>, Vec<String>)>, ReconcileError>
+    {
+        let old_pvc_aliases = pvc_aliases(old_spec)?;
         let new_pvc_aliases = pvc_aliases(new_spec)?;
         let added_volume_aliases = new_pvc_aliases
             .iter()
@@ -320,6 +587,7 @@ impl ShipReconciler {
             .filter(|alias| !new_pvc_aliases.contains(*alias))
             .cloned()
             .collect::<Vec<_>>();
+
         let added_volume_infos = new_volumes
             .iter()
             .filter(|volume| {
@@ -338,14 +606,9 @@ impl ShipReconciler {
                     .unwrap_or(true)
             })
         }) {
-            return Ok(false);
+            return Ok(None);
         }
 
-        let current_published_volumes = self
-            .runtime_operator
-            .current_published_volumes(ship_id)
-            .await
-            .unwrap_or_default();
         let (added_published_volumes, added_vm_volumes) = if added_volume_infos.is_empty() {
             (Vec::new(), Vec::new())
         } else {
@@ -353,178 +616,46 @@ impl ShipReconciler {
                 .await?
         };
 
-        let baseline = HotplugBaseline {
-            current_cpu_cores: ship
-                .status
-                .as_ref()
-                .and_then(|status| status.actual_allocation.as_ref())
-                .and_then(|alloc| alloc.cpu_cores)
-                .unwrap_or(old_cpu),
-            current_memory_bytes: ship
-                .status
-                .as_ref()
-                .and_then(|status| status.actual_allocation.as_ref())
-                .and_then(|alloc| alloc.memory_size.as_deref())
-                .and_then(parse_memory_size)
-                .unwrap_or(old_memory),
-            current_nic_ids: current_nic_ids(ship, ship_id, &old_spec, &old_network_classes),
-            current_volume_ids: current_volume_ids(ship, &old_spec, &current_published_volumes)?,
-        };
+        Ok(Some((
+            added_published_volumes,
+            added_vm_volumes,
+            removed_volume_aliases,
+        )))
+    }
 
-        let plan = classify_hotplug_changes(
+    async fn handle_hotplug_recreate_failure(
+        &self,
+        ship: &Ship,
+        ship_id: &str,
+        namespace: &str,
+        prepared: &HotplugPreparedState,
+        status_message: String,
+        log_prefix: &str,
+    ) -> Result<(), ReconcileError> {
+        best_effort_cleanup_hotplug_additions(
+            self,
             ship_id,
-            &old_spec,
-            new_spec,
-            &baseline,
-            &HotplugDesired {
-                desired_cpu_cores: new_cpu,
-                desired_memory_bytes: new_memory,
-                memory_size: new_memory_size,
-                nics_added: added_network_plans
-                    .iter()
-                    .map(|plan| plan.vm.clone())
-                    .collect(),
-                volumes_added: added_vm_volumes.clone(),
-            },
-            runtime_class
-                .spec
-                .as_ref()
-                .and_then(|spec| spec.hotplug.as_ref()),
-            old_spec.image != new_spec.image
-                || old_spec.uefi != new_spec.uefi
-                || old_spec.target_node_name != new_spec.target_node_name
-                || ship_class_architecture(&old_class)? != ship_class_architecture(&new_class)?,
-        );
+            namespace,
+            &prepared.added_network_plans,
+            &prepared.added_published_volumes,
+            &prepared.new_volumes,
+        )
+        .await;
+        self.mark_hotplug_failed(ship, status_message).await?;
+        warn!("{log_prefix} for ship '{}': recreating", ship_id);
+        self.reconcile_recreate(ship.clone()).await
+    }
 
-        if plan.has_unsupported_changes {
-            best_effort_cleanup_hotplug_additions(
-                self,
-                ship_id,
-                namespace,
-                &added_network_plans,
-                &added_published_volumes,
-                &new_volumes,
-            )
-            .await;
-            return Ok(false);
-        }
-
-        let Some(hotplug_req) = plan.hotplug_req.clone() else {
-            best_effort_cleanup_hotplug_additions(
-                self,
-                ship_id,
-                namespace,
-                &added_network_plans,
-                &added_published_volumes,
-                &new_volumes,
-            )
-            .await;
-            return Ok(false);
-        };
-
-        for plan in &added_network_plans {
-            if let Err(err) = self.cni.add_single(ship_id, plan.clone()).await {
-                best_effort_cleanup_hotplug_additions(
-                    self,
-                    ship_id,
-                    namespace,
-                    &added_network_plans,
-                    &added_published_volumes,
-                    &new_volumes,
-                )
-                .await;
-                self.mark_hotplug_failed(ship, format!("Failed to prepare hotplug network: {err}"))
-                    .await?;
-                warn!("Hotplug preparation failed for ship '{}': {}", ship_id, err);
-                self.reconcile_recreate(ship.clone()).await?;
-                return Ok(true);
-            }
-        }
-
-        if let Err(err) = self.runtime_operator.hotplug(hotplug_req).await {
-            best_effort_cleanup_hotplug_additions(
-                self,
-                ship_id,
-                namespace,
-                &added_network_plans,
-                &added_published_volumes,
-                &new_volumes,
-            )
-            .await;
-            self.mark_hotplug_failed(ship, format!("Failed to hotplug VM resources: {err}"))
-                .await?;
-            warn!("Hotplug failed for ship '{}': {}", ship_id, err);
-            self.reconcile_recreate(ship.clone()).await?;
-            return Ok(true);
-        }
-
-        let old_network_plans = self
-            .cni
-            .create_network_configs(ship_id, old_network_classes);
-        let removed_network_plans = old_network_plans
-            .into_iter()
-            .filter(|plan| removed_network_keys.contains(&network_class_info_key(&plan.info)))
-            .collect::<Vec<_>>();
-        for plan in removed_network_plans {
-            if let Err(err) = self.cni.del_single(ship_id, plan).await {
-                warn!(
-                    "Failed to clean up hotplugged NIC resources for ship '{}': {}",
-                    ship_id, err
-                );
-            }
-        }
-
-        let removed_published_volumes = current_published_volumes
-            .iter()
-            .filter(|volume| removed_volume_aliases.contains(&volume.claim_name))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !removed_published_volumes.is_empty() {
-            let secrets = self
-                .controller_publish_secret_map(namespace, &old_volumes, &removed_published_volumes)
-                .await
-                .unwrap_or_default();
-            if let Err(err) = self
-                .cleanup_published_volumes(&removed_published_volumes, &secrets)
-                .await
-            {
-                warn!(
-                    "Failed to clean up removed hotplugged volumes for ship '{}': {}",
-                    ship_id, err
-                );
-            }
-            for volume in &old_volumes {
-                let Some(volume) = volume.persistent_volume_claim() else {
-                    continue;
-                };
-                if removed_volume_aliases.contains(&volume.name)
-                    && let Err(err) = self.mark_volume_attached(&volume.volume_name, false).await
-                {
-                    warn!(
-                        "Failed to clear attachment for hot-unplugged volume '{}' on ship '{}': {}",
-                        volume.volume_name, ship_id, err
-                    );
-                }
-            }
-        }
-
-        let mut next_published_volumes = current_published_volumes
-            .into_iter()
-            .filter(|volume| !removed_volume_aliases.contains(&volume.claim_name))
-            .collect::<Vec<_>>();
-        next_published_volumes.extend(added_published_volumes);
-        self.runtime_operator
-            .update_runtime_state(
-                ship_id,
-                new_spec.clone(),
-                fingerprints.clone(),
-                next_published_volumes,
-            )
-            .await;
-
+    async fn patch_hotplug_success_status(
+        &self,
+        namespace: &str,
+        ship_name: &str,
+        ship: &Ship,
+        actual_allocation: ShipActualAllocation,
+    ) -> Result<(), ReconcileError> {
         let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
         let mut status = ship.status.clone().unwrap_or_default();
-        status.actual_allocation = Some(plan.actual_allocation);
+        status.actual_allocation = Some(actual_allocation);
         status.append_status(ShipCondition {
             status: "Hotplugged".to_string(),
             message: "Applied supported CPU/memory/network/storage changes in-place".to_string(),
@@ -540,10 +671,7 @@ impl ShipReconciler {
             }),
         )
         .await?;
-
-        self.check_pending_volume_expansions(ship_id, namespace, new_spec)
-            .await;
-        Ok(true)
+        Ok(())
     }
 
     async fn mark_hotplug_failed(
@@ -738,7 +866,7 @@ impl ShipReconciler {
                 return;
             }
         };
-        let published_volumes = match self.csi.load_published_volumes(ship_id) {
+        let published_volumes = match self.csi.load_published_volumes(ship_id).await {
             Ok(v) => v,
             Err(err) => {
                 warn!(
@@ -788,6 +916,23 @@ impl ShipReconciler {
             }
         }
     }
+}
+
+struct HotplugPreparedState {
+    ship_name: String,
+    old_spec: ShipSpec,
+    old_class: ShipClass,
+    new_class: ShipClass,
+    runtime_class: RuntimeClass,
+    old_network_classes: Vec<crate::cni::NetworkClassInfo>,
+    old_volumes: Vec<VolumeInfo>,
+    new_volumes: Vec<VolumeInfo>,
+    added_network_plans: Vec<crate::cni::PlannedNetworkConfig>,
+    removed_network_keys: Vec<String>,
+    current_published_volumes: Vec<PublishedVolume>,
+    added_published_volumes: Vec<PublishedVolume>,
+    added_vm_volumes: Vec<VmVolumeConfig>,
+    removed_volume_aliases: Vec<String>,
 }
 
 fn network_ref_key(
@@ -883,8 +1028,8 @@ fn current_nic_ids(
             };
             let digest = sha2::Sha256::digest(ident.as_bytes());
             let mac = format!(
-                "52:54:00:{digest:02x}:{digest:02x}:{digest:02x}",
-                digest = digest
+                "52:54:00:{:02x}:{:02x}:{:02x}",
+                digest[0], digest[1], digest[2]
             );
             format!("nic-{}", sanitize_identifier(&mac))
         })
@@ -951,7 +1096,7 @@ async fn best_effort_cleanup_hotplug_additions(
         {
             Ok(secrets) => {
                 if let Err(err) = reconciler
-                    .cleanup_published_volumes(added_published_volumes, &secrets)
+                    .cleanup_published_volumes_best_effort(added_published_volumes, &secrets)
                     .await
                 {
                     warn!(
@@ -967,5 +1112,79 @@ async fn best_effort_cleanup_hotplug_additions(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::current_nic_ids;
+    use crate::cni::NetworkClassInfo;
+    use sha2::Digest;
+    use tugboat_resources::manifests::core::v1::{
+        NetworkClassSpec, Ship, ShipActualAllocation, ShipNetworkClassReference, ShipSpec,
+        ShipStatus,
+    };
+    use tugboat_vm_runtime_interface::hotplug::sanitize_identifier;
+
+    fn ship_spec_with_networks() -> ShipSpec {
+        ShipSpec {
+            image: "registry.example.com/test:1".to_string(),
+            ship_class: "small".to_string(),
+            node_name: Some("node-a".to_string()),
+            network_class_ref: vec![ShipNetworkClassReference {
+                api_group: "core".to_string(),
+                kind: "NetworkClass".to_string(),
+                name: "frontend".to_string(),
+            }],
+            uefi: None,
+            tolerations: vec![],
+            scheduler_name: None,
+            volume_claim_ref: vec![],
+            volumes: vec![],
+            target_node_name: None,
+            runtime_class: None,
+        }
+    }
+
+    #[test]
+    fn current_nic_ids_returns_status_ids_when_lengths_match() {
+        let old_spec = ship_spec_with_networks();
+        let ship = Ship {
+            status: Some(ShipStatus {
+                actual_allocation: Some(ShipActualAllocation {
+                    nic_ids: vec!["nic-preexisting".to_string()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let ids = current_nic_ids(&ship, "ship-123", &old_spec, &[]);
+        assert_eq!(ids, vec!["nic-preexisting".to_string()]);
+    }
+
+    #[test]
+    fn current_nic_ids_fallback_matches_cni_mac_derivation() {
+        let old_spec = ship_spec_with_networks();
+        let ship = Ship::default();
+        let old_network_classes = vec![NetworkClassInfo {
+            name: "frontend".to_string(),
+            namespace: Some("default".to_string()),
+            spec: NetworkClassSpec::default(),
+        }];
+
+        let ids = current_nic_ids(&ship, "ship-123", &old_spec, &old_network_classes);
+        assert_eq!(ids.len(), 1);
+
+        let ident = "NetworkClass/default/frontend/ship-123";
+        let digest = sha2::Sha256::digest(ident.as_bytes());
+        let mac = format!(
+            "52:54:00:{:02x}:{:02x}:{:02x}",
+            digest[0], digest[1], digest[2]
+        );
+        let expected = format!("nic-{}", sanitize_identifier(&mac));
+
+        assert_eq!(ids[0], expected);
     }
 }

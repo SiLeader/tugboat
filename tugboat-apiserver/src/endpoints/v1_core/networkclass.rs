@@ -13,13 +13,13 @@
 // limitations under the License.
 
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
-use crate::endpoints::{ListQuery, NamespacedPathParams, resource_handlers};
+use crate::endpoints::{
+    ListQuery, NamespacedNamePathParams, NamespacedPathParams, resource_handlers,
+};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
-use serde::Deserialize;
 use tugboat_resources::manifests::core::v1::NetworkClass;
-use utoipa::ToSchema;
 
 #[utoipa::path(
         responses(
@@ -42,12 +42,6 @@ pub(super) async fn handle_networkclass_create(
         .await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct NetworkClassDeletePathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource deleted", body = NetworkClass),
@@ -61,7 +55,7 @@ pub(super) struct NetworkClassDeletePathParams {
     )]
 #[delete("/api/v1/namespaces/{namespace}/networkclasses/{name}")]
 pub(super) async fn handle_networkclass_delete(
-    path: Path<NetworkClassDeletePathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<NetworkClass>, Box<StatusResponse>> {
     let params = path.into_inner();
@@ -120,12 +114,6 @@ pub(super) async fn handle_networkclass_list_all(
     resource_handlers::list_resources::<NetworkClass>(&operator, query.into_inner(), None).await
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(super) struct NetworkClassReadPathParams {
-    namespace: String,
-    name: String,
-}
-
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource details", body = NetworkClass),
@@ -139,18 +127,12 @@ pub(super) struct NetworkClassReadPathParams {
     )]
 #[get("/api/v1/namespaces/{namespace}/networkclasses/{name}")]
 pub(super) async fn handle_networkclass_read(
-    path: Path<NetworkClassReadPathParams>,
+    path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<NetworkClass>, Box<StatusResponse>> {
     let path = path.into_inner();
     resource_handlers::read_resource::<NetworkClass>(&operator, Some(path.namespace), path.name)
         .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct NetworkClassPatchPathParams {
-    namespace: String,
-    name: String,
 }
 
 #[utoipa::path(
@@ -167,7 +149,7 @@ pub(super) struct NetworkClassPatchPathParams {
     )]
 #[patch("/api/v1/namespaces/{namespace}/networkclasses/{name}/status")]
 pub(super) async fn handle_networkclass_status_patch(
-    path: Path<NetworkClassPatchPathParams>,
+    path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<NetworkClass>, Box<StatusResponse>> {
@@ -179,12 +161,6 @@ pub(super) async fn handle_networkclass_status_patch(
         patch.into_inner(),
     )
     .await
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(super) struct NetworkClassStatusReplacePathParams {
-    namespace: String,
-    name: String,
 }
 
 #[utoipa::path(
@@ -201,7 +177,7 @@ pub(super) struct NetworkClassStatusReplacePathParams {
     )]
 #[put("/api/v1/namespaces/{namespace}/networkclasses/{name}/status")]
 pub(super) async fn handle_networkclass_status_replace(
-    path: Path<NetworkClassStatusReplacePathParams>,
+    path: Path<NamespacedNamePathParams>,
     replacement: Json<NetworkClass>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<NetworkClass>, Box<StatusResponse>> {

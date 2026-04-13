@@ -292,10 +292,10 @@ async fn fleet_controller_rolls_component_update_to_new_replicaset() -> Result<(
             })
             .cloned();
 
-        if let Some(new_rs) = new_rs {
-            if new_rs["spec"]["replicas"] == 2 {
-                break new_rs;
-            }
+        if let Some(new_rs) = new_rs
+            && new_rs["spec"]["replicas"] == 2
+        {
+            break new_rs;
         }
 
         if tokio::time::Instant::now() >= deadline {
@@ -631,8 +631,7 @@ async fn fleet_controller_deletes_managed_replicasets_and_ships_on_deletion() ->
 async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup().await? else {
         eprintln!(
-            "skipping integration test: set {} or {} (or install docker) to enable",
-            "TUGBOAT_TEST_APISERVER_URL", "TUGBOAT_TEST_ETCD_ENDPOINT"
+            "skipping integration test: set TUGBOAT_TEST_APISERVER_URL or TUGBOAT_TEST_ETCD_ENDPOINT (or install docker) to enable"
         );
         return Ok(None);
     };

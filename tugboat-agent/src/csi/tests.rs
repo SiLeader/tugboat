@@ -15,8 +15,13 @@
 use super::{
     CsiDrivers, CsiWrapper, PublishedAccessType, PublishedVolume, TryConvertFromString,
     access_type_from_volume_mode, cleanup_directory_path, cleanup_target_path,
-    effective_publish_settings, filesystem_type, prepare_directory_path, prepare_target_path,
-    select_access_mode,
+    effective_publish_settings, filesystem_type, is_retryable_driver_error, prepare_directory_path,
+    prepare_target_path, select_access_mode,
+};
+use crate::csi::CsiError;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use tugboat_csi_operator::{CsiAccessMode, CsiAccessType, TugboatCsiOperator};
 use tugboat_resources::manifests::core::v1::CsiPersistentVolumeSource;
@@ -130,8 +135,8 @@ fn read_only_claims_force_read_only_publish() {
     assert!(read_only);
 }
 
-#[test]
-fn can_persist_and_load_published_volume_state() {
+#[tokio::test]
+async fn can_persist_and_load_published_volume_state() {
     let temp_dir = std::env::temp_dir().join(format!(
         "tugboat-agent-csi-{}",
         std::time::SystemTime::now()
@@ -168,17 +173,20 @@ fn can_persist_and_load_published_volume_state() {
     };
 
     wrapper
-        .persist_published_volume(&volume)
+        .persist_published_volume(&volume, "ship-uid")
+        .await
         .expect("state persistence should succeed");
 
     let loaded = wrapper
         .load_published_volumes("ship-uid")
+        .await
         .expect("state loading should succeed");
 
     assert_eq!(loaded, vec![volume.clone()]);
 
     wrapper
         .remove_published_volume_state(&volume)
+        .await
         .expect("state cleanup should succeed");
     let _ = std::fs::remove_dir_all(temp_dir);
 }
@@ -227,8 +235,8 @@ fn can_prepare_and_cleanup_block_target_path() {
     let _ = std::fs::remove_dir_all(temp_dir);
 }
 
-#[test]
-fn integration_happy_path_round_trips_block_volume_state() {
+#[tokio::test]
+async fn integration_happy_path_round_trips_block_volume_state() {
     let temp_dir = std::env::temp_dir().join(format!(
         "tugboat-agent-csi-it-happy-{}",
         std::time::SystemTime::now()
@@ -260,24 +268,27 @@ fn integration_happy_path_round_trips_block_volume_state() {
     prepare_target_path(&volume.target_path, volume.access_type)
         .expect("block target preparation should succeed");
     wrapper
-        .persist_published_volume(&volume)
+        .persist_published_volume(&volume, "ship-uid")
+        .await
         .expect("state persistence should succeed");
 
     let loaded = wrapper
         .load_published_volumes("ship-uid")
+        .await
         .expect("state loading should succeed");
     assert_eq!(loaded, vec![volume.clone()]);
 
     wrapper
         .remove_published_volume_state(&volume)
+        .await
         .expect("state cleanup should succeed");
     cleanup_target_path(&volume.target_path, volume.access_type)
         .expect("block target cleanup should succeed");
     let _ = std::fs::remove_dir_all(temp_dir);
 }
 
-#[test]
-fn integration_cleanup_path_removes_filesystem_state_and_paths() {
+#[tokio::test]
+async fn integration_cleanup_path_removes_filesystem_state_and_paths() {
     let temp_dir = std::env::temp_dir().join(format!(
         "tugboat-agent-csi-it-cleanup-{}",
         std::time::SystemTime::now()
@@ -317,7 +328,8 @@ fn integration_cleanup_path_removes_filesystem_state_and_paths() {
     prepare_target_path(&volume.target_path, volume.access_type)
         .expect("filesystem target preparation should succeed");
     wrapper
-        .persist_published_volume(&volume)
+        .persist_published_volume(&volume, "ship-uid")
+        .await
         .expect("state persistence should succeed");
 
     cleanup_target_path(&volume.target_path, volume.access_type)
@@ -331,11 +343,13 @@ fn integration_cleanup_path_removes_filesystem_state_and_paths() {
     .expect("staging directory cleanup should succeed");
     wrapper
         .remove_published_volume_state(&volume)
+        .await
         .expect("state cleanup should succeed");
 
     assert!(
         wrapper
             .load_published_volumes("ship-uid")
+            .await
             .expect("state loading should succeed")
             .is_empty()
     );
@@ -418,4 +432,204 @@ fn effective_pvc_name_returns_pvc_name_when_present() {
         pvc_name: Some("actual-pvc".to_string()),
     };
     assert_eq!(volume.effective_pvc_name(), "actual-pvc");
+}
+
+#[tokio::test]
+async fn retries_transient_csi_errors_before_succeeding() {
+    let wrapper = CsiWrapper::new(
+        TugboatCsiOperator::default(),
+        CsiDrivers::default(),
+        "/var/lib/tugboat-agent/csi",
+    );
+    let attempts = Arc::new(AtomicUsize::new(0));
+
+    let result = wrapper
+        .retry_csi_operation("test operation", "volume-1", {
+            let attempts = attempts.clone();
+            move || {
+                let attempts = attempts.clone();
+                async move {
+                    let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                    if attempt < 2 {
+                        return Err(CsiError::Driver(tugboat_csi_operator::Error::Grpc(
+                            tonic::Status::unavailable("temporarily unavailable"),
+                        )));
+                    }
+                    Ok(42_u8)
+                }
+            }
+        })
+        .await
+        .expect("transient CSI failures should be retried");
+
+    assert_eq!(result, 42);
+    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn does_not_retry_non_retryable_csi_errors() {
+    let wrapper = CsiWrapper::new(
+        TugboatCsiOperator::default(),
+        CsiDrivers::default(),
+        "/var/lib/tugboat-agent/csi",
+    );
+    let attempts = Arc::new(AtomicUsize::new(0));
+
+    let err = wrapper
+        .retry_csi_operation("test operation", "volume-1", {
+            let attempts = attempts.clone();
+            move || {
+                let attempts = attempts.clone();
+                async move {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Err::<u8, CsiError>(CsiError::Driver(
+                        tugboat_csi_operator::Error::TargetPathAlreadyExists,
+                    ))
+                }
+            }
+        })
+        .await
+        .expect_err("non-retryable CSI failures should fail immediately");
+
+    assert!(matches!(
+        err,
+        CsiError::Driver(tugboat_csi_operator::Error::TargetPathAlreadyExists)
+    ));
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn can_recover_partial_published_volume_state_from_existing_paths() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir should be created");
+    let wrapper = CsiWrapper::new(
+        TugboatCsiOperator::default(),
+        CsiDrivers::default(),
+        temp_dir.path(),
+    );
+    let mount_namespace_path = temp_dir.path().join("mntns").join("ship-uid");
+    std::fs::create_dir_all(&mount_namespace_path).expect("mount namespace path should exist");
+    let staging_target_path = temp_dir
+        .path()
+        .join("ship-uid")
+        .join(".staging")
+        .join("data");
+    let volume = PublishedVolume {
+        claim_name: "data".to_string(),
+        driver: "example.csi".to_string(),
+        volume_id: "volume-1".to_string(),
+        target_path: temp_dir
+            .path()
+            .join("ship-uid")
+            .join("data.fs")
+            .display()
+            .to_string(),
+        access_type: PublishedAccessType::Filesystem,
+        mount_namespace_path: mount_namespace_path.display().to_string(),
+        staging_target_path: Some(staging_target_path.display().to_string()),
+        controller_published: true,
+        pvc_name: Some("data-pvc".to_string()),
+    };
+
+    prepare_target_path(&volume.target_path, volume.access_type)
+        .expect("publish target should be created");
+    prepare_directory_path(
+        volume
+            .staging_target_path
+            .as_deref()
+            .expect("staging path should exist"),
+    )
+    .expect("staging path should be created");
+
+    let recovered = wrapper
+        .recover_partial_published_volume_state("ship-uid", std::slice::from_ref(&volume))
+        .await
+        .expect("recovery should succeed")
+        .expect("existing publish paths should be recognized");
+
+    assert_eq!(recovered, vec![volume.clone()]);
+    let persisted = wrapper
+        .load_published_volumes("ship-uid")
+        .await
+        .expect("recovered state should be persisted");
+    assert_eq!(persisted, vec![volume]);
+}
+
+#[tokio::test]
+async fn partial_recovery_is_serialized_for_same_ship() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir should be created");
+    let wrapper = CsiWrapper::new(
+        TugboatCsiOperator::default(),
+        CsiDrivers::default(),
+        temp_dir.path(),
+    );
+    let mount_namespace_path = temp_dir.path().join("mntns").join("ship-uid");
+    std::fs::create_dir_all(&mount_namespace_path).expect("mount namespace path should exist");
+    let staging_target_path = temp_dir
+        .path()
+        .join("ship-uid")
+        .join(".staging")
+        .join("data");
+    let volume = PublishedVolume {
+        claim_name: "data".to_string(),
+        driver: "example.csi".to_string(),
+        volume_id: "volume-1".to_string(),
+        target_path: temp_dir
+            .path()
+            .join("ship-uid")
+            .join("data.fs")
+            .display()
+            .to_string(),
+        access_type: PublishedAccessType::Filesystem,
+        mount_namespace_path: mount_namespace_path.display().to_string(),
+        staging_target_path: Some(staging_target_path.display().to_string()),
+        controller_published: true,
+        pvc_name: Some("data-pvc".to_string()),
+    };
+
+    prepare_target_path(&volume.target_path, volume.access_type)
+        .expect("publish target should be created");
+    prepare_directory_path(
+        volume
+            .staging_target_path
+            .as_deref()
+            .expect("staging path should exist"),
+    )
+    .expect("staging path should be created");
+
+    let (left, right) = tokio::join!(
+        wrapper.recover_partial_published_volume_state("ship-uid", std::slice::from_ref(&volume)),
+        wrapper.recover_partial_published_volume_state("ship-uid", std::slice::from_ref(&volume))
+    );
+
+    let left = left
+        .expect("left recovery should succeed")
+        .expect("left recovery should detect partial publish state");
+    let right = right
+        .expect("right recovery should succeed")
+        .expect("right recovery should detect partial publish state");
+
+    assert_eq!(left, vec![volume.clone()]);
+    assert_eq!(right, vec![volume.clone()]);
+
+    let persisted = wrapper
+        .load_published_volumes("ship-uid")
+        .await
+        .expect("recovered state should be persisted");
+    assert_eq!(persisted, vec![volume]);
+}
+
+#[test]
+fn classifies_retryable_driver_errors() {
+    assert!(is_retryable_driver_error(
+        &tugboat_csi_operator::Error::RpcTimeout
+    ));
+    assert!(is_retryable_driver_error(
+        &tugboat_csi_operator::Error::Grpc(tonic::Status::cancelled("transient"),)
+    ));
+    assert!(is_retryable_driver_error(
+        &tugboat_csi_operator::Error::Grpc(tonic::Status::unavailable("temporary"),)
+    ));
+    assert!(!is_retryable_driver_error(
+        &tugboat_csi_operator::Error::TargetPathAlreadyExists,
+    ));
 }

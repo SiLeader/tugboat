@@ -41,12 +41,17 @@ impl FilterPlugin for NetworkFitFilter {
             .unwrap_or(&[]);
 
         for network_ref in network_refs {
-            let spec = match resolve_network_class_spec(ctx, network_ref) {
-                Ok(spec) => spec,
+            let resolved = match resolve_network_class(ctx, network_ref) {
+                Ok(resolved) => resolved,
                 Err(reason) => return FilterResult::Reject(reason),
             };
-            if let Err(reason) = collect_required_plugins(&mut required_plugins, spec, network_ref)
+            if let Err(reason) =
+                collect_required_plugins(&mut required_plugins, resolved.spec, network_ref)
             {
+                return FilterResult::Reject(reason);
+            }
+
+            if let Err(reason) = require_node_in_ready_nodes(node, &resolved, network_ref) {
                 return FilterResult::Reject(reason);
             }
         }
@@ -61,10 +66,15 @@ impl FilterPlugin for NetworkFitFilter {
     }
 }
 
-fn resolve_network_class_spec<'a>(
+struct ResolvedNetworkClass<'a> {
+    spec: &'a NetworkClassSpec,
+    ready_nodes: Option<&'a [String]>,
+}
+
+fn resolve_network_class<'a>(
     ctx: &'a SchedulingContext,
     network_ref: &ShipNetworkClassReference,
-) -> Result<&'a NetworkClassSpec, String> {
+) -> Result<ResolvedNetworkClass<'a>, String> {
     if network_ref.api_group != "core" && !network_ref.api_group.is_empty() {
         return Err(format!(
             "network reference '{}' uses unsupported apiGroup '{}'",
@@ -76,11 +86,33 @@ fn resolve_network_class_spec<'a>(
     match network_ref.kind.as_str() {
         "ClusterNetworkClass" => ctx
             .find_cluster_network_class(&network_ref.name)
-            .and_then(|network_class| network_class.spec.as_ref())
+            .and_then(|network_class| {
+                network_class
+                    .spec
+                    .as_ref()
+                    .map(|spec| ResolvedNetworkClass {
+                        spec,
+                        ready_nodes: network_class
+                            .status
+                            .as_ref()
+                            .map(|status| status.ready_nodes.as_slice()),
+                    })
+            })
             .ok_or_else(|| format!("cluster network class '{}' was not found", network_ref.name)),
         "NetworkClass" => ctx
             .find_network_class(ctx.ship_namespace(), &network_ref.name)
-            .and_then(|network_class| network_class.spec.as_ref())
+            .and_then(|network_class| {
+                network_class
+                    .spec
+                    .as_ref()
+                    .map(|spec| ResolvedNetworkClass {
+                        spec,
+                        ready_nodes: network_class
+                            .status
+                            .as_ref()
+                            .map(|status| status.ready_nodes.as_slice()),
+                    })
+            })
             .ok_or_else(|| {
                 format!(
                     "network class '{}/{}' was not found",
@@ -96,34 +128,64 @@ fn resolve_network_class_spec<'a>(
     }
 }
 
+fn require_node_in_ready_nodes(
+    node: &Node,
+    network_class: &ResolvedNetworkClass<'_>,
+    network_ref: &ShipNetworkClassReference,
+) -> Result<(), String> {
+    let Some(ready_nodes) = network_class.ready_nodes else {
+        return Ok(());
+    };
+
+    if ready_nodes.is_empty() {
+        return Err(format!(
+            "network reference '{}' has no ready nodes",
+            network_ref.name
+        ));
+    }
+
+    let Some(node_name) = node
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.name.as_ref())
+    else {
+        return Err("node has no metadata.name".to_string());
+    };
+
+    if ready_nodes.iter().any(|ready| ready == node_name) {
+        Ok(())
+    } else {
+        Err(format!(
+            "network reference '{}' is not ready on node '{}'",
+            network_ref.name, node_name
+        ))
+    }
+}
+
 fn collect_required_plugins(
     required_plugins: &mut BTreeSet<String>,
     spec: &NetworkClassSpec,
     network_ref: &ShipNetworkClassReference,
 ) -> Result<(), String> {
     let plugin = normalized_plugin(spec);
-    match plugin {
-        "bridge" => {
-            required_plugins.insert("bridge".to_string());
+    if plugin.eq_ignore_ascii_case("bridge") {
+        required_plugins.insert("bridge".to_string());
+    } else if plugin.eq_ignore_ascii_case("flannel") {
+        required_plugins.insert("bridge".to_string());
+        required_plugins.insert("flannel".to_string());
+        if spec
+            .flannel
+            .as_ref()
+            .and_then(|flannel| flannel.port_mappings)
+            .unwrap_or(false)
+        {
+            required_plugins.insert("portmap".to_string());
         }
-        "flannel" => {
-            required_plugins.insert("bridge".to_string());
-            required_plugins.insert("flannel".to_string());
-            if spec
-                .flannel
-                .as_ref()
-                .and_then(|flannel| flannel.port_mappings)
-                .unwrap_or(false)
-            {
-                required_plugins.insert("portmap".to_string());
-            }
-        }
-        other => {
-            return Err(format!(
-                "network reference '{}' requests unsupported cniPlugin '{}'",
-                network_ref.name, other
-            ));
-        }
+    } else {
+        return Err(format!(
+            "network reference '{}' requests unsupported cniPlugin '{}'",
+            network_ref.name, plugin
+        ));
     }
 
     Ok(())
@@ -169,8 +231,8 @@ mod tests {
     use super::*;
     use crate::framework::SchedulingContext;
     use tugboat_resources::manifests::core::v1::{
-        ClusterNetworkClass, FlannelNetworkClass, NetworkClass, NodeStatus, Ship, ShipClass,
-        ShipSpec,
+        ClusterNetworkClass, FlannelNetworkClass, NetworkClass, NetworkClassStatus, NodeStatus,
+        Ship, ShipClass, ShipSpec,
     };
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
@@ -216,6 +278,65 @@ mod tests {
 
         match filter.filter(&ctx, &node) {
             FilterResult::Reject(reason) => assert!(reason.contains("portmap")),
+            FilterResult::Accept => panic!("expected node to be rejected"),
+        }
+    }
+
+    #[test]
+    fn accepts_mixed_case_flannel_plugin_name() {
+        let filter = NetworkFitFilter;
+        let ctx = scheduling_context(
+            vec![],
+            vec![ClusterNetworkClass {
+                object_meta: Some(ObjectMeta {
+                    name: Some("overlay".to_string()),
+                    ..Default::default()
+                }),
+                spec: Some(NetworkClassSpec {
+                    cni_plugin: "FlAnNeL".to_string(),
+                    ..Default::default()
+                }),
+                status: Some(NetworkClassStatus {
+                    ready_nodes: vec!["node-a".to_string()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ship(vec![network_ref("ClusterNetworkClass", "overlay")]),
+        );
+        let node = node_with_plugins(&[
+            ("loopback", true, "ready"),
+            ("bridge", true, "ready"),
+            ("flannel", true, "ready"),
+        ]);
+
+        assert!(matches!(filter.filter(&ctx, &node), FilterResult::Accept));
+    }
+
+    #[test]
+    fn rejects_node_not_in_networkclass_ready_nodes() {
+        let filter = NetworkFitFilter;
+        let ctx = scheduling_context(
+            vec![NetworkClass {
+                object_meta: Some(ObjectMeta {
+                    name: Some("frontend".to_string()),
+                    namespace: Some("default".to_string()),
+                    ..Default::default()
+                }),
+                spec: Some(NetworkClassSpec::default()),
+                status: Some(NetworkClassStatus {
+                    ready_nodes: vec!["node-b".to_string()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            vec![],
+            ship(vec![network_ref("NetworkClass", "frontend")]),
+        );
+        let node = node_with_plugins(&[("loopback", true, "ready"), ("bridge", true, "ready")]);
+
+        match filter.filter(&ctx, &node) {
+            FilterResult::Reject(reason) => assert!(reason.contains("not ready on node")),
             FilterResult::Accept => panic!("expected node to be rejected"),
         }
     }

@@ -10,6 +10,13 @@ use serde_json::{Value, json};
 
 type DynError = Box<dyn Error + Send + Sync>;
 
+struct RoleRuleInput {
+    api_groups: Value,
+    resources: Value,
+    verbs: Value,
+    resource_names: Option<Value>,
+}
+
 #[tokio::test]
 async fn bearer_token_authentication_succeeds_and_invalid_token_is_rejected() -> Result<(), DynError>
 {
@@ -148,10 +155,12 @@ async fn role_binding_grants_namespaced_access_only_to_bound_subjects() -> Resul
         &ctx.base_url,
         "team-a",
         "config-reader",
-        json!(["core"]),
-        json!(["configmaps"]),
-        json!(["get"]),
-        None,
+        RoleRuleInput {
+            api_groups: json!(["core"]),
+            resources: json!(["configmaps"]),
+            verbs: json!(["get"]),
+            resource_names: None,
+        },
     )
     .await?;
     create_role_binding(
@@ -161,8 +170,7 @@ async fn role_binding_grants_namespaced_access_only_to_bound_subjects() -> Resul
         "reader-binding",
         "Role",
         "config-reader",
-        "team-a",
-        "reader",
+        ("team-a", "reader"),
     )
     .await?;
 
@@ -278,8 +286,7 @@ async fn role_binding_to_cluster_role_is_limited_to_its_namespace() -> Result<()
         "cluster-role-binding",
         "ClusterRole",
         "scoped-cluster-reader",
-        "blue",
-        "ns-reader",
+        ("blue", "ns-reader"),
     )
     .await?;
 
@@ -329,10 +336,12 @@ async fn wildcard_and_resource_name_rules_are_enforced() -> Result<(), DynError>
         &ctx.base_url,
         "wild",
         "wildcard-role",
-        json!(["*"]),
-        json!(["*"]),
-        json!(["*"]),
-        None,
+        RoleRuleInput {
+            api_groups: json!(["*"]),
+            resources: json!(["*"]),
+            verbs: json!(["*"]),
+            resource_names: None,
+        },
     )
     .await?;
     create_role_binding(
@@ -342,8 +351,7 @@ async fn wildcard_and_resource_name_rules_are_enforced() -> Result<(), DynError>
         "wildcard-binding",
         "Role",
         "wildcard-role",
-        "wild",
-        "wildcard",
+        ("wild", "wildcard"),
     )
     .await?;
 
@@ -369,10 +377,12 @@ async fn wildcard_and_resource_name_rules_are_enforced() -> Result<(), DynError>
         &ctx.base_url,
         "wild",
         "named-role",
-        json!(["core"]),
-        json!(["configmaps"]),
-        json!(["get"]),
-        Some(json!(["allowed"])),
+        RoleRuleInput {
+            api_groups: json!(["core"]),
+            resources: json!(["configmaps"]),
+            verbs: json!(["get"]),
+            resource_names: Some(json!(["allowed"])),
+        },
     )
     .await?;
     create_role_binding(
@@ -382,8 +392,7 @@ async fn wildcard_and_resource_name_rules_are_enforced() -> Result<(), DynError>
         "named-binding",
         "Role",
         "named-role",
-        "wild",
-        "named-reader",
+        ("wild", "named-reader"),
     )
     .await?;
 
@@ -431,10 +440,12 @@ async fn get_only_role_denies_create_update_and_delete_operations() -> Result<()
         &ctx.base_url,
         "write-deny",
         "read-only",
-        json!(["core"]),
-        json!(["configmaps"]),
-        json!(["get", "list"]),
-        None,
+        RoleRuleInput {
+            api_groups: json!(["core"]),
+            resources: json!(["configmaps"]),
+            verbs: json!(["get", "list"]),
+            resource_names: None,
+        },
     )
     .await?;
     create_role_binding(
@@ -444,8 +455,7 @@ async fn get_only_role_denies_create_update_and_delete_operations() -> Result<()
         "read-only-binding",
         "Role",
         "read-only",
-        "write-deny",
-        "reader-only",
+        ("write-deny", "reader-only"),
     )
     .await?;
 
@@ -526,10 +536,12 @@ async fn write_role_allows_create_but_still_denies_delete() -> Result<(), DynErr
         &ctx.base_url,
         "write-allow",
         "create-only",
-        json!(["core"]),
-        json!(["configmaps"]),
-        json!(["create", "get"]),
-        None,
+        RoleRuleInput {
+            api_groups: json!(["core"]),
+            resources: json!(["configmaps"]),
+            verbs: json!(["create", "get"]),
+            resource_names: None,
+        },
     )
     .await?;
     create_role_binding(
@@ -539,8 +551,7 @@ async fn write_role_allows_create_but_still_denies_delete() -> Result<(), DynErr
         "create-only-binding",
         "Role",
         "create-only",
-        "write-allow",
-        "writer",
+        ("write-allow", "writer"),
     )
     .await?;
 
@@ -597,8 +608,7 @@ async fn system_masters_client_certificate_bypasses_rbac_checks() -> Result<(), 
 async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup_rbac().await? else {
         eprintln!(
-            "skipping integration test: set {} or {} (or install docker) to enable",
-            "TUGBOAT_TEST_APISERVER_URL", "TUGBOAT_TEST_ETCD_ENDPOINT"
+            "skipping integration test: set TUGBOAT_TEST_APISERVER_URL or TUGBOAT_TEST_ETCD_ENDPOINT (or install docker) to enable"
         );
         return Ok(None);
     };
@@ -608,8 +618,7 @@ async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
 async fn setup_mtls_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup_rbac_with_mtls().await? else {
         eprintln!(
-            "skipping integration test: set {} or {} (or install docker) to enable",
-            "TUGBOAT_TEST_APISERVER_URL", "TUGBOAT_TEST_ETCD_ENDPOINT"
+            "skipping integration test: set TUGBOAT_TEST_APISERVER_URL or TUGBOAT_TEST_ETCD_ENDPOINT (or install docker) to enable"
         );
         return Ok(None);
     };
@@ -774,17 +783,14 @@ async fn create_role(
     base_url: &str,
     namespace: &str,
     name: &str,
-    api_groups: Value,
-    resources: Value,
-    verbs: Value,
-    resource_names: Option<Value>,
+    rule_input: RoleRuleInput,
 ) -> Result<(), DynError> {
     let mut rule = json!({
-        "apiGroups": api_groups,
-        "resources": resources,
-        "verbs": verbs
+        "apiGroups": rule_input.api_groups,
+        "resources": rule_input.resources,
+        "verbs": rule_input.verbs
     });
-    if let Some(resource_names) = resource_names {
+    if let Some(resource_names) = rule_input.resource_names {
         rule["resourceNames"] = resource_names;
     }
 
@@ -850,9 +856,9 @@ async fn create_role_binding(
     name: &str,
     kind: &str,
     role_name: &str,
-    subject_namespace: &str,
-    subject_name: &str,
+    subject: (&str, &str),
 ) -> Result<(), DynError> {
+    let (subject_namespace, subject_name) = subject;
     request_json(
         client,
         Method::POST,

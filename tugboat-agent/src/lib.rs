@@ -58,7 +58,8 @@ pub async fn run() {
         config.image.cache_dir,
         config.image.http_hosts,
     );
-    let csi_operator = tugboat_csi_operator::TugboatCsiOperator::default();
+    let csi_operator =
+        tugboat_csi_operator::TugboatCsiOperator::with_timeouts(config.csi.timeouts());
     let cni_operator = tugboat_cni_operator::TugboatCniOperator::new(config.cni);
 
     cni_operator

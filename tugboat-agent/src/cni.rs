@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use sha2::Digest;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tugboat_cni_operator::{
     CniConfContent, CniConfHeader, CniFlannelDelegate, CniIpam, CniIpamRoute, CniNetConfList,
     CniPortmapCapabilities, TugboatCniOperator,
@@ -22,6 +22,8 @@ use tugboat_resources::manifests::core::v1::NetworkClassSpec;
 use tugboat_vm_runtime_interface::run::VmNetworkConfig;
 
 const CNI_VERSION: &str = "1.0.0";
+const DEFAULT_FLANNEL_SUBNET_FILE: &str = "/run/flannel/subnet.env";
+const DEFAULT_FLANNEL_DATA_DIR: &str = "/var/lib/cni/flannel";
 
 #[derive(Debug, Clone)]
 pub(crate) struct CniWrapper {
@@ -115,11 +117,34 @@ impl CniWrapper {
         ship_id: &str,
         config: Vec<PlannedNetworkConfig>,
     ) -> Result<(), tugboat_cni_operator::Error> {
+        let mut errors = Vec::new();
         for c in config.into_iter().rev() {
-            self.del_single(ship_id, c).await?;
+            let iface_name = c.vm.iface_name.clone();
+            if let Err(err) = self.del_single(ship_id, c).await {
+                warn!(
+                    "Failed to delete CNI config for ship '{}' iface '{}': {}",
+                    ship_id, iface_name, err
+                );
+                errors.push(format!("{iface_name}: {err}"));
+            }
         }
-        self.del_loopback(ship_id).await?;
-        Ok(())
+
+        if let Err(err) = self.del_loopback(ship_id).await {
+            warn!(
+                "Failed to delete loopback CNI config for ship '{}': {}",
+                ship_id, err
+            );
+            errors.push(format!("lo: {err}"));
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(tugboat_cni_operator::Error::InvalidConfiguration(format!(
+                "CNI delete completed with failures: {}",
+                errors.join("; ")
+            )))
+        }
     }
 
     async fn add_loopback(&self, ship_id: &str) -> Result<(), tugboat_cni_operator::Error> {
@@ -177,7 +202,7 @@ impl CniWrapper {
         if plugin.is_empty() || plugin.eq_ignore_ascii_case("bridge") {
             Ok(Self::bridge_conf(config))
         } else if plugin.eq_ignore_ascii_case("flannel") {
-            Ok(Self::flannel_conf(config))
+            Self::flannel_conf(config)
         } else {
             Err(tugboat_cni_operator::Error::InvalidConfiguration(format!(
                 "NetworkClass '{}' requests unsupported cniPlugin '{}'",
@@ -214,15 +239,23 @@ impl CniWrapper {
         }
     }
 
-    fn flannel_conf(config: &PlannedNetworkConfig) -> CniNetConfList {
+    fn flannel_conf(
+        config: &PlannedNetworkConfig,
+    ) -> Result<CniNetConfList, tugboat_cni_operator::Error> {
         let flannel = config.info.spec.flannel.as_ref();
+        let subnet_file = flannel
+            .and_then(|settings| option_if_not_empty(&settings.subnet_file))
+            .unwrap_or_else(|| DEFAULT_FLANNEL_SUBNET_FILE.to_string());
+        let data_dir = flannel
+            .and_then(|settings| option_if_not_empty(&settings.data_dir))
+            .unwrap_or_else(|| DEFAULT_FLANNEL_DATA_DIR.to_string());
         let default_gateway = flannel
             .and_then(|settings| settings.default_gateway)
             .unwrap_or(config.info.spec.cluster_network.unwrap_or(true));
 
         let mut plugins = vec![CniConfContent::Flannel {
-            subnet_file: flannel.and_then(|settings| option_if_not_empty(&settings.subnet_file)),
-            data_dir: flannel.and_then(|settings| option_if_not_empty(&settings.data_dir)),
+            subnet_file: Some(subnet_file),
+            data_dir: Some(data_dir),
             delegate: Some(CniFlannelDelegate {
                 bridge: Some(config.bridge.clone()),
                 is_gateway: Some(default_gateway),
@@ -247,18 +280,19 @@ impl CniWrapper {
             });
         }
 
-        CniNetConfList {
+        Ok(CniNetConfList {
             header: CniConfHeader {
                 cni_version: CNI_VERSION.to_string(),
                 name: config.info.name.clone(),
             },
             plugins,
-        }
+        })
     }
 }
 
 fn option_if_not_empty(value: &str) -> Option<String> {
-    (!value.trim().is_empty()).then(|| value.to_string())
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn network_class_identifier(info: &NetworkClassInfo) -> String {
@@ -285,7 +319,11 @@ fn create_bridge_name(namespace: &Option<String>, name: &str) -> String {
         Some(ns) => ("ns", format!("NetworkClass/{ns}/{}", name)),
         None => ("cl", format!("ClusterNetworkClass/{}", name)),
     };
-    let digest = format!("{:x}", sha2::Sha256::digest(ident.as_bytes()));
+    let digest = sha2::Sha256::digest(ident.as_bytes());
+    let digest = digest
+        .into_iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
     format!("br-{}-{}", prefix, &digest[..8])
 }
 
@@ -364,7 +402,7 @@ mod tests {
             internet_access: Some(true),
             flannel: Some(FlannelNetworkClass {
                 subnet_file: "/run/flannel/subnet.env".to_string(),
-                data_dir: "/run/flannel".to_string(),
+                data_dir: "/var/lib/cni/flannel".to_string(),
                 hairpin_mode: Some(true),
                 default_gateway: Some(false),
                 port_mappings: Some(true),
@@ -387,7 +425,7 @@ mod tests {
                     hairpin_mode,
                 }),
             } if subnet_file.as_deref() == Some("/run/flannel/subnet.env")
-                && data_dir.as_deref() == Some("/run/flannel")
+                && data_dir.as_deref() == Some("/var/lib/cni/flannel")
                 && bridge.as_deref() == Some("br-test")
                 && *is_gateway == Some(false)
                 && *is_default_gateway == Some(false)
@@ -411,6 +449,46 @@ mod tests {
         assert!(matches!(
             err,
             tugboat_cni_operator::Error::InvalidConfiguration(_)
+        ));
+    }
+
+    #[test]
+    fn flannel_uses_default_subnet_file_when_missing() {
+        let conf = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
+            cni_plugin: "flannel".to_string(),
+            flannel: Some(FlannelNetworkClass {
+                subnet_file: " ".to_string(),
+                data_dir: "/var/lib/cni/flannel".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            &conf.plugins[0],
+            CniConfContent::Flannel { subnet_file, .. }
+                if subnet_file.as_deref() == Some(super::DEFAULT_FLANNEL_SUBNET_FILE)
+        ));
+    }
+
+    #[test]
+    fn flannel_uses_default_data_dir_when_missing() {
+        let conf = CniWrapper::network_conf(&planned_config(NetworkClassSpec {
+            cni_plugin: "flannel".to_string(),
+            flannel: Some(FlannelNetworkClass {
+                subnet_file: "/run/flannel/subnet.env".to_string(),
+                data_dir: "".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            &conf.plugins[0],
+            CniConfContent::Flannel { data_dir, .. }
+                if data_dir.as_deref() == Some(super::DEFAULT_FLANNEL_DATA_DIR)
         ));
     }
 
@@ -466,7 +544,7 @@ netns = "/tmp"
                     cni_plugin: "flannel".to_string(),
                     flannel: Some(FlannelNetworkClass {
                         subnet_file: "/run/flannel/subnet.env".to_string(),
-                        data_dir: "/run/flannel".to_string(),
+                        data_dir: "/var/lib/cni/flannel".to_string(),
                         ..Default::default()
                     }),
                     ..Default::default()
