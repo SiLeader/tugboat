@@ -48,7 +48,10 @@ fn sha256_fingerprint<T: Serialize>(value: &T) -> Result<String, serde_json::Err
     use sha2::Digest;
     let json = serde_json::to_string(value)?;
     let hash = sha2::Sha256::digest(json.as_bytes());
-    Ok(format!("{hash:x}"))
+    Ok(hash
+        .into_iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -319,7 +319,11 @@ fn create_bridge_name(namespace: &Option<String>, name: &str) -> String {
         Some(ns) => ("ns", format!("NetworkClass/{ns}/{}", name)),
         None => ("cl", format!("ClusterNetworkClass/{}", name)),
     };
-    let digest = format!("{:x}", sha2::Sha256::digest(ident.as_bytes()));
+    let digest = sha2::Sha256::digest(ident.as_bytes());
+    let digest = digest
+        .into_iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
     format!("br-{}-{}", prefix, &digest[..8])
 }
 

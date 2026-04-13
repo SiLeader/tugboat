@@ -42,7 +42,10 @@ pub struct VmMemoryHotplugConfig {
 
 pub fn sanitize_identifier(value: &str) -> String {
     let digest = sha2::Sha256::digest(value.as_bytes());
-    format!("{digest:x}")
+    digest
+        .into_iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>()
 }
 
 pub fn normalize_identifier_key(value: &str, prefixes: &[&str]) -> String {
