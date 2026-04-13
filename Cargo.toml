@@ -110,7 +110,7 @@ thiserror = "2.0.18"
 uuid = "1.21.0"
 base64 = "0.22.1"
 nix = "0.31.1"
-dashmap = "5.5.3"
+dashmap = "6.1.0"
 
 # testing
 tempfile = "3.14.0"
