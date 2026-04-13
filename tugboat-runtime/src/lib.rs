@@ -20,6 +20,7 @@ use nix::errno::Errno;
 use serde::Deserialize;
 use thiserror::Error;
 use tracing::error;
+use tugboat_vm_runtime_interface::error::ErrorKind;
 
 mod cmd;
 mod config;
@@ -93,6 +94,12 @@ pub async fn run() {
         Ok(config) => config,
         Err(e) => {
             error!("Runtime error: {e}");
+            if let Err(e) = serde_json::to_writer(
+                std::io::stdout(),
+                &tugboat_vm_runtime_interface::error::Error::from(e),
+            ) {
+                error!("Failed to serialize error: {e}");
+            }
             std::process::exit(1);
         }
     };
@@ -113,6 +120,67 @@ pub async fn run() {
         SubCommand::Stop(stop_args) => stop::stop(config.qemu, stop_args).await,
     } {
         error!("Runtime error: {e}");
+        if let Err(e) = serde_json::to_writer(
+            std::io::stdout(),
+            &tugboat_vm_runtime_interface::error::Error::from(e),
+        ) {
+            error!("Failed to serialize error: {e}");
+        }
         std::process::exit(1);
+    }
+}
+
+impl From<Error> for tugboat_vm_runtime_interface::error::Error {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::Io(e) => Self {
+                kind: ErrorKind::Io,
+                message: e.to_string(),
+                details: None,
+            },
+            Error::Json(e) => Self {
+                kind: ErrorKind::Serialization,
+                message: e.to_string(),
+                details: Some(serde_json::json!({
+                    "format": "json",
+                    "line": e.line(),
+                    "column": e.column(),
+                })),
+            },
+            Error::Toml(e) => Self {
+                kind: ErrorKind::Serialization,
+                message: e.to_string(),
+                details: Some(serde_json::json!({
+                    "format": "toml"
+                })),
+            },
+            Error::Syscall(e) => Self {
+                kind: ErrorKind::Syscall,
+                message: e.to_string(),
+                details: Some(serde_json::json!({
+                    "errno": e as i32,
+                })),
+            },
+            Error::NetworkSetupFailed(message) => Self {
+                kind: ErrorKind::Network,
+                message,
+                details: None,
+            },
+            Error::Qmp(message) => Self {
+                kind: ErrorKind::VmOperation,
+                message,
+                details: None,
+            },
+            Error::ActionFailed(message) => Self {
+                kind: ErrorKind::VmOperation,
+                message,
+                details: None,
+            },
+            Error::Validation(message) => Self {
+                kind: ErrorKind::VmOperation,
+                message,
+                details: None,
+            },
+        }
     }
 }
