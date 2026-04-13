@@ -50,6 +50,11 @@ Tugboatはこれらの問題を解決するために生まれました。
     - `NetworkClass` / `ClusterNetworkClass`によるネットワーク設定
     - agent が `Node.status.cniPlugins` に plugin readiness を公開
     - scheduler が `NetworkFit` で node を絞り込み
+- RBAC / ServiceAccount
+    - `Role` / `ClusterRole`、`RoleBinding` / `ClusterRoleBinding`、`ServiceAccount` API (`authorization/v1`)
+    - apiserver で適用される動詞・リソース単位の細粒度アクセス制御
+    - 組み込みロール: `cluster-admin`、`admin`、`edit`、`view`
+    - ServiceAccount ごとに不透明なベアラートークンを発行し Secret に保存
 - CRDに対応予定
 - HA設計
     - apiserverは水平スケール可能
@@ -72,7 +77,8 @@ Tugboatはこれらの問題を解決するために生まれました。
 |     kubelet     |     agent      |
 |  RuntimeClass   |  RuntimeClass  |
 
-> **補足:** `Fleet` は複数の Ship タイプがプライベートネットワークを共有するグループを表す Tugboat 独自のリソースで、Kubernetes に直接対応するものはありません。
+> **補足:** `Fleet` は複数の Ship タイプがプライベートネットワークを共有するグループを表す Tugboat 独自のリソースで、Kubernetes
+> に直接対応するものはありません。
 
 ## Manifest examples
 
@@ -230,7 +236,8 @@ spec:
 ```
 
 Ship は `spec.runtimeClass` フィールドで RuntimeClass 名を参照できます。
-スケジューラの `RuntimeClassFit` プラグインが、Ship の要件（ライブマイグレーション対応など）を満たす RuntimeClass を持つノードにのみスケジューリングします。
+スケジューラの `RuntimeClassFit` プラグインが、Ship の要件（ライブマイグレーション対応など）を満たす RuntimeClass
+を持つノードにのみスケジューリングします。
 
 ### CSI サポート
 
@@ -284,6 +291,130 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
 5. その network class を参照する Ship を作成し、準備済み node にだけ
    schedule されることを確認してから、node 間疎通を検証する。
 
+## RBAC
+
+TugboatはRBACシステムを提供します。
+すべてのリクエストに対してapiserverがアクセス制御を適用します。
+
+### リソース
+
+| リソース                 | APIグループ            | スコープ       | 説明                                            |
+|----------------------|--------------------|------------|-----------------------------------------------|
+| `ServiceAccount`     | `core/v1`          | Namespaced | 自動化プロセスやコントローラのID                             |
+| `Role`               | `authorization/v1` | Namespaced | 単一namespace内に限定された権限ルール                       |
+| `ClusterRole`        | `authorization/v1` | Cluster    | クラスタ全体に適用される権限ルール                             |
+| `RoleBinding`        | `authorization/v1` | Namespaced | `Role`または`ClusterRole`をnamespace内のサブジェクトに紐付ける |
+| `ClusterRoleBinding` | `authorization/v1` | Cluster    | `ClusterRole`をクラスタ全体のサブジェクトに紐付ける              |
+
+### 動詞とサブジェクト種別
+
+サポートする動詞: `get`、`list`、`watch`、`create`、`update`、`patch`、`delete`、`deletecollection`
+
+サブジェクト種別: `User`、`Group`、`ServiceAccount`
+
+`resourceNames` を使って特定のリソースインスタンスに権限をさらに絞り込むことができます。
+
+### 組み込みClusterRole
+
+| ClusterRole     | 説明                                                      |
+|-----------------|---------------------------------------------------------|
+| `cluster-admin` | 全リソースへのフルアクセス                                           |
+| `admin`         | namespace内のフルアクセス（RBAC・namespace自体の変更は不可）               |
+| `edit`          | ほとんどのNamespacedリソースへの読み書きアクセス（Secretの読み取りおよびRBACの変更は不可） |
+| `view`          | ほとんどのNamespacedリソースへの読み取り専用アクセス                         |
+
+### マニフェスト例
+
+#### ServiceAccount
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: default
+  name: my-service-account
+```
+
+#### Role
+
+`default` namespace 内のShipへの読み取りアクセスを付与します。
+
+```yaml
+apiVersion: authorization/v1
+kind: Role
+metadata:
+  namespace: default
+  name: ship-reader
+rules:
+  - apiGroups: [ "" ]
+    resources: [ "ships" ]
+    verbs: [ "get", "list", "watch" ]
+```
+
+#### ClusterRole
+
+クラスタ全体のNodeへの読み取りアクセスを付与します。
+
+```yaml
+apiVersion: authorization/v1
+kind: ClusterRole
+metadata:
+  name: node-reader
+rules:
+  - apiGroups: [ "" ]
+    resources: [ "nodes" ]
+    verbs: [ "get", "list", "watch" ]
+```
+
+#### RoleBinding
+
+`default` namespace内でユーザーとServiceAccountに `ship-reader` を紐付けます。
+
+```yaml
+apiVersion: authorization/v1
+kind: RoleBinding
+metadata:
+  namespace: default
+  name: ship-reader-binding
+roleRef:
+  apiGroup: authorization
+  kind: Role
+  name: ship-reader
+subjects:
+  - kind: User
+    name: alice
+  - kind: ServiceAccount
+    namespace: default
+    name: my-service-account
+```
+
+#### ClusterRoleBinding
+
+クラスタ全体のグループに `node-reader` ClusterRole を付与します。
+
+```yaml
+apiVersion: authorization/v1
+kind: ClusterRoleBinding
+metadata:
+  name: node-reader-binding
+roleRef:
+  apiGroup: authorization
+  kind: ClusterRole
+  name: node-reader
+subjects:
+  - kind: Group
+    name: ops-team
+```
+
+### 今後の拡張予定
+
+- **署名済みJWTトークン** — 現状は不透明なランダム文字列を Secret に保存しているが、audience・有効期限付きの署名済みJWTへの移行を予定
+- **ServiceAccountトークン投影** — スコープ付きトークンをShipに自動マウント（Kubernetesの projected service account token
+  相当）
+- **集約ClusterRole** — ラベルセレクタでClusterRoleを合成し、拡張機能がルールを自動注入できるようにする
+- **OIDC統合** — OIDCディスカバリ経由で外部IDプロバイダ（Dex、Keycloak、クラウドIAMなど）が発行したトークンを検証
+- **監査ログ** — 全APIリクエストに対する構造化監査レコード（誰が・何を・いつ・レスポンスコード）、リソースごとに詳細度設定可能
+
 ## Roadmap
 
 - [x] tugboat-runtime
@@ -303,6 +434,7 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [x] ストレージ (CSI publish/stage, controller publish context, および live expansion)
     - [ ] Topology-aware scheduling と snapshot 系ワークフロー
 - [x] Secret
+- [x] Namespace リソース定義とAPI (`core/v1`)
 - [x] tugboat-controller-manager
     - [x] CSIの動的プロビジョニング
     - [x] CSI管理下PVのcleanup
@@ -313,6 +445,9 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
 - [x] ReplicaSet リソース定義とAPI (`apps/v1`)
 - [x] Deployment リソース定義とAPI (`apps/v1`)
 - [x] ConfigMap
+- [x] NetworkClass / ClusterNetworkClass リソース定義とAPI (`core/v1`)
+- [x] PersistentVolume / PersistentVolumeClaim / StorageClass リソース定義とAPI (`core/v1`)
+- [x] Lease リソース定義とAPI (`coordination/v1`)
 - [x] ライブマイグレーション
     - [x] `target_node_name` によるマイグレーションのトリガー
     - [x] マイグレーションのステートマシン (Pending, Ready, Migrating, Completed, Failed)
@@ -329,6 +464,19 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
     - [x] スケジューラの `RuntimeClassFit` プラグイン（ライブマイグレーション対応チェック）
     - [x] RuntimeClass フラグによるホットプラグ操作の制御
 - [ ] RBAC / ServiceAccount
+    - [x] `ServiceAccount` リソース定義とAPI (`core/v1`)
+    - [x] `Role` / `ClusterRole` リソース定義とAPI (`authorization/v1`)
+    - [x] `RoleBinding` / `ClusterRoleBinding` リソース定義とAPI (`authorization/v1`)
+    - [x] apiserverにおけるRBAC認可の適用
+    - [x] 組み込みロール (`cluster-admin`、`admin`、`edit`、`view`)
+    - [ ] ServiceAccountトークンの生成と検証
+        - [x] `service-account-token` 型 Secret による不透明なベアラートークンの発行
+        - [x] namespace ごとの default ServiceAccount 自動作成
+        - [ ] audience・有効期限付きの署名済みJWT
+    - [ ] ShipへのServiceAccountトークン自動投影
+    - [ ] 外部IDプロバイダとのOIDC統合
+    - [ ] 集約ClusterRole
+    - [ ] 監査ログ
 - [ ] CRD
 
 ## Contributing

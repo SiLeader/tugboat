@@ -52,6 +52,11 @@ Existing VM orchestration systems come with significant challenges:
     - `NetworkClass` / `ClusterNetworkClass` based network configuration
     - agent publishes plugin readiness to `Node.status.cniPlugins`
     - scheduler filters nodes with `NetworkFit`
+- RBAC / ServiceAccount
+    - `Role` / `ClusterRole`, `RoleBinding` / `ClusterRoleBinding`, `ServiceAccount` API (`authorization/v1`)
+    - Fine-grained verb- and resource-level access control enforced in the apiserver
+    - Built-in roles: `cluster-admin`, `admin`, `edit`, `view`
+    - Opaque bearer tokens generated per ServiceAccount, stored as Secrets
 - Planned CRD support
 - High availability design
     - Apiserver can scale horizontally
@@ -63,18 +68,19 @@ Existing VM orchestration systems come with significant challenges:
 
 ### Mapping to Kubernetes Concepts
 
-|   Kubernetes    |     Tugboat     |
-|:---------------:|:---------------:|
-|       Pod       |      Ship       |
-|   ReplicaSet    |   ReplicaSet    |
-|   Deployment    |   Deployment    |
-|      Node       |      Node       |
-| Container image | VM image (OCI)  |
-|   Dockerfile    |    Imagefile    |
-|     kubelet     |      agent      |
-|  RuntimeClass   |  RuntimeClass   |
+|   Kubernetes    |    Tugboat     |
+|:---------------:|:--------------:|
+|       Pod       |      Ship      |
+|   ReplicaSet    |   ReplicaSet   |
+|   Deployment    |   Deployment   |
+|      Node       |      Node      |
+| Container image | VM image (OCI) |
+|   Dockerfile    |   Imagefile    |
+|     kubelet     |     agent      |
+|  RuntimeClass   |  RuntimeClass  |
 
-> **Note:** `Fleet` is a Tugboat-specific resource for grouping multiple Ship types that share a private network — it has no direct Kubernetes equivalent.
+> **Note:** `Fleet` is a Tugboat-specific resource for grouping multiple Ship types that share a private network — it
+> has no direct Kubernetes equivalent.
 
 ## Manifest Examples
 
@@ -277,13 +283,140 @@ For a manual multi-node validation flow:
 1. Install the required CNI binaries (`bridge`, `loopback`, `flannel`, and `portmap`
    when port mappings are enabled) on each node under the configured CNI bin directory.
 2. Bring up Flannel externally so each node has the expected runtime state
-  (by default `/run/flannel/subnet.env` and `/var/lib/cni/flannel`).
+   (by default `/run/flannel/subnet.env` and `/var/lib/cni/flannel`).
 3. Start `tugboat-agent` on each node and confirm `kubectl get node -o yaml`
    shows `status.cniPlugins` with the expected readiness.
 4. Apply a `ClusterNetworkClass` or `NetworkClass` using `cniPlugin: flannel`
    and confirm its `status.readyNodes` contains the nodes that passed the probe.
 5. Create Ships that reference that network class and verify they schedule only to
    ready nodes before performing cross-node connectivity checks.
+
+## RBAC
+
+Tugboat provides a RBAC system.
+Access control is enforced in the apiserver for every request.
+
+### Resources
+
+| Resource             | API Group          | Scope      | Description                                                   |
+|----------------------|--------------------|------------|---------------------------------------------------------------|
+| `ServiceAccount`     | `core/v1`          | Namespaced | Identity for automated processes and controllers              |
+| `Role`               | `authorization/v1` | Namespaced | Permission rules scoped to a single namespace                 |
+| `ClusterRole`        | `authorization/v1` | Cluster    | Permission rules that apply cluster-wide                      |
+| `RoleBinding`        | `authorization/v1` | Namespaced | Bind a `Role` or `ClusterRole` to subjects within a namespace |
+| `ClusterRoleBinding` | `authorization/v1` | Cluster    | Bind a `ClusterRole` to subjects cluster-wide                 |
+
+### Verbs and subject types
+
+Supported verbs: `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`, `deletecollection`
+
+Subject types: `User`, `Group`, `ServiceAccount`
+
+Permission can be further narrowed to specific resource instances via `resourceNames`.
+
+### Built-in ClusterRoles
+
+| ClusterRole     | Description                                                                        |
+|-----------------|------------------------------------------------------------------------------------|
+| `cluster-admin` | Full access to all resources                                                       |
+| `admin`         | Full access within a namespace; cannot modify RBAC or namespace itself             |
+| `edit`          | Read/write access to most namespaced resources; cannot read Secrets or modify RBAC |
+| `view`          | Read-only access to most namespaced resources                                      |
+
+### Manifest examples
+
+#### ServiceAccount
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: default
+  name: my-service-account
+```
+
+#### Role
+
+Grants read access to Ships within the `default` namespace.
+
+```yaml
+apiVersion: authorization/v1
+kind: Role
+metadata:
+  namespace: default
+  name: ship-reader
+rules:
+  - apiGroups: [ "" ]
+    resources: [ "ships" ]
+    verbs: [ "get", "list", "watch" ]
+```
+
+#### ClusterRole
+
+Grants read access to Nodes cluster-wide.
+
+```yaml
+apiVersion: authorization/v1
+kind: ClusterRole
+metadata:
+  name: node-reader
+rules:
+  - apiGroups: [ "" ]
+    resources: [ "nodes" ]
+    verbs: [ "get", "list", "watch" ]
+```
+
+#### RoleBinding
+
+Binds `ship-reader` to a user and a ServiceAccount within the `default` namespace.
+
+```yaml
+apiVersion: authorization/v1
+kind: RoleBinding
+metadata:
+  namespace: default
+  name: ship-reader-binding
+roleRef:
+  apiGroup: authorization
+  kind: Role
+  name: ship-reader
+subjects:
+  - kind: User
+    name: alice
+  - kind: ServiceAccount
+    namespace: default
+    name: my-service-account
+```
+
+#### ClusterRoleBinding
+
+Grants the `node-reader` ClusterRole to an entire group cluster-wide.
+
+```yaml
+apiVersion: authorization/v1
+kind: ClusterRoleBinding
+metadata:
+  name: node-reader-binding
+roleRef:
+  apiGroup: authorization
+  kind: ClusterRole
+  name: node-reader
+subjects:
+  - kind: Group
+    name: ops-team
+```
+
+### Planned enhancements
+
+- **Signed JWT tokens** — current tokens are opaque random strings stored in Secrets; planned upgrade to signed JWTs
+  with audience and expiry
+- **ServiceAccount token projection** — automatic mounting of scoped tokens into Ships (similar to Kubernetes projected
+  service account tokens)
+- **Aggregated ClusterRoles** — compose ClusterRoles by label selector so extensions can inject rules automatically
+- **OIDC integration** — validate tokens issued by external identity providers (e.g. Dex, Keycloak, cloud IAM) via
+  standard OIDC discovery
+- **Audit logging** — structured audit records for every API request (who, what, when, response code) with configurable
+  per-resource verbosity
 
 ## Roadmap
 
@@ -304,6 +437,7 @@ For a manual multi-node validation flow:
     - [x] Storage (CSI publish/stage, controller publish context, and live expansion)
     - [ ] Topology-aware scheduling and snapshot-style workflows
 - [x] Secret
+- [x] Namespace resource definition and API (`core/v1`)
 - [x] tugboat-controller-manager
     - [x] Dynamic CSI volume provisioning
     - [x] CSI-backed managed PV cleanup
@@ -314,6 +448,9 @@ For a manual multi-node validation flow:
 - [x] ReplicaSet resource definition and API (`apps/v1`)
 - [x] Deployment resource definition and API (`apps/v1`)
 - [x] ConfigMap
+- [x] NetworkClass / ClusterNetworkClass resource definition and API (`core/v1`)
+- [x] PersistentVolume / PersistentVolumeClaim / StorageClass resource definition and API (`core/v1`)
+- [x] Lease resource definition and API (`coordination/v1`)
 - [x] Live migration
     - [x] Core migration triggered by `target_node_name`
     - [x] Migration state machine (Pending, Ready, Migrating, Completed, Failed)
@@ -330,6 +467,19 @@ For a manual multi-node validation flow:
     - [x] Scheduler `RuntimeClassFit` plugin (live migration capability check)
     - [x] Hotplug operations gated by RuntimeClass flags
 - [ ] RBAC / ServiceAccount
+    - [x] `ServiceAccount` resource definition and API (`core/v1`)
+    - [x] `Role` / `ClusterRole` resource definition and API (`authorization/v1`)
+    - [x] `RoleBinding` / `ClusterRoleBinding` resource definition and API (`authorization/v1`)
+    - [x] RBAC authorization enforcement in apiserver
+    - [x] Built-in roles (`cluster-admin`, `admin`, `edit`, `view`)
+    - [ ] ServiceAccount token generation and validation
+        - [x] Opaque bearer token issued via Secret of type `service-account-token`
+        - [x] Default ServiceAccount auto-created per namespace
+        - [ ] Signed JWT tokens with audience/expiry
+    - [ ] ServiceAccount token auto-projection into Ships
+    - [ ] OIDC integration for external identity providers
+    - [ ] Aggregated ClusterRoles
+    - [ ] Audit logging
 - [ ] CRD
 
 ## Contributing
