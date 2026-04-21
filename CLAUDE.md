@@ -32,10 +32,10 @@ As a final verification before merging or releasing, run the following commands 
 - cargo fmt --check
 - cargo test
 
-Packages: `tugboat-resources`, `tugboat-apiserver`, `tugboat-agent`, `tugboat-runtime`,
-`tugboat-resource-store`, `tugboat-client`, `tugboat-cli`, `tugboat-vm-image`,
-`tugboat-vm-runtime-interface`, `tugboat-cni-operator`, `tugboat-csi-operator`, `tugboat-scheduler`,
-`tugboat-controller-manager`
+Packages: `tugboat-resources`, `tugboat-apiserver`, `tugboat-agent`, `tugboat-qemu-runtime`,
+`tugboat-cloud-hypervisor-runtime`, `tugboat-resource-store`, `tugboat-client`, `tugboat-cli`,
+`tugboat-vm-image`, `tugboat-vm-runtime-interface`, `tugboat-cni-operator`, `tugboat-csi-operator`,
+`tugboat-scheduler`, `tugboat-controller-manager`
 
 ## Architecture
 
@@ -69,7 +69,11 @@ tugboat-scheduler (ship scheduler)
 tugboat-csi-operator (storage operator)
   └─ tugboat-resources (implicit via proto)
 
-tugboat-runtime (QEMU executor)
+tugboat-qemu-runtime (QEMU executor)
+  ├─ tugboat-resources
+  └─ tugboat-vm-runtime-interface
+
+tugboat-cloud-hypervisor-runtime (Cloud Hypervisor executor)
   ├─ tugboat-resources
   └─ tugboat-vm-runtime-interface
 ```
@@ -150,6 +154,7 @@ All components use TOML config files. Examples in `sample-configs/`. Default pat
 - `/etc/tugboat/scheduler/config.toml`
 - `/etc/tugboat/controller-manager/config.toml`
 - `/etc/tugboat/runtime/config.toml`
+- `/etc/tugboat/runtime/cloud-hypervisor-config.toml`
 
 ### Editing guidance
 

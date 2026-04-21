@@ -22,9 +22,12 @@ COPY . .
 
 RUN --mount=type=cache,target=/work/target \
     --mount=type=cache,target=/work/.cargo \
-    cargo build --release --package tugboat-agent && cargo build --release --package tugboat-runtime && \
+    cargo build --release --package tugboat-agent && \
+    cargo build --release --package tugboat-qemu-runtime && \
+    cargo build --release --package tugboat-cloud-hypervisor-runtime && \
     cp /work/target/release/tugboat-agent /tugboat-agent && \
-    cp /work/target/release/tugboat-runtime /tugboat-runtime
+    cp /work/target/release/tugboat-qemu-runtime /tugboat-qemu-runtime && \
+    cp /work/target/release/tugboat-cloud-hypervisor-runtime /tugboat-cloud-hypervisor-runtime
 
 FROM debian:bookworm-slim AS cni-download
 
@@ -50,7 +53,8 @@ RUN apt-get update && apt-get install -y qemu-system qemu-utils && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /tugboat-agent /usr/bin/tugboat-agent
-COPY --from=builder /tugboat-runtime /usr/bin/tugboat-runtime
+COPY --from=builder /tugboat-qemu-runtime /usr/bin/tugboat-qemu-runtime
+COPY --from=builder /tugboat-cloud-hypervisor-runtime /usr/bin/tugboat-cloud-hypervisor-runtime
 COPY --from=cni-download /plugins/ /opt/cni/bin/
 COPY ./dockerfiles/agent/entrypoint.sh /
 

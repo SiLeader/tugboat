@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM docker.io/library/rust:1.92-bookworm AS builder
+[cloud_hypervisor]
+executable = "/usr/bin/cloud-hypervisor"
+disk_image_location = "/var/lib/tugboat-agent/images"
 
-RUN apt-get update && apt-get install -y protobuf-compiler openssl libssl-dev
+# Direct kernel boot (recommended)
+[cloud_hypervisor.boot]
+kernel = "/var/lib/tugboat-agent/vmlinux"
+# initramfs = "/var/lib/tugboat-agent/initramfs.img"
 
-WORKDIR /work
-
-COPY . .
-
-RUN --mount=type=cache,target=/work/target \
-    --mount=type=cache,target=/work/.cargo \
-    cargo build --release --package tugboat-qemu-runtime && \
-    cp /work/target/release/tugboat-qemu-runtime /tugboat-qemu-runtime
-
-FROM debian:bookworm-slim
-
-COPY --from=builder /tugboat-qemu-runtime /usr/bin/tugboat-qemu-runtime
-
-CMD ["/usr/bin/tugboat-qemu-runtime"]
+# UEFI boot (alternative, uncomment below and comment kernel above)
+# [cloud_hypervisor.boot]
+# firmware = "/usr/share/OVMF/OVMF.fd"
