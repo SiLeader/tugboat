@@ -41,7 +41,7 @@ Key concept mapping:
 |-----------------|-----------------------|-----------------------------------------|
 | Pod             | **Ship**              | The workload unit (a running VM)        |
 | Node            | **Node**              | A physical/virtual host that runs Ships |
-| Deployment      | **Fleet** *(planned)* | A set of replicated Ships               |
+| Deployment      | **Deployment**        | A rolling-updated set of identical Ships |
 | Container image | **VM image** (OCI)    | An OCI artifact containing a disk image |
 | Namespace       | **Namespace**         | Scope for namespaced resources          |
 

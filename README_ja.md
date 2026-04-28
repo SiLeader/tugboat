@@ -417,7 +417,9 @@ subjects:
 
 ## Roadmap
 
-- [x] tugboat-runtime
+- [x] Runtime
+    - [x] tugboat-qemu-runtime
+    - [x] tugboat-cloud-hypervisor-runtime
 - [x] tugboat-resources (リソース定義)
 - [x] tugboat-resource-store (apiserver向けのetcdラッパー)
 - [x] tugboat-apiserver
@@ -441,6 +443,8 @@ subjects:
     - [x] ReplicaSet コントローラ (Shipの規定数維持)
     - [x] Deployment コントローラ (ReplicaSetのローリングアップデート管理)
     - [x] Fleet コントローラ
+    - [x] NamespaceDefaultServiceAccountController (Namespaceごとに `default` ServiceAccount を自動作成)
+    - [x] ServiceAccount トークン発行コントローラ (`service-account-token` Secret の作成)
 - [x] Fleet リソース定義とAPI (`apps/v1`)
 - [x] ReplicaSet リソース定義とAPI (`apps/v1`)
 - [x] Deployment リソース定義とAPI (`apps/v1`)

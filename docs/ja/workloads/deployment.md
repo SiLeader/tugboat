@@ -59,7 +59,7 @@ spec:
       labels:
         app: web
     spec:
-      shipClassName: medium
+      shipClass: medium
       image: "my-registry.local/web-server:v2"
 ```
 

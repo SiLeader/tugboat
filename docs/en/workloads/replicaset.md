@@ -28,7 +28,7 @@ spec:
       labels:
         app: web
     spec:
-      shipClassName: small
+      shipClass: small
       image: "my-registry.local/web-app:v1"
 ```
 

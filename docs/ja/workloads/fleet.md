@@ -30,7 +30,7 @@ spec:
           labels:
             component: frontend
         spec:
-          shipClassName: small
+          shipClass: small
           image: "my-registry.local/frontend:v1"
     - name: backend
       replicas: 2
@@ -39,7 +39,7 @@ spec:
           labels:
             component: backend
         spec:
-          shipClassName: medium
+          shipClass: medium
           image: "my-registry.local/backend:v1"
 ```
 

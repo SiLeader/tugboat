@@ -422,7 +422,7 @@ subjects:
 
 - [x] Runtime
     - [x] tugboat-qemu-runtime
-    - [ ] tugboat-cloud-hypervisor-runtime
+    - [x] tugboat-cloud-hypervisor-runtime
 - [x] tugboat-resources (Resource definitions)
 - [x] tugboat-resource-store (etcd wrapper for apiserver)
 - [x] tugboat‑apiserver
@@ -446,6 +446,8 @@ subjects:
     - [x] ReplicaSet controller (maintaining the prescribed number of Ships)
     - [x] Deployment controller (rolling-update management of ReplicaSets)
     - [x] Fleet controller
+    - [x] NamespaceDefaultServiceAccountController (auto-creates `default` ServiceAccount per Namespace)
+    - [x] ServiceAccount token issuance controller (creates `service-account-token` Secrets)
 - [x] Fleet resource definition and API (`apps/v1`)
 - [x] ReplicaSet resource definition and API (`apps/v1`)
 - [x] Deployment resource definition and API (`apps/v1`)
