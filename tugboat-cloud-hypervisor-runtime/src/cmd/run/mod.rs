@@ -26,11 +26,16 @@ pub(crate) struct StartArgs {
     config: String,
 }
 
-pub(crate) async fn run(vm: CloudHypervisorVmConfig, args: StartArgs) -> Result<(), crate::Error> {
-    let config = load_config::<VmRunRequest>(args.config)?;
+pub(crate) fn prepare(args: &StartArgs) -> Result<(), crate::Error> {
+    let config = load_config::<VmRunRequest>(args.config.clone())?;
     enter_mount_namespace(&config.id)?;
     create_and_enter_to_network_namespace(&config.id)?;
     daemonize()?;
+    Ok(())
+}
+
+pub(crate) async fn run(vm: CloudHypervisorVmConfig, args: StartArgs) -> Result<(), crate::Error> {
+    let config = load_config::<VmRunRequest>(args.config)?;
     crate::execute::run(vm, config).await?;
     Ok(())
 }

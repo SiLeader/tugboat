@@ -105,51 +105,56 @@ struct Config {
     cloud_hypervisor: CloudHypervisorVmConfig,
 }
 
-pub async fn run() {
+pub fn run() {
     let args = Args::parse();
-    let config = (|| -> Result<Config> {
+    let result = (|| -> Result<()> {
+        match &args.subcommand {
+            SubCommand::Run(run_args) => run::prepare(run_args)?,
+            SubCommand::Create(create_args) => create::prepare(create_args)?,
+            _ => {}
+        }
+
         let file = std::fs::read_to_string(&args.config)?;
         let config: Config = toml::from_str(&file)?;
-        Ok(config)
+        let Config { cloud_hypervisor } = config;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+
+        runtime.block_on(async move {
+            match (args.subcommand, cloud_hypervisor) {
+                (SubCommand::Run(run_args), cloud_hypervisor) => {
+                    run::run(cloud_hypervisor, run_args).await
+                }
+                (SubCommand::Status(status_args), cloud_hypervisor) => {
+                    status::status(cloud_hypervisor, status_args).await
+                }
+                (SubCommand::MigrationStatus(status_args), cloud_hypervisor) => {
+                    migration_status::status(cloud_hypervisor, status_args).await
+                }
+                (SubCommand::Create(create_args), cloud_hypervisor) => {
+                    create::create(cloud_hypervisor, create_args).await
+                }
+                (SubCommand::Hotplug(hotplug_args), cloud_hypervisor) => {
+                    hotplug::run(cloud_hypervisor, hotplug_args).await
+                }
+                (SubCommand::Migrate(migrate_args), cloud_hypervisor) => {
+                    migrate::migrate(cloud_hypervisor, migrate_args).await
+                }
+                (SubCommand::MigrateCancel(cancel_args), cloud_hypervisor) => {
+                    migrate_cancel::migrate_cancel(cloud_hypervisor, cancel_args).await
+                }
+                (SubCommand::Start(start_args), _) => start::start(start_args).await,
+                (SubCommand::Stop(stop_args), cloud_hypervisor) => {
+                    stop::stop(cloud_hypervisor, stop_args).await
+                }
+            }
+        })?;
+
+        Ok(())
     })();
 
-    let config = match config {
-        Ok(config) => config,
-        Err(e) => {
-            error!("Runtime error: {e}");
-            if let Err(e) = serde_json::to_writer(
-                std::io::stdout(),
-                &tugboat_vm_runtime_interface::error::Error::from(e),
-            ) {
-                error!("Failed to serialize error: {e}");
-            }
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(e) = match args.subcommand {
-        SubCommand::Run(run_args) => run::run(config.cloud_hypervisor, run_args).await,
-        SubCommand::Status(status_args) => {
-            status::status(config.cloud_hypervisor, status_args).await
-        }
-        SubCommand::MigrationStatus(status_args) => {
-            migration_status::status(config.cloud_hypervisor, status_args).await
-        }
-        SubCommand::Create(create_args) => {
-            create::create(config.cloud_hypervisor, create_args).await
-        }
-        SubCommand::Hotplug(hotplug_args) => {
-            hotplug::run(config.cloud_hypervisor, hotplug_args).await
-        }
-        SubCommand::Migrate(migrate_args) => {
-            migrate::migrate(config.cloud_hypervisor, migrate_args).await
-        }
-        SubCommand::MigrateCancel(cancel_args) => {
-            migrate_cancel::migrate_cancel(config.cloud_hypervisor, cancel_args).await
-        }
-        SubCommand::Start(start_args) => start::start(start_args).await,
-        SubCommand::Stop(stop_args) => stop::stop(config.cloud_hypervisor, stop_args).await,
-    } {
+    if let Err(e) = result {
         error!("Runtime error: {e}");
         if let Err(e) = serde_json::to_writer(
             std::io::stdout(),

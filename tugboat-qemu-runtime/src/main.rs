@@ -13,12 +13,12 @@
 // limitations under the License.
 
 use tracing_subscriber::EnvFilter;
-#[tokio::main]
-async fn main() {
+
+fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
         .init();
 
-    tugboat_qemu_runtime::run().await;
+    tugboat_qemu_runtime::run();
 }

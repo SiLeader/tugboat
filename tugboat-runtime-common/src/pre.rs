@@ -83,13 +83,13 @@ pub fn create_and_enter_to_network_namespace(ship_id: &str) -> Result<(), crate:
 
 pub fn change_running_user_and_group(user: &VmExecUser) -> Result<(), crate::Error> {
     debug!("Change running user and group");
-    if let Some(user) = user.user {
-        info!("Change running user to {}", user);
-        setuid(Uid::from_raw(user))?;
-    }
     if let Some(group) = user.group {
         info!("Change running group to {}", group);
         setgid(Gid::from_raw(group))?;
+    }
+    if let Some(user) = user.user {
+        info!("Change running user to {}", user);
+        setuid(Uid::from_raw(user))?;
     }
 
     Ok(())

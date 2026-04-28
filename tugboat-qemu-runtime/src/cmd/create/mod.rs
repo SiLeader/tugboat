@@ -28,15 +28,18 @@ pub(crate) struct CreateArgs {
     config: String,
 }
 
-pub(crate) async fn create(vm: QemuVmConfig, args: CreateArgs) -> Result<(), crate::Error> {
-    let config = load_config::<VmRunRequest>(args.config)?;
+pub(crate) fn prepare(args: &CreateArgs) -> Result<(), crate::Error> {
+    let config = load_config::<VmRunRequest>(args.config.clone())?;
     enter_mount_namespace(&config.id)?;
     create_and_enter_to_network_namespace(&config.id)?;
     daemonize()?;
-
     create_signal_fifo(&config.id)?;
     wait_signal_using_fifo(&config.id)?;
+    Ok(())
+}
 
+pub(crate) async fn create(vm: QemuVmConfig, args: CreateArgs) -> Result<(), crate::Error> {
+    let config = load_config::<VmRunRequest>(args.config)?;
     run(vm, config).await?;
     Ok(())
 }

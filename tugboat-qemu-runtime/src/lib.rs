@@ -79,43 +79,46 @@ struct Config {
     qemu: QemuVmConfig,
 }
 
-pub async fn run() {
+pub fn run() {
     let args = Args::parse();
-    let config = (|| -> Result<Config> {
+    let result = (|| -> Result<()> {
+        match &args.subcommand {
+            SubCommand::Run(run_args) => run::prepare(run_args)?,
+            SubCommand::Create(create_args) => create::prepare(create_args)?,
+            _ => {}
+        }
+
         let file = std::fs::read_to_string(&args.config)?;
         let config: Config = toml::from_str(&file)?;
-        Ok(config)
+        let Config { qemu } = config;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+
+        runtime.block_on(async move {
+            match (args.subcommand, qemu) {
+                (SubCommand::Run(run_args), qemu) => run::run(qemu, run_args).await,
+                (SubCommand::Status(status_args), qemu) => status::status(qemu, status_args).await,
+                (SubCommand::MigrationStatus(status_args), qemu) => {
+                    migration_status::status(qemu, status_args).await
+                }
+                (SubCommand::Create(create_args), qemu) => create::create(qemu, create_args).await,
+                (SubCommand::Hotplug(hotplug_args), qemu) => hotplug::run(qemu, hotplug_args).await,
+                (SubCommand::Migrate(migrate_args), qemu) => {
+                    migrate::migrate(qemu, migrate_args).await
+                }
+                (SubCommand::MigrateCancel(cancel_args), qemu) => {
+                    migrate_cancel::migrate_cancel(qemu, cancel_args).await
+                }
+                (SubCommand::Start(start_args), _) => start::start(start_args).await,
+                (SubCommand::Stop(stop_args), qemu) => stop::stop(qemu, stop_args).await,
+            }
+        })?;
+
+        Ok(())
     })();
 
-    let config = match config {
-        Ok(config) => config,
-        Err(e) => {
-            error!("Runtime error: {e}");
-            if let Err(e) = serde_json::to_writer(
-                std::io::stdout(),
-                &tugboat_vm_runtime_interface::error::Error::from(e),
-            ) {
-                error!("Failed to serialize error: {e}");
-            }
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(e) = match args.subcommand {
-        SubCommand::Run(run_args) => run::run(config.qemu, run_args).await,
-        SubCommand::Status(status_args) => status::status(config.qemu, status_args).await,
-        SubCommand::MigrationStatus(status_args) => {
-            migration_status::status(config.qemu, status_args).await
-        }
-        SubCommand::Create(create_args) => create::create(config.qemu, create_args).await,
-        SubCommand::Hotplug(hotplug_args) => hotplug::run(config.qemu, hotplug_args).await,
-        SubCommand::Migrate(migrate_args) => migrate::migrate(config.qemu, migrate_args).await,
-        SubCommand::MigrateCancel(cancel_args) => {
-            migrate_cancel::migrate_cancel(config.qemu, cancel_args).await
-        }
-        SubCommand::Start(start_args) => start::start(start_args).await,
-        SubCommand::Stop(stop_args) => stop::stop(config.qemu, stop_args).await,
-    } {
+    if let Err(e) = result {
         error!("Runtime error: {e}");
         if let Err(e) = serde_json::to_writer(
             std::io::stdout(),
