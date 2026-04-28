@@ -18,8 +18,13 @@ name = "node1"
 network_probe_interval_seconds = 30
 
 [runtime]
-executable = "./target/debug/tugboat-runtime"
-args = ["--config", "./tugboat-runtime/sample-config.toml"]
+executable = "./target/debug/tugboat-qemu-runtime"
+args = ["--config", "./sample-configs/runtime/config.toml"]
+
+# Cloud Hypervisor runtime (alternative to QEMU)
+# [runtime]
+# executable = "/usr/bin/tugboat-cloud-hypervisor-runtime"
+# args = ["--config", "/etc/tugboat/runtime/cloud-hypervisor-config.toml"]
 
 [apiserver]
 url = "https://apiserver:8443"

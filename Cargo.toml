@@ -14,19 +14,29 @@
 
 [workspace]
 members = [
-    "tugboat-resources",
+    # control-plane components
     "tugboat-apiserver",
-    "tugboat-agent",
-    "tugboat-runtime",
     "tugboat-resource-store",
-    "tugboat-client",
-    "tugboat-cli",
-    "tugboat-vm-image",
-    "tugboat-vm-runtime-interface",
-    "tugboat-cni-operator",
-    "tugboat-csi-operator",
     "tugboat-scheduler",
     "tugboat-controller-manager",
+    # worker components
+    "tugboat-agent",
+    # runtimes
+    "tugboat-qemu-runtime",
+    "tugboat-cloud-hypervisor-runtime",
+    "tugboat-runtime-common",
+    # interfaces
+    "tugboat-resources",
+    "tugboat-vm-runtime-interface",
+    # clients
+    "tugboat-client",
+    "tugboat-vm-image",
+    # operators
+    "tugboat-cni-operator",
+    "tugboat-csi-operator",
+    # misc
+    "tugboat-cli",
+    # tests
     "tests/integration",
 ]
 resolver = "3"
@@ -41,6 +51,7 @@ tugboat-resources = { path = "tugboat-resources" }
 tugboat-client = { path = "tugboat-client" }
 tugboat-vm-image = { path = "tugboat-vm-image" }
 tugboat-vm-runtime-interface = { path = "tugboat-vm-runtime-interface" }
+tugboat-runtime-common = { path = "tugboat-runtime-common" }
 tugboat-cni-operator = { path = "tugboat-cni-operator" }
 tugboat-csi-operator = { path = "tugboat-csi-operator" }
 tugboat-scheduler = { path = "tugboat-scheduler" }

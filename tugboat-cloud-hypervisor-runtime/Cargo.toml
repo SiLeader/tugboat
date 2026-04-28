@@ -1,0 +1,24 @@
+[package]
+name = "tugboat-cloud-hypervisor-runtime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tugboat-resources.workspace = true
+tugboat-vm-runtime-interface.workspace = true
+tugboat-runtime-common.workspace = true
+
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+futures.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+serde_json.workspace = true
+
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+nix = { workspace = true, features = ["sched", "user", "signal", "fs", "mount"] }

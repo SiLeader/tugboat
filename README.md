@@ -420,7 +420,9 @@ subjects:
 
 ## Roadmap
 
-- [x] tugboat-runtime
+- [x] Runtime
+    - [x] tugboat-qemu-runtime
+    - [ ] tugboat-cloud-hypervisor-runtime
 - [x] tugboat-resources (Resource definitions)
 - [x] tugboat-resource-store (etcd wrapper for apiserver)
 - [x] tugboat‑apiserver
@@ -480,6 +482,8 @@ subjects:
     - [ ] OIDC integration for external identity providers
     - [ ] Aggregated ClusterRoles
     - [ ] Audit logging
+- [ ] Installer (systemd setup)
+- [ ] Snapshot
 - [ ] CRD
 
 ## Contributing

@@ -3406,6 +3406,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tugboat-cloud-hypervisor-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "futures",
+ "nix",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tugboat-resources",
+ "tugboat-runtime-common",
+ "tugboat-vm-runtime-interface",
+]
+
+[[package]]
 name = "tugboat-cni-operator"
 version = "0.1.0"
 dependencies = [
@@ -3473,6 +3493,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tugboat-qemu-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "futures",
+ "nix",
+ "qapi",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tugboat-resources",
+ "tugboat-runtime-common",
+ "tugboat-vm-runtime-interface",
+]
+
+[[package]]
 name = "tugboat-resource-store"
 version = "0.1.0"
 dependencies = [
@@ -3499,22 +3540,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "tugboat-runtime"
+name = "tugboat-runtime-common"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "clap",
- "futures",
  "nix",
- "qapi",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
- "tokio",
- "toml",
  "tracing",
- "tracing-subscriber",
- "tugboat-resources",
  "tugboat-vm-runtime-interface",
 ]
 

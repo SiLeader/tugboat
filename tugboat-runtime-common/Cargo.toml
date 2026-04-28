@@ -1,0 +1,17 @@
+[package]
+name = "tugboat-runtime-common"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tugboat-vm-runtime-interface.workspace = true
+
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+nix = { workspace = true, features = ["sched", "user", "signal", "fs", "mount"] }
+
+[dev-dependencies]
+tempfile.workspace = true
