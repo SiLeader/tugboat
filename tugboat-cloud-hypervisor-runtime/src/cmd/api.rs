@@ -22,6 +22,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
 const API_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_API_RESPONSE_BODY_SIZE: usize = 10 * 1024 * 1024;
 
 pub(crate) struct ChApiClient {
     reader: BufReader<OwnedReadHalf>,
@@ -146,6 +147,11 @@ impl ChApiClient {
             })
             .transpose()?
             .unwrap_or(0);
+        if content_length > MAX_API_RESPONSE_BODY_SIZE {
+            return Err(crate::Error::Api(format!(
+                "Cloud Hypervisor API response Content-Length {content_length} exceeds maximum allowed size {MAX_API_RESPONSE_BODY_SIZE}"
+            )));
+        }
 
         let body = if content_length == 0 {
             None
@@ -209,7 +215,7 @@ struct HttpResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::ChApiClient;
+    use super::{ChApiClient, MAX_API_RESPONSE_BODY_SIZE};
     use crate::Error;
     use crate::testing::{TestVm, http_response, spawn_mock_server};
     use serde_json::json;
@@ -322,6 +328,31 @@ mod tests {
             Error::Api(message) => {
                 assert!(message.contains("404 Not Found"));
                 assert!(message.contains("missing"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_response_content_length_limit() {
+        let test_vm = TestVm::new("tugboat-ch-api", "vm-large-response");
+        let oversized_length = MAX_API_RESPONSE_BODY_SIZE + 1;
+        let server = spawn_mock_server(
+            test_vm.socket_path(),
+            vec![format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {oversized_length}\r\n\r\n"
+            )],
+        );
+
+        let mut client = ChApiClient::connect(test_vm.socket_path()).await.unwrap();
+        let error = client.get("/api/v1/vm.info").await.unwrap_err();
+        let requests = server.await.unwrap();
+
+        assert_eq!(requests.len(), 1);
+        match error {
+            Error::Api(message) => {
+                assert!(message.contains("Content-Length"));
+                assert!(message.contains("exceeds maximum allowed size"));
             }
             other => panic!("unexpected error: {other:?}"),
         }
