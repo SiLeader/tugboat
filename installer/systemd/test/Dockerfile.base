@@ -1,0 +1,41 @@
+FROM debian:bookworm-slim
+
+ENV container=docker
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        coreutils \
+        curl \
+        dbus \
+        findutils \
+        gettext-base \
+        gawk \
+        gzip \
+        iproute2 \
+        iputils-ping \
+        jq \
+        procps \
+        python3 \
+        shellcheck \
+        systemd \
+        systemd-sysv \
+        tar \
+        wget \
+        xz-utils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN systemctl mask \
+        dev-hugepages.mount \
+        getty@.service \
+        systemd-logind.service \
+        systemd-remount-fs.service \
+        sys-fs-fuse-connections.mount \
+    || true
+
+VOLUME ["/sys/fs/cgroup"]
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
