@@ -35,6 +35,7 @@ pub use watch::*;
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ClientAuth {
     #[default]
+    #[serde(alias = "anonymous")]
     None,
     BearerToken {
         token: String,
@@ -72,18 +73,27 @@ impl TugboatClient {
     ) -> Result<Self, Error> {
         let base_url_str = base_url.into();
         let base_url = Url::parse(&base_url_str)?;
-        if base_url.scheme() != "https" {
+        let is_https = base_url.scheme() == "https";
+        if !is_https && !allows_cleartext(&auth, &tls) {
             return Err(Error::InsecureUrl(base_url_str));
         }
         Ok(Self {
-            client: build_http_client(auth, tls)?,
+            client: build_http_client(auth, tls, !is_https)?,
             base_url,
         })
     }
 }
 
-fn build_http_client(auth: ClientAuth, tls: ClientTlsConfig) -> Result<reqwest::Client, Error> {
-    let mut builder = reqwest::Client::builder().https_only(true);
+fn allows_cleartext(auth: &ClientAuth, tls: &ClientTlsConfig) -> bool {
+    matches!(auth, ClientAuth::None) && tls.ca_cert_path.is_none()
+}
+
+fn build_http_client(
+    auth: ClientAuth,
+    tls: ClientTlsConfig,
+    allow_cleartext: bool,
+) -> Result<reqwest::Client, Error> {
+    let mut builder = reqwest::Client::builder().https_only(!allow_cleartext);
     match auth {
         ClientAuth::None => {}
         ClientAuth::BearerToken { token } => {
@@ -424,5 +434,39 @@ impl TugboatClient {
             T::plural()
         );
         self.delete_impl(&path).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClientAuth, ClientTlsConfig, TugboatClient};
+
+    #[test]
+    fn anonymous_http_url_is_allowed() {
+        TugboatClient::try_new(
+            "http://127.0.0.1:8080",
+            ClientAuth::None,
+            ClientTlsConfig::default(),
+        )
+        .expect("anonymous cleartext client should be allowed for local installers");
+    }
+
+    #[test]
+    fn authenticated_http_url_is_rejected() {
+        let err = match TugboatClient::try_new(
+            "http://127.0.0.1:8080",
+            ClientAuth::BearerToken {
+                token: "secret".to_string(),
+            },
+            ClientTlsConfig::default(),
+        ) {
+            Ok(_) => panic!("authenticated cleartext client should be rejected"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "tugboat client requires an HTTPS URL: http://127.0.0.1:8080"
+        );
     }
 }

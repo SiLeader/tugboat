@@ -1,8 +1,8 @@
 # systemd installer test environment
 
 This directory contains the Docker-based isolation environment for
-`installer/systemd` scripts. It runs Debian bookworm containers with systemd as
-PID 1, so installer scripts can write units, create users, call `systemctl`, and
+`installer/systemd` scripts. It runs Ubuntu 24.04 containers with systemd as PID
+1, so installer scripts can write units, create users, call `systemctl`, and
 install packages without touching the host.
 
 ## Requirements

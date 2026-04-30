@@ -30,7 +30,15 @@ systemctl is-active --quiet tugboat-scheduler.service
 systemctl is-active --quiet tugboat-controller-manager.service
 
 curl -sf http://localhost:8080/healthz >/dev/null
-curl -sf http://localhost:8080/api/v1/nodes | python3 -m json.tool >/dev/null
+nodes_json=\"\$(curl -sf http://localhost:8080/api/v1/nodes)\"
+python3 - <<'PY' \"\${nodes_json}\"
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+if payload.get(\"items\") != []:
+    raise SystemExit(f\"expected empty node list, got: {payload!r}\")
+PY
 
 if [[ -f installer/systemd/uninstall.sh ]]; then
     bash installer/systemd/uninstall.sh

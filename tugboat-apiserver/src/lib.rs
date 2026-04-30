@@ -61,11 +61,6 @@ impl ApiServer {
     }
 
     pub async fn run(self) -> std::io::Result<()> {
-        if self.tls.is_none() {
-            return Err(std::io::Error::other(
-                "TLS configuration is required; refusing to start HTTP without TLS",
-            ));
-        }
         crate::auth::bootstrap::bootstrap_default_rbac(&self.operator.store)
             .await
             .map_err(|e| {
@@ -94,11 +89,12 @@ impl ApiServer {
                 .into_app()
         })
         .on_connect(store_client_certificate_info);
-        let tls = self
-            .tls
-            .ok_or_else(|| std::io::Error::other("TLS configuration is required"))?;
-        let builder = build_tls_acceptor(tls).map_err(std::io::Error::other)?;
-        server.bind_openssl(self.listen, builder)?.run().await
+        if let Some(tls) = self.tls {
+            let builder = build_tls_acceptor(tls).map_err(std::io::Error::other)?;
+            server.bind_openssl(self.listen, builder)?.run().await
+        } else {
+            server.bind(self.listen)?.run().await
+        }
     }
 
     pub async fn run_with_listener(self, listener: TcpListener) {
@@ -130,21 +126,10 @@ async fn run_with_bound_listener(
     listener: TcpListener,
     tls: Option<TlsConfig>,
 ) {
-    let Some(tls) = tls else {
-        tracing::error!("TLS configuration is required; refusing to start HTTP without TLS");
-        return;
-    };
     if let Err(err) = crate::auth::bootstrap::bootstrap_default_rbac(&operator.store).await {
         tracing::error!("Failed to bootstrap default RBAC resources: {err}");
         return;
     }
-    let builder = match build_tls_acceptor(tls) {
-        Ok(b) => b,
-        Err(err) => {
-            tracing::error!("Failed to configure TLS: {err}");
-            return;
-        }
-    };
     let data = Data::new(operator);
     let server = HttpServer::new(move || {
         App::new()
@@ -166,11 +151,28 @@ async fn run_with_bound_listener(
             .into_app()
     })
     .on_connect(store_client_certificate_info);
-    let server = match server.listen_openssl(listener, builder) {
-        Ok(server) => server,
-        Err(err) => {
-            tracing::error!("Failed to listen on provided socket with TLS: {err}");
-            return;
+    let server = if let Some(tls) = tls {
+        let builder = match build_tls_acceptor(tls) {
+            Ok(b) => b,
+            Err(err) => {
+                tracing::error!("Failed to configure TLS: {err}");
+                return;
+            }
+        };
+        match server.listen_openssl(listener, builder) {
+            Ok(server) => server,
+            Err(err) => {
+                tracing::error!("Failed to listen on provided socket with TLS: {err}");
+                return;
+            }
+        }
+    } else {
+        match server.listen(listener) {
+            Ok(server) => server,
+            Err(err) => {
+                tracing::error!("Failed to listen on provided socket: {err}");
+                return;
+            }
         }
     };
     if let Err(err) = server.run().await {
