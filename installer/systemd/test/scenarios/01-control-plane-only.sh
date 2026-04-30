@@ -29,6 +29,39 @@ systemctl is-active --quiet tugboat-apiserver.service
 systemctl is-active --quiet tugboat-scheduler.service
 systemctl is-active --quiet tugboat-controller-manager.service
 
+if ! verify_output=\"\$(systemd-analyze verify \
+    /etc/systemd/system/etcd.service \
+    /etc/systemd/system/tugboat-apiserver.service \
+    /etc/systemd/system/tugboat-scheduler.service \
+    /etc/systemd/system/tugboat-controller-manager.service 2>&1)\"; then
+    printf '%s\n' \"\${verify_output}\" >&2
+    exit 1
+fi
+if [[ -n \"\${verify_output}\" ]]; then
+    printf '%s\n' \"\${verify_output}\" >&2
+    exit 1
+fi
+
+old_pid=\"\$(systemctl show -P MainPID tugboat-scheduler.service)\"
+if [[ -z \"\${old_pid}\" || \"\${old_pid}\" == 0 ]]; then
+    echo 'tugboat-scheduler.service has no running MainPID' >&2
+    exit 1
+fi
+
+kill -9 \"\${old_pid}\"
+timeout 30 bash -c '
+    set -Eeuo pipefail
+    old_pid=\"\$1\"
+    while true; do
+        new_pid=\"\$(systemctl show -P MainPID tugboat-scheduler.service)\"
+        if [[ \"\${new_pid}\" != 0 && \"\${new_pid}\" != \"\${old_pid}\" ]] &&
+           systemctl is-active --quiet tugboat-scheduler.service; then
+            exit 0
+        fi
+        sleep 1
+    done
+' _ \"\${old_pid}\"
+
 curl -sf http://localhost:8080/healthz >/dev/null
 nodes_json=\"\$(curl -sf http://localhost:8080/api/v1/nodes)\"
 python3 - <<'PY' \"\${nodes_json}\"
