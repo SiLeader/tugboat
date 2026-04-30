@@ -179,6 +179,9 @@ install_cni_plugins() {
     mkdir -p -- "${CNI_BIN_DIR}"
     fetch_tarball "${CNI_PLUGINS_URL}" "${CNI_PLUGINS_SHA256}" "${CNI_BIN_DIR}"
     fetch_tarball "${FLANNEL_URL}" "${FLANNEL_SHA256}" "${CNI_BIN_DIR}"
+    if [[ ! -e "${CNI_BIN_DIR}/flannel" && -x "${CNI_BIN_DIR}/flanneld" ]]; then
+        ln -s -- flanneld "${CNI_BIN_DIR}/flannel"
+    fi
 
     CNI_SUBNET="${subnet}"
     export CNI_SUBNET
