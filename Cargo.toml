@@ -60,7 +60,7 @@ tugboat-apiserver = { path = "tugboat-apiserver" }
 tugboat-controller-manager = { path = "tugboat-controller-manager" }
 
 # command line
-clap = "4.5.60"
+clap = "4.6.1"
 
 # serde
 serde = "1.0.228"
