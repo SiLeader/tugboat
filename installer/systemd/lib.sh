@@ -3,9 +3,19 @@
 INSTALLER_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 : "${CARGO_MANIFEST_DIR:=$(cd -- "${INSTALLER_DIR}/../.." && pwd -P)}"
 : "${SYSTEMD_UNIT_DIR:=/etc/systemd/system}"
+: "${CNI_BIN_DIR:=/opt/cni/bin}"
+: "${TMPFILES_DIR:=/etc/tmpfiles.d}"
 
 BUILD_MODE="build"
 PREBUILT_BIN_DIR=""
+
+# Keep these in sync with dockerfiles/agent/Dockerfile:38-47.
+CNI_PLUGINS_VERSION="v1.9.0"
+CNI_PLUGINS_SHA256="58c03705426e929658f45a851df15a86d06ef680cacbf3f2dc127731ca265c28"
+CNI_PLUGINS_URL="https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGINS_VERSION}/cni-plugins-linux-amd64-${CNI_PLUGINS_VERSION}.tgz"
+FLANNEL_VERSION="v0.28.2"
+FLANNEL_SHA256="dda1d5120ae6678666eef492531a7ad04492f80bd7740e5f9739908ef12f1bee"
+FLANNEL_URL="https://github.com/flannel-io/flannel/releases/download/${FLANNEL_VERSION}/flannel-${FLANNEL_VERSION}-linux-amd64.tar.gz"
 
 _log() {
     local color="$1"
@@ -155,6 +165,35 @@ install_binary() {
     log_info "Installed ${package} to ${dest_path}"
 }
 
+install_cni_plugins() {
+    local subnet="${1:-}"
+    local tmpfiles_src="${INSTALLER_DIR}/tmpfiles.d/tugboat-flannel.conf"
+    local tmpfiles_dst="${TMPFILES_DIR}/tugboat-flannel.conf"
+    local CNI_SUBNET
+
+    if [[ -z "${subnet}" ]]; then
+        log_error "install_cni_plugins requires a CNI subnet CIDR."
+        return 2
+    fi
+
+    mkdir -p -- "${CNI_BIN_DIR}"
+    fetch_tarball "${CNI_PLUGINS_URL}" "${CNI_PLUGINS_SHA256}" "${CNI_BIN_DIR}"
+    fetch_tarball "${FLANNEL_URL}" "${FLANNEL_SHA256}" "${CNI_BIN_DIR}"
+
+    CNI_SUBNET="${subnet}"
+    export CNI_SUBNET
+    render_template "${tmpfiles_src}" "${tmpfiles_dst}"
+    chmod 0644 -- "${tmpfiles_dst}"
+
+    if ! command -v systemd-tmpfiles >/dev/null 2>&1; then
+        log_error "systemd-tmpfiles is required to create ${tmpfiles_dst}."
+        return 1
+    fi
+
+    systemd-tmpfiles --create "${tmpfiles_dst}"
+    log_info "Installed CNI plugins and flannel subnet tmpfiles config."
+}
+
 fetch_tarball() {
     local url="${1:-}"
     local sha256="${2:-}"
@@ -171,10 +210,13 @@ fetch_tarball() {
     (
         trap 'rm -rf -- "${work_dir}"' EXIT
         mkdir -p -- "${dest_dir}"
-        cd -- "${work_dir}" || exit
-        wget -O archive.tar.gz "${url}"
-        printf '%s  %s\n' "${sha256}" "archive.tar.gz" | sha256sum --check --status
-        tar xzf archive.tar.gz -C "${dest_dir}"
+        cd -- "${work_dir}" || exit 1
+        wget -O archive.tar.gz "${url}" || exit 1
+        if ! printf '%s  %s\n' "${sha256}" "archive.tar.gz" | sha256sum --check --status; then
+            log_error "Checksum verification failed for ${url}"
+            exit 1
+        fi
+        tar xzf archive.tar.gz -C "${dest_dir}" || exit 1
     )
 }
 

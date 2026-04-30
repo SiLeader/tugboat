@@ -172,6 +172,69 @@ test_fetch_tarball() {
     assert_file_contains "${dest}/payload.txt" "payload"
 }
 
+test_fetch_tarball_rejects_bad_checksum() {
+    local source_dir="${TMP_DIR}/bad-tar-source"
+    local tarball="${TMP_DIR}/bad-fixture.tar.gz"
+    local dest="${TMP_DIR}/bad-tar-dest"
+    local bad_checksum="0000000000000000000000000000000000000000000000000000000000000000"
+
+    mkdir -p -- "${source_dir}"
+    printf 'payload\n' > "${source_dir}/payload.txt"
+    tar czf "${tarball}" -C "${source_dir}" payload.txt
+    make_mock_bin "wget" 'if [[ "$1" != "-O" ]]; then exit 2; fi; cp -- "$3" "$2"'
+
+    if PATH="${TMP_DIR}/bin:${PATH}" fetch_tarball "${tarball}" "${bad_checksum}" "${dest}" >/dev/null 2>&1; then
+        fail "fetch_tarball should reject a tarball with an invalid sha256"
+    fi
+
+    [[ ! -e "${dest}/payload.txt" ]] || fail "fetch_tarball should not extract an invalid tarball"
+}
+
+test_install_cni_plugins() (
+    set -euo pipefail
+
+    local cni_dir="${TMP_DIR}/cni-bin"
+    local tmpfiles_dir="${TMP_DIR}/tmpfiles"
+    local subnet="10.42.0.0/16"
+
+    # shellcheck disable=SC2317
+    fetch_tarball() {
+        local url="$1"
+        local sha256="$2"
+        local dest_dir="$3"
+
+        printf '%s|%s|%s\n' "${url}" "${sha256}" "${dest_dir}" >> "${MOCK_LOG}/fetch-cni.log"
+        mkdir -p -- "${dest_dir}"
+        case "${url}" in
+            *cni-plugins*)
+                : > "${dest_dir}/bridge"
+                : > "${dest_dir}/loopback"
+                ;;
+            *flannel*)
+                : > "${dest_dir}/flannel"
+                : > "${dest_dir}/flanneld"
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+        chmod 0755 -- "${dest_dir}/bridge" "${dest_dir}/loopback" "${dest_dir}/flannel" "${dest_dir}/flanneld" 2>/dev/null || true
+    }
+
+    make_mock_bin "envsubst" 'content="$(cat)"; content="${content//\$\{CNI_SUBNET\}/${CNI_SUBNET}}"; printf "%s" "${content}"'
+    make_mock_bin "systemd-tmpfiles" 'printf "%s\n" "$*" >> "${MOCK_LOG}/systemd-tmpfiles.log"'
+
+    CNI_BIN_DIR="${cni_dir}" TMPFILES_DIR="${tmpfiles_dir}" PATH="${TMP_DIR}/bin:${PATH}" MOCK_LOG="${TMP_DIR}" install_cni_plugins "${subnet}"
+
+    [[ -x "${cni_dir}/bridge" ]] || fail "bridge plugin should be installed"
+    [[ -x "${cni_dir}/loopback" ]] || fail "loopback plugin should be installed"
+    [[ -x "${cni_dir}/flannel" ]] || fail "flannel plugin should be installed"
+    assert_file_contains "${tmpfiles_dir}/tugboat-flannel.conf" "FLANNEL_NETWORK=${subnet}"
+    assert_file_contains "${TMP_DIR}/fetch-cni.log" "cni-plugins-linux-amd64-v1.9.0.tgz|58c03705426e929658f45a851df15a86d06ef680cacbf3f2dc127731ca265c28|${cni_dir}"
+    assert_file_contains "${TMP_DIR}/fetch-cni.log" "flannel-v0.28.2-linux-amd64.tar.gz|dda1d5120ae6678666eef492531a7ad04492f80bd7740e5f9739908ef12f1bee|${cni_dir}"
+    assert_file_contains "${TMP_DIR}/systemd-tmpfiles.log" "--create ${tmpfiles_dir}/tugboat-flannel.conf"
+)
+
 test_render_template() {
     local src="${TMP_DIR}/template.txt"
     local dst="${TMP_DIR}/rendered/output.txt"
@@ -226,6 +289,8 @@ test_build_binary
 test_install_binary_prebuilt
 test_install_binary_build
 test_fetch_tarball
+test_fetch_tarball_rejects_bad_checksum
+test_install_cni_plugins
 test_render_template
 test_create_system_user
 test_install_unit
