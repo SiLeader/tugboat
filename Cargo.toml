@@ -118,7 +118,7 @@ qapi = "0.15.0"
 # misc
 regex = "1.12.3"
 thiserror = "2.0.18"
-uuid = "1.23.0"
+uuid = "1.23.1"
 base64 = "0.22.1"
 nix = "0.31.1"
 dashmap = "6.1.0"
