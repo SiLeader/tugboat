@@ -7,13 +7,23 @@ source "${SCRIPT_DIR}/lib.sh"
 
 APISERVER_LISTEN="0.0.0.0:8080"
 ETCD_LISTEN="127.0.0.1:2379"
+ETCD_PEER_LISTEN="127.0.0.1:2380"
 DATA_DIR="/var/lib/tugboat-etcd"
 PKI_DIR="/etc/tugboat/pki"
+ETCD_PKI_DIR="/etc/tugboat/pki/etcd"
 SECURE=0
 FORCE_PKI=0
 LISTEN_SET=0
 APISERVER_CERT_HOSTS=()
 APISERVER_CERT_IPS=()
+ETCD_CERT_HOSTS=()
+ETCD_CERT_IPS=()
+ETCD_NODE_NAME="default"
+ETCD_ADVERTISE_CLIENT_URL=""
+ETCD_INITIAL_ADVERTISE_PEER_URL=""
+ETCD_INITIAL_CLUSTER=""
+ETCD_INITIAL_CLUSTER_STATE="new"
+ETCD_ENDPOINTS=()
 SERVICE_ACCOUNT_TOKEN_ROOT="/var/run/secrets/tugboat.cloud/serviceaccount"
 
 ETCD_VERSION="v3.6.10"
@@ -37,6 +47,18 @@ Options:
   --force-pki             Regenerate existing PKI when used with --secure.
   --etcd-listen <addr:port>
                           etcd client listen address. Default: 127.0.0.1:2379.
+  --etcd-peer-listen <addr:port>
+                          etcd peer listen address. Default: 127.0.0.1:2380.
+  --etcd-node-name <name> etcd member name. Default: default.
+  --etcd-advertise-client-url <url>
+                          etcd client URL advertised to clients. Default: https://<etcd-listen>.
+  --etcd-initial-advertise-peer-url <url>
+                          etcd peer URL advertised to cluster members. Default: https://<etcd-peer-listen>.
+  --etcd-initial-cluster <members>
+                          Comma-separated etcd initial cluster, e.g. n1=https://n1:2380,n2=https://n2:2380.
+  --etcd-initial-cluster-state <new|existing>
+                          etcd initial cluster state. Default: new.
+  --etcd-endpoint <url>  etcd endpoint written to apiserver config. May be repeated.
   --data-dir <path>       etcd data directory. Default: /var/lib/tugboat-etcd.
 USAGE
 }
@@ -46,6 +68,26 @@ strip_scheme() {
 
     value="${value#http://}"
     value="${value#https://}"
+    printf '%s\n' "${value}"
+}
+
+ensure_https_url() {
+    local value="$1"
+
+    if [[ "${value}" == http://* || "${value}" == https://* ]]; then
+        printf '%s\n' "${value}"
+    else
+        printf 'https://%s\n' "${value}"
+    fi
+}
+
+url_host() {
+    local value="$1"
+
+    value="${value#http://}"
+    value="${value#https://}"
+    value="${value%%/*}"
+    value="${value%:*}"
     printf '%s\n' "${value}"
 }
 
@@ -94,6 +136,24 @@ append_unique() {
         fi
     done
     values_ref+=("${candidate}")
+}
+
+append_cert_san_from_host() {
+    local host="$1"
+
+    if [[ -z "${host}" || "${host}" == "0.0.0.0" || "${host}" == "::" ]]; then
+        return 0
+    fi
+
+    if is_ipv4_address "${host}"; then
+        append_unique ETCD_CERT_IPS "${host}"
+    else
+        append_unique ETCD_CERT_HOSTS "${host}"
+    fi
+}
+
+append_cert_san_from_url() {
+    append_cert_san_from_host "$(url_host "$1")"
 }
 
 parse_args() {
@@ -194,6 +254,102 @@ parse_args() {
                 ETCD_LISTEN="$(strip_scheme "${1#--etcd-listen=}")"
                 shift
                 ;;
+            --etcd-peer-listen)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--etcd-peer-listen requires an address."
+                    return 2
+                fi
+                ETCD_PEER_LISTEN="$(strip_scheme "$2")"
+                shift 2
+                ;;
+            --etcd-peer-listen=*)
+                ETCD_PEER_LISTEN="$(strip_scheme "${1#--etcd-peer-listen=}")"
+                shift
+                ;;
+            --etcd-node-name)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--etcd-node-name requires a name."
+                    return 2
+                fi
+                ETCD_NODE_NAME="$2"
+                shift 2
+                ;;
+            --etcd-node-name=*)
+                ETCD_NODE_NAME="${1#--etcd-node-name=}"
+                if [[ -z "${ETCD_NODE_NAME}" ]]; then
+                    log_error "--etcd-node-name requires a name."
+                    return 2
+                fi
+                shift
+                ;;
+            --etcd-advertise-client-url)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--etcd-advertise-client-url requires a URL."
+                    return 2
+                fi
+                ETCD_ADVERTISE_CLIENT_URL="$(ensure_https_url "$2")"
+                shift 2
+                ;;
+            --etcd-advertise-client-url=*)
+                ETCD_ADVERTISE_CLIENT_URL="$(ensure_https_url "${1#--etcd-advertise-client-url=}")"
+                shift
+                ;;
+            --etcd-initial-advertise-peer-url)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--etcd-initial-advertise-peer-url requires a URL."
+                    return 2
+                fi
+                ETCD_INITIAL_ADVERTISE_PEER_URL="$(ensure_https_url "$2")"
+                shift 2
+                ;;
+            --etcd-initial-advertise-peer-url=*)
+                ETCD_INITIAL_ADVERTISE_PEER_URL="$(ensure_https_url "${1#--etcd-initial-advertise-peer-url=}")"
+                shift
+                ;;
+            --etcd-initial-cluster)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--etcd-initial-cluster requires a member list."
+                    return 2
+                fi
+                ETCD_INITIAL_CLUSTER="$2"
+                shift 2
+                ;;
+            --etcd-initial-cluster=*)
+                ETCD_INITIAL_CLUSTER="${1#--etcd-initial-cluster=}"
+                if [[ -z "${ETCD_INITIAL_CLUSTER}" ]]; then
+                    log_error "--etcd-initial-cluster requires a member list."
+                    return 2
+                fi
+                shift
+                ;;
+            --etcd-initial-cluster-state)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--etcd-initial-cluster-state requires a value."
+                    return 2
+                fi
+                ETCD_INITIAL_CLUSTER_STATE="$2"
+                shift 2
+                ;;
+            --etcd-initial-cluster-state=*)
+                ETCD_INITIAL_CLUSTER_STATE="${1#--etcd-initial-cluster-state=}"
+                if [[ -z "${ETCD_INITIAL_CLUSTER_STATE}" ]]; then
+                    log_error "--etcd-initial-cluster-state requires a value."
+                    return 2
+                fi
+                shift
+                ;;
+            --etcd-endpoint)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--etcd-endpoint requires a URL."
+                    return 2
+                fi
+                ETCD_ENDPOINTS+=("$(ensure_https_url "$2")")
+                shift 2
+                ;;
+            --etcd-endpoint=*)
+                ETCD_ENDPOINTS+=("$(ensure_https_url "${1#--etcd-endpoint=}")")
+                shift
+                ;;
             --data-dir)
                 if [[ "$#" -lt 2 || -z "$2" ]]; then
                     log_error "--data-dir requires a path."
@@ -217,6 +373,93 @@ parse_args() {
                 ;;
         esac
     done
+}
+
+configure_etcd_defaults() {
+    local endpoint
+    local peer_host
+
+    ETCD_LISTEN="$(strip_scheme "${ETCD_LISTEN}")"
+    ETCD_PEER_LISTEN="$(strip_scheme "${ETCD_PEER_LISTEN}")"
+    if [[ -z "${ETCD_ADVERTISE_CLIENT_URL}" ]]; then
+        ETCD_ADVERTISE_CLIENT_URL="https://${ETCD_LISTEN}"
+    fi
+    if [[ -z "${ETCD_INITIAL_ADVERTISE_PEER_URL}" ]]; then
+        ETCD_INITIAL_ADVERTISE_PEER_URL="https://${ETCD_PEER_LISTEN}"
+    fi
+    if [[ -z "${ETCD_INITIAL_CLUSTER}" ]]; then
+        ETCD_INITIAL_CLUSTER="${ETCD_NODE_NAME}=${ETCD_INITIAL_ADVERTISE_PEER_URL}"
+    fi
+    if [[ "${#ETCD_ENDPOINTS[@]}" -eq 0 ]]; then
+        ETCD_ENDPOINTS=("${ETCD_ADVERTISE_CLIENT_URL}")
+    fi
+
+    append_cert_san_from_host "${ETCD_LISTEN%:*}"
+    append_cert_san_from_host "${ETCD_PEER_LISTEN%:*}"
+    append_cert_san_from_url "${ETCD_ADVERTISE_CLIENT_URL}"
+    append_cert_san_from_url "${ETCD_INITIAL_ADVERTISE_PEER_URL}"
+    for endpoint in "${ETCD_ENDPOINTS[@]}"; do
+        append_cert_san_from_url "${endpoint}"
+    done
+
+    peer_host="$(hostname -s 2>/dev/null || true)"
+    append_unique ETCD_CERT_HOSTS "${peer_host}"
+
+    ETCD_LISTEN_PEER_URL="https://${ETCD_PEER_LISTEN}"
+    export \
+        ETCD_NODE_NAME \
+        ETCD_LISTEN_PEER_URL \
+        ETCD_ADVERTISE_CLIENT_URL \
+        ETCD_INITIAL_ADVERTISE_PEER_URL \
+        ETCD_INITIAL_CLUSTER \
+        ETCD_INITIAL_CLUSTER_STATE \
+        ETCD_PKI_DIR
+}
+
+toml_string_array_items() {
+    local first=1
+    local value
+
+    for value in "$@"; do
+        if [[ "${first}" -ne 1 ]]; then
+            printf ', '
+        fi
+        printf '"%s"' "${value//\"/\\\"}"
+        first=0
+    done
+}
+
+configure_etcd_client_config() {
+    APISERVER_ETCD_ENDPOINTS="$(toml_string_array_items "${ETCD_ENDPOINTS[@]}")"
+    APISERVER_ETCD_TLS_CONFIG="$(
+        printf '[etcd.tls]\nca_cert_path = "%s/ca.crt"\ncert_path = "%s/client.crt"\nkey_path = "%s/client.key"' \
+            "${ETCD_PKI_DIR}" \
+            "${ETCD_PKI_DIR}" \
+            "${ETCD_PKI_DIR}"
+    )"
+    export APISERVER_ETCD_ENDPOINTS APISERVER_ETCD_TLS_CONFIG
+}
+
+configure_etcd_pki() {
+    local setup_args=()
+    local value
+
+    setup_args=(--pki-dir "${ETCD_PKI_DIR}")
+    for value in "${ETCD_CERT_HOSTS[@]}"; do
+        setup_args+=(--server-host "${value}" --peer-host "${value}")
+    done
+    for value in "${ETCD_CERT_IPS[@]}"; do
+        setup_args+=(--server-ip "${value}" --peer-ip "${value}")
+    done
+    if [[ "${FORCE_PKI}" -eq 1 ]]; then
+        setup_args+=(--force)
+    fi
+
+    "${INSTALLER_DIR}/setup-etcd-pki.sh" "${setup_args[@]}"
+    chown root:tugboat-etcd -- "${ETCD_PKI_DIR}/server.key" "${ETCD_PKI_DIR}/peer.key"
+    chmod 0640 -- "${ETCD_PKI_DIR}/server.key" "${ETCD_PKI_DIR}/peer.key"
+    chown root:tugboat -- "${ETCD_PKI_DIR}/client.key"
+    chmod 0640 -- "${ETCD_PKI_DIR}/client.key"
 }
 
 install_base_packages() {
@@ -321,7 +564,7 @@ set_final_auth_config() {
 }
 
 install_etcd_from_package() {
-    if ! apt-get install -y etcd-server; then
+    if ! apt-get install -y etcd-server etcd-client; then
         return 1
     fi
 
@@ -439,26 +682,29 @@ main() {
     parse_args "$@"
 
     APISERVER_LISTEN="$(strip_scheme "${APISERVER_LISTEN}")"
-    ETCD_LISTEN="$(strip_scheme "${ETCD_LISTEN}")"
     if [[ "${SECURE}" -eq 1 && "${LISTEN_SET}" -ne 1 ]]; then
         APISERVER_LISTEN="0.0.0.0:8443"
     fi
+    ETCD_PKI_DIR="${PKI_DIR}/etcd"
+    configure_etcd_defaults
     APISERVER_SCHEME="http"
     if [[ "${SECURE}" -eq 1 ]]; then
         APISERVER_SCHEME="https"
     fi
     APISERVER_URL="$(apiserver_client_url "${APISERVER_LISTEN}" "${APISERVER_SCHEME}")"
-    ETCD_ENDPOINT="http://${ETCD_LISTEN}"
     APISERVER_TLS_CONFIG=""
     APISERVER_CLIENT_TLS_CONFIG=""
+    APISERVER_ETCD_TLS_CONFIG=""
+    configure_etcd_client_config
     set_bootstrap_auth_config
-    export APISERVER_LISTEN APISERVER_URL ETCD_LISTEN ETCD_ENDPOINT DATA_DIR APISERVER_TLS_CONFIG APISERVER_CLIENT_TLS_CONFIG
+    export APISERVER_LISTEN APISERVER_URL ETCD_LISTEN DATA_DIR APISERVER_TLS_CONFIG APISERVER_CLIENT_TLS_CONFIG
 
     install_base_packages
     install_etcd
     create_system_user tugboat
     create_system_user tugboat-etcd
     configure_tls
+    configure_etcd_pki
     APISERVER_URL="$(apiserver_client_url "${APISERVER_LISTEN}" "${APISERVER_SCHEME}")"
     export APISERVER_LISTEN APISERVER_URL
     install -d -m 0700 -o tugboat-etcd -- "${DATA_DIR}"

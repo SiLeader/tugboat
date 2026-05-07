@@ -123,6 +123,9 @@ impl From<tugboat_resource_store::error::Error> for StatusResponse {
             tugboat_resource_store::error::Error::Etcd(_) => {
                 StatusResponse::internal_error("Etcd access error", None)
             }
+            tugboat_resource_store::error::Error::Io(_) => {
+                StatusResponse::internal_error("Resource store I/O error", None)
+            }
             tugboat_resource_store::error::Error::EventEmit(_) => {
                 StatusResponse::internal_error("Event emit error", None)
             }

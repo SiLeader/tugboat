@@ -24,6 +24,8 @@ pub enum Error {
     FieldMissing(String),
     #[error("Invalid field value: field: '{0}', reason: '{1}'")]
     InvalidField(String, String),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     #[error("Etcd error: {0}")]
     Etcd(#[from] etcd_client::Error),
     #[error("Event emit error: {0}")]

@@ -70,13 +70,14 @@ compose() {
 }
 
 run_lint() {
-    bash -n "${INSTALLER_DIR}/lib.sh"
+    find "${INSTALLER_DIR}" -maxdepth 1 -type f -name '*.sh' -print0 |
+        xargs -0 -r bash -n
     bash -n "${SCRIPT_DIR}/run-tests.sh"
     find "${SCRIPT_DIR}/scenarios" -maxdepth 1 -type f -name '*.sh' -print0 |
         xargs -0 -r bash -n
 
     if command -v shellcheck >/dev/null 2>&1; then
-        shellcheck -x "${INSTALLER_DIR}/lib.sh" "${SCRIPT_DIR}/run-tests.sh" "${SCRIPT_DIR}"/scenarios/*.sh
+        shellcheck -x "${INSTALLER_DIR}"/*.sh "${SCRIPT_DIR}/run-tests.sh" "${SCRIPT_DIR}"/scenarios/*.sh
     else
         echo "shellcheck not found; skipping shellcheck lint" >&2
     fi
@@ -130,6 +131,10 @@ missing_dependency() {
             [[ -f "${INSTALLER_DIR}/install-control-plane.sh" ]] || printf '%s\n' "installer/systemd/install-control-plane.sh is not implemented yet"
             [[ -f "${INSTALLER_DIR}/install-worker.sh" ]] || printf '%s\n' "installer/systemd/install-worker.sh is not implemented yet"
             [[ -f "${INSTALLER_DIR}/bootstrap-rbac.sh" ]] || printf '%s\n' "installer/systemd/bootstrap-rbac.sh is not implemented yet"
+            ;;
+        07-etcd-client-tls.sh|08-etcd-ha.sh)
+            [[ -f "${INSTALLER_DIR}/install-control-plane.sh" ]] || printf '%s\n' "installer/systemd/install-control-plane.sh is not implemented yet"
+            [[ -f "${INSTALLER_DIR}/setup-etcd-pki.sh" ]] || printf '%s\n' "installer/systemd/setup-etcd-pki.sh is not implemented yet"
             ;;
     esac
 }
@@ -189,7 +194,7 @@ collect_journals() {
 
     mkdir -p -- "${ARTIFACT_DIR}"
 
-    for service in control-plane worker; do
+    for service in control-plane control-plane-2 control-plane-3 worker; do
         if compose ps -q "${service}" >/dev/null 2>&1; then
             compose exec -T "${service}" bash -lc 'journalctl --no-pager -u "tugboat*" -u etcd.service || true; systemctl --failed --no-pager || true' \
                 > "${ARTIFACT_DIR}/${service}-journal.log" 2>&1 || true

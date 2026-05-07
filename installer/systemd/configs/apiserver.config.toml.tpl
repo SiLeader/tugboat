@@ -3,7 +3,8 @@ listen = "${APISERVER_LISTEN}"
 ${APISERVER_TLS_CONFIG}
 
 [etcd]
-endpoints = ["${ETCD_ENDPOINT}"]
+endpoints = [${APISERVER_ETCD_ENDPOINTS}]
+${APISERVER_ETCD_TLS_CONFIG}
 
 [authorization]
 mode = "${APISERVER_AUTHORIZATION_MODE}"
