@@ -74,6 +74,6 @@ if payload.get(\"items\") != []:
 PY
 
 if [[ -f installer/systemd/uninstall.sh ]]; then
-    bash installer/systemd/uninstall.sh
+    bash installer/systemd/uninstall.sh --control-plane
 fi
 "
