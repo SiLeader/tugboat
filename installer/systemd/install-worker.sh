@@ -13,6 +13,9 @@ RUNTIME="qemu"
 CNI_SUBNET="10.244.0.0/16"
 RUNTIME_BINARY="tugboat-qemu-runtime"
 RUNTIME_CONFIG_FILE="config.toml"
+SECURE=0
+SERVICE_ACCOUNT_TOKEN_SOURCE=""
+SERVICE_ACCOUNT_TOKEN_PATH="/var/run/secrets/tugboat.cloud/serviceaccount/agent/token"
 
 CLOUD_HYPERVISOR_URL="https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/cloud-hypervisor-static"
 CLOUD_HYPERVISOR_SHA256SUMS_URL="https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/SHA256SUMS"
@@ -27,6 +30,8 @@ Options:
   --bin-dir <path>                Directory containing prebuilt Tugboat binaries.
   --apiserver-url <url>           API server URL, for example http://192.168.0.1:8080. Required.
   --ca-cert <path>                CA certificate for https apiserver URLs. Required for https.
+  --secure                        Use a ServiceAccount token for apiserver authentication.
+  --service-account-token <path>  Token file to install when --secure is set.
   --node-name <name>              Tugboat node name. Default: hostname -s.
   --runtime <qemu|cloud-hypervisor>
                                   VM runtime. Default: qemu.
@@ -74,6 +79,26 @@ parse_worker_args() {
                 CA_CERT="${1#--ca-cert=}"
                 if [[ -z "${CA_CERT}" ]]; then
                     log_error "--ca-cert requires a path."
+                    return 2
+                fi
+                shift
+                ;;
+            --secure)
+                SECURE=1
+                shift
+                ;;
+            --service-account-token)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--service-account-token requires a path."
+                    return 2
+                fi
+                SERVICE_ACCOUNT_TOKEN_SOURCE="$2"
+                shift 2
+                ;;
+            --service-account-token=*)
+                SERVICE_ACCOUNT_TOKEN_SOURCE="${1#--service-account-token=}"
+                if [[ -z "${SERVICE_ACCOUNT_TOKEN_SOURCE}" ]]; then
+                    log_error "--service-account-token requires a path."
                     return 2
                 fi
                 shift
@@ -138,6 +163,14 @@ parse_worker_args() {
     fi
     if [[ "${APISERVER_URL}" != https://* && -n "${CA_CERT}" ]]; then
         log_error "--ca-cert can only be used when --apiserver-url uses https."
+        return 2
+    fi
+    if [[ "${SECURE}" -eq 1 && -z "${SERVICE_ACCOUNT_TOKEN_SOURCE}" && ! -f "${SERVICE_ACCOUNT_TOKEN_PATH}" ]]; then
+        log_error "--secure requires --service-account-token unless ${SERVICE_ACCOUNT_TOKEN_PATH} already exists."
+        return 2
+    fi
+    if [[ "${SECURE}" -ne 1 && -n "${SERVICE_ACCOUNT_TOKEN_SOURCE}" ]]; then
+        log_error "--service-account-token can only be used with --secure."
         return 2
     fi
 
@@ -231,6 +264,20 @@ install_runtime_binary() {
     esac
 }
 
+install_service_account_token() {
+    if [[ "${SECURE}" -ne 1 ]]; then
+        return 0
+    fi
+
+    install -d -m 0750 -- "$(dirname -- "${SERVICE_ACCOUNT_TOKEN_PATH}")"
+    if [[ -n "${SERVICE_ACCOUNT_TOKEN_SOURCE}" ]]; then
+        install -m 0600 -- "${SERVICE_ACCOUNT_TOKEN_SOURCE}" "${SERVICE_ACCOUNT_TOKEN_PATH}"
+    else
+        chmod 0600 -- "${SERVICE_ACCOUNT_TOKEN_PATH}"
+    fi
+    chown root:root -- "${SERVICE_ACCOUNT_TOKEN_PATH}" "$(dirname -- "${SERVICE_ACCOUNT_TOKEN_PATH}")"
+}
+
 render_configs() {
     install -d -m 0755 -- /etc/tugboat/agent /etc/tugboat/runtime
     install -d -m 0755 -- /var/lib/tugboat-agent/images /var/lib/tugboat-agent/csi
@@ -245,7 +292,24 @@ render_configs() {
         )"
     fi
 
-    export APISERVER_URL APISERVER_CLIENT_TLS_CONFIG NODE_NAME RUNTIME_BINARY RUNTIME_CONFIG_FILE
+    if [[ "${SECURE}" -eq 1 ]]; then
+        AGENT_APISERVER_AUTH_CONFIG="$(
+            printf '[apiserver.auth]\ntype = "service-account"\ntoken_path = "%s"' \
+                "${SERVICE_ACCOUNT_TOKEN_PATH}"
+        )"
+    else
+        AGENT_APISERVER_AUTH_CONFIG="$(
+            printf '[apiserver.auth]\ntype = "anonymous"'
+        )"
+    fi
+
+    export \
+        APISERVER_URL \
+        APISERVER_CLIENT_TLS_CONFIG \
+        AGENT_APISERVER_AUTH_CONFIG \
+        NODE_NAME \
+        RUNTIME_BINARY \
+        RUNTIME_CONFIG_FILE
     render_template \
         "${INSTALLER_DIR}/configs/agent.config.toml.tpl" \
         /etc/tugboat/agent/config.toml
@@ -292,6 +356,7 @@ main() {
     install_runtime_binary
 
     install_cni_plugins "${CNI_SUBNET}"
+    install_service_account_token
     render_configs
     install_units
 

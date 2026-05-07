@@ -2,8 +2,7 @@
 url = "${APISERVER_URL}"
 ${APISERVER_CLIENT_TLS_CONFIG}
 
-[apiserver.auth]
-type = "anonymous"
+${CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG}
 
 [csi]
 requeue_interval_seconds = 30

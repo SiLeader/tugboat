@@ -6,7 +6,7 @@ ${APISERVER_TLS_CONFIG}
 endpoints = ["${ETCD_ENDPOINT}"]
 
 [authorization]
-mode = "AlwaysAllow"
+mode = "${APISERVER_AUTHORIZATION_MODE}"
 
 [authentication]
-anonymous_enabled = true
+anonymous_enabled = ${APISERVER_ANONYMOUS_ENABLED}

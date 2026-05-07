@@ -10,8 +10,7 @@ args = ["--config", "/etc/tugboat/runtime/${RUNTIME_CONFIG_FILE}"]
 url = "${APISERVER_URL}"
 ${APISERVER_CLIENT_TLS_CONFIG}
 
-[apiserver.auth]
-type = "anonymous"
+${AGENT_APISERVER_AUTH_CONFIG}
 
 [image]
 cache_dir = "/var/lib/tugboat-agent/images"

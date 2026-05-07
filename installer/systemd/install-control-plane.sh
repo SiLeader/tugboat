@@ -14,6 +14,7 @@ FORCE_PKI=0
 LISTEN_SET=0
 APISERVER_CERT_HOSTS=()
 APISERVER_CERT_IPS=()
+SERVICE_ACCOUNT_TOKEN_ROOT="/var/run/secrets/tugboat.cloud/serviceaccount"
 
 ETCD_VERSION="v3.6.10"
 ETCD_TARBALL="etcd-${ETCD_VERSION}-linux-amd64.tar.gz"
@@ -279,6 +280,46 @@ configure_tls() {
     export APISERVER_TLS_CONFIG APISERVER_CLIENT_TLS_CONFIG APISERVER_SCHEME
 }
 
+set_bootstrap_auth_config() {
+    APISERVER_AUTHORIZATION_MODE="AlwaysAllow"
+    APISERVER_ANONYMOUS_ENABLED="true"
+    SCHEDULER_APISERVER_AUTH_CONFIG="$(
+        printf '[apiserver.auth]\ntype = "anonymous"'
+    )"
+    CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG="$(
+        printf '[apiserver.auth]\ntype = "anonymous"'
+    )"
+    export \
+        APISERVER_AUTHORIZATION_MODE \
+        APISERVER_ANONYMOUS_ENABLED \
+        SCHEDULER_APISERVER_AUTH_CONFIG \
+        CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG
+}
+
+set_final_auth_config() {
+    if [[ "${SECURE}" -eq 1 ]]; then
+        APISERVER_AUTHORIZATION_MODE="RBAC"
+        APISERVER_ANONYMOUS_ENABLED="false"
+        SCHEDULER_APISERVER_AUTH_CONFIG="$(
+            printf '[apiserver.auth]\ntype = "service-account"\ntoken_path = "%s/scheduler/token"' \
+                "${SERVICE_ACCOUNT_TOKEN_ROOT}"
+        )"
+        CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG="$(
+            printf '[apiserver.auth]\ntype = "service-account"\ntoken_path = "%s/controller-manager/token"' \
+                "${SERVICE_ACCOUNT_TOKEN_ROOT}"
+        )"
+    else
+        set_bootstrap_auth_config
+        return 0
+    fi
+
+    export \
+        APISERVER_AUTHORIZATION_MODE \
+        APISERVER_ANONYMOUS_ENABLED \
+        SCHEDULER_APISERVER_AUTH_CONFIG \
+        CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG
+}
+
 install_etcd_from_package() {
     if ! apt-get install -y etcd-server; then
         return 1
@@ -369,6 +410,29 @@ wait_for_apiserver() {
     return 1
 }
 
+bootstrap_secure_rbac() {
+    if [[ "${SECURE}" -ne 1 ]]; then
+        return 0
+    fi
+
+    "${INSTALLER_DIR}/bootstrap-rbac.sh" \
+        --apiserver-url "${APISERVER_URL}" \
+        --ca-cert "${PKI_DIR}/ca.crt" \
+        --token-output-root "${SERVICE_ACCOUNT_TOKEN_ROOT}" \
+        --token-owner-group tugboat
+}
+
+restart_secure_components() {
+    if [[ "${SECURE}" -ne 1 ]]; then
+        return 0
+    fi
+
+    systemctl restart tugboat-apiserver.service
+    wait_for_apiserver
+    systemctl restart tugboat-controller-manager.service
+    enable_unit tugboat-scheduler.service
+}
+
 main() {
     require_root
     parse_build_mode "$@"
@@ -387,6 +451,7 @@ main() {
     ETCD_ENDPOINT="http://${ETCD_LISTEN}"
     APISERVER_TLS_CONFIG=""
     APISERVER_CLIENT_TLS_CONFIG=""
+    set_bootstrap_auth_config
     export APISERVER_LISTEN APISERVER_URL ETCD_LISTEN ETCD_ENDPOINT DATA_DIR APISERVER_TLS_CONFIG APISERVER_CLIENT_TLS_CONFIG
 
     install_base_packages
@@ -408,10 +473,17 @@ main() {
 
     enable_unit etcd.service
     enable_unit tugboat-apiserver.service
-    enable_unit tugboat-scheduler.service
     enable_unit tugboat-controller-manager.service
 
     wait_for_apiserver
+    bootstrap_secure_rbac
+    set_final_auth_config
+    render_configs
+    if [[ "${SECURE}" -eq 1 ]]; then
+        restart_secure_components
+    else
+        enable_unit tugboat-scheduler.service
+    fi
 }
 
 main "$@"

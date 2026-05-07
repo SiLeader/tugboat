@@ -2,8 +2,7 @@
 url = "${APISERVER_URL}"
 ${APISERVER_CLIENT_TLS_CONFIG}
 
-[apiserver.auth]
-type = "anonymous"
+${SCHEDULER_APISERVER_AUTH_CONFIG}
 
 [scheduler]
 name = "default-scheduler"

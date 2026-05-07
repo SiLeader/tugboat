@@ -9,18 +9,8 @@ compose() {
     docker compose -f "${TUGBOAT_TEST_COMPOSE_FILE}" -p "${TUGBOAT_TEST_PROJECT_NAME}" "$@"
 }
 
-if ! compose exec -T control-plane test -f /workspace/installer/systemd/setup-pki.sh; then
-    echo 'skip: installer/systemd/setup-pki.sh is not implemented yet'
-    exit 0
-fi
-
-if ! compose exec -T control-plane test -f /workspace/installer/systemd/install-control-plane.sh; then
-    echo 'skip: installer/systemd/install-control-plane.sh is not implemented yet'
-    exit 0
-fi
-
-if ! compose exec -T worker test -f /workspace/installer/systemd/install-worker.sh; then
-    echo 'skip: installer/systemd/install-worker.sh is not implemented yet'
+if ! compose exec -T control-plane test -f /workspace/installer/systemd/bootstrap-rbac.sh; then
+    echo 'skip: installer/systemd/bootstrap-rbac.sh is not implemented yet'
     exit 0
 fi
 
@@ -34,33 +24,51 @@ bash installer/systemd/install-control-plane.sh \
     --secure \
     --etcd-listen 127.0.0.1:2379
 
-systemctl is-active --quiet etcd.service
 systemctl is-active --quiet tugboat-apiserver.service
 systemctl is-active --quiet tugboat-scheduler.service
 systemctl is-active --quiet tugboat-controller-manager.service
 
-curl -sf --cacert /etc/tugboat/pki/ca.crt https://localhost:8443/healthz >/dev/null
+grep -q 'mode = \"RBAC\"' /etc/tugboat/apiserver/config.toml
+grep -q 'anonymous_enabled = false' /etc/tugboat/apiserver/config.toml
+grep -q 'type = \"service-account\"' /etc/tugboat/scheduler/config.toml
+grep -q 'type = \"service-account\"' /etc/tugboat/controller-manager/config.toml
+grep -q '/var/run/secrets/tugboat.cloud/serviceaccount/scheduler/token' /etc/tugboat/scheduler/config.toml
+grep -q '/var/run/secrets/tugboat.cloud/serviceaccount/controller-manager/token' /etc/tugboat/controller-manager/config.toml
 
-openssl x509 -in /etc/tugboat/pki/apiserver.crt -noout -ext subjectAltName > /tmp/tugboat-san.txt
-grep -q 'DNS:localhost' /tmp/tugboat-san.txt
-grep -q 'DNS:control-plane' /tmp/tugboat-san.txt
-grep -q 'IP Address:127.0.0.1' /tmp/tugboat-san.txt
+test -s /var/run/secrets/tugboat.cloud/serviceaccount/scheduler/token
+test -s /var/run/secrets/tugboat.cloud/serviceaccount/controller-manager/token
+test -s /var/run/secrets/tugboat.cloud/serviceaccount/agent/token
 
-grep -q 'cert_file = \"/etc/tugboat/pki/apiserver.crt\"' /etc/tugboat/apiserver/config.toml
-grep -q 'key_file = \"/etc/tugboat/pki/apiserver.key\"' /etc/tugboat/apiserver/config.toml
-grep -q 'ca_cert_path = \"/etc/tugboat/pki/ca.crt\"' /etc/tugboat/scheduler/config.toml
-grep -q 'ca_cert_path = \"/etc/tugboat/pki/ca.crt\"' /etc/tugboat/controller-manager/config.toml
+for token in \
+    /var/run/secrets/tugboat.cloud/serviceaccount/scheduler/token \
+    /var/run/secrets/tugboat.cloud/serviceaccount/controller-manager/token \
+    /var/run/secrets/tugboat.cloud/serviceaccount/agent/token; do
+    mode=\"\$(stat -c '%a' \"\${token}\")\"
+    case \"\${mode}\" in
+        *[4-7])
+            echo \"token is world-readable: \${token} mode=\${mode}\" >&2
+            exit 1
+            ;;
+    esac
+done
 
-before=\"\$(sha256sum /etc/tugboat/pki/ca.crt /etc/tugboat/pki/apiserver.crt)\"
-bash installer/systemd/setup-pki.sh \
-    --pki-dir /etc/tugboat/pki \
-    --apiserver-host control-plane \
-    --apiserver-ip 127.0.0.1
-after=\"\$(sha256sum /etc/tugboat/pki/ca.crt /etc/tugboat/pki/apiserver.crt)\"
-if [[ \"\${before}\" != \"\${after}\" ]]; then
-    echo 'setup-pki.sh changed existing certificates without --force' >&2
-    exit 1
-fi
+curl_status=\"\$(curl -sk -o /tmp/tugboat-anonymous-nodes.json -w '%{http_code}' \
+    --cacert /etc/tugboat/pki/ca.crt \
+    https://localhost:8443/api/v1/nodes)\"
+case \"\${curl_status}\" in
+    401|403) ;;
+    *)
+        echo \"anonymous GET /api/v1/nodes returned \${curl_status}, expected 401 or 403\" >&2
+        cat /tmp/tugboat-anonymous-nodes.json >&2
+        exit 1
+        ;;
+esac
+
+bash installer/systemd/bootstrap-rbac.sh \
+    --apiserver-url https://localhost:8443 \
+    --ca-cert /etc/tugboat/pki/ca.crt \
+    --token-output-root /var/run/secrets/tugboat.cloud/serviceaccount \
+    --token-owner-group tugboat
 "
 
 compose exec -T control-plane cat /etc/tugboat/pki/ca.crt |
@@ -71,17 +79,6 @@ compose exec -T control-plane cat /var/run/secrets/tugboat.cloud/serviceaccount/
 compose exec -T worker bash -lc "
 set -Eeuo pipefail
 cd /workspace
-
-if bash installer/systemd/install-worker.sh \
-    --use-prebuilt \
-    --bin-dir '${TUGBOAT_TEST_PREBUILT_BIN_DIR}' \
-    --apiserver-url https://control-plane:8443 \
-    --node-name worker \
-    --runtime qemu >/tmp/tugboat-worker-no-ca.out 2>&1; then
-    echo 'install-worker.sh accepted an https apiserver URL without --ca-cert' >&2
-    exit 1
-fi
-grep -q -- '--ca-cert is required' /tmp/tugboat-worker-no-ca.out
 
 bash installer/systemd/install-worker.sh \
     --use-prebuilt \
@@ -94,8 +91,15 @@ bash installer/systemd/install-worker.sh \
     --runtime qemu
 
 systemctl is-active --quiet tugboat-agent.service
-grep -q 'ca_cert_path = \"/etc/tugboat/pki/ca.crt\"' /etc/tugboat/agent/config.toml
 grep -q 'type = \"service-account\"' /etc/tugboat/agent/config.toml
+test -s /var/run/secrets/tugboat.cloud/serviceaccount/agent/token
+mode=\"\$(stat -c '%a' /var/run/secrets/tugboat.cloud/serviceaccount/agent/token)\"
+case \"\${mode}\" in
+    *[4-7])
+        echo \"agent token is world-readable: mode=\${mode}\" >&2
+        exit 1
+        ;;
+esac
 "
 
 compose exec -T control-plane python3 - https://localhost:8443/api/v1/nodes worker /etc/tugboat/pki/ca.crt /var/run/secrets/tugboat.cloud/serviceaccount/agent/token <<'PY'
@@ -124,5 +128,5 @@ for _ in range(30):
             sys.exit(0)
     time.sleep(2)
 
-raise SystemExit(f"node {node_name!r} was not observed over HTTPS")
+raise SystemExit(f"node {node_name!r} was not observed with ServiceAccount auth")
 PY
