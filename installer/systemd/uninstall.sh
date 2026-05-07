@@ -136,7 +136,8 @@ remove_control_plane() {
     rm -rf -- \
         /etc/tugboat/apiserver \
         /etc/tugboat/scheduler \
-        /etc/tugboat/controller-manager
+        /etc/tugboat/controller-manager \
+        /etc/tugboat/pki
     rmdir --ignore-fail-on-non-empty /etc/tugboat 2>/dev/null || true
 
     if [[ "${PURGE}" -eq 1 ]]; then
@@ -158,6 +159,8 @@ remove_worker() {
     remove_binaries "${WORKER_BINARIES[@]}"
     rm -f -- "${TMPFILES_DIR}/tugboat-flannel.conf"
     rm -rf -- /etc/tugboat/agent /etc/tugboat/runtime
+    rm -f -- /etc/tugboat/pki/ca.crt
+    rmdir --ignore-fail-on-non-empty /etc/tugboat/pki 2>/dev/null || true
     rmdir --ignore-fail-on-non-empty /etc/tugboat 2>/dev/null || true
 
     if [[ "${PURGE}" -eq 1 ]]; then

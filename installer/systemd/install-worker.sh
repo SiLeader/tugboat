@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "${SCRIPT_DIR}/lib.sh"
 
 APISERVER_URL=""
+CA_CERT=""
+PKI_DIR="/etc/tugboat/pki"
 NODE_NAME="$(hostname -s)"
 RUNTIME="qemu"
 CNI_SUBNET="10.244.0.0/16"
@@ -24,6 +26,7 @@ Options:
   --use-prebuilt                  Use binaries from --bin-dir.
   --bin-dir <path>                Directory containing prebuilt Tugboat binaries.
   --apiserver-url <url>           API server URL, for example http://192.168.0.1:8080. Required.
+  --ca-cert <path>                CA certificate for https apiserver URLs. Required for https.
   --node-name <name>              Tugboat node name. Default: hostname -s.
   --runtime <qemu|cloud-hypervisor>
                                   VM runtime. Default: qemu.
@@ -57,6 +60,22 @@ parse_worker_args() {
                 ;;
             --apiserver-url=*)
                 APISERVER_URL="${1#--apiserver-url=}"
+                shift
+                ;;
+            --ca-cert)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--ca-cert requires a path."
+                    return 2
+                fi
+                CA_CERT="$2"
+                shift 2
+                ;;
+            --ca-cert=*)
+                CA_CERT="${1#--ca-cert=}"
+                if [[ -z "${CA_CERT}" ]]; then
+                    log_error "--ca-cert requires a path."
+                    return 2
+                fi
                 shift
                 ;;
             --node-name)
@@ -110,6 +129,15 @@ parse_worker_args() {
     if [[ -z "${APISERVER_URL}" ]]; then
         log_error "--apiserver-url is required."
         usage >&2
+        return 2
+    fi
+
+    if [[ "${APISERVER_URL}" == https://* && -z "${CA_CERT}" ]]; then
+        log_error "--ca-cert is required when --apiserver-url uses https."
+        return 2
+    fi
+    if [[ "${APISERVER_URL}" != https://* && -n "${CA_CERT}" ]]; then
+        log_error "--ca-cert can only be used when --apiserver-url uses https."
         return 2
     fi
 
@@ -207,7 +235,17 @@ render_configs() {
     install -d -m 0755 -- /etc/tugboat/agent /etc/tugboat/runtime
     install -d -m 0755 -- /var/lib/tugboat-agent/images /var/lib/tugboat-agent/csi
 
-    export APISERVER_URL NODE_NAME RUNTIME_BINARY RUNTIME_CONFIG_FILE
+    APISERVER_CLIENT_TLS_CONFIG=""
+    if [[ -n "${CA_CERT}" ]]; then
+        install -d -m 0755 -- "${PKI_DIR}"
+        install -m 0644 -- "${CA_CERT}" "${PKI_DIR}/ca.crt"
+        APISERVER_CLIENT_TLS_CONFIG="$(
+            printf '[apiserver.tls]\nca_cert_path = "%s/ca.crt"' \
+                "${PKI_DIR}"
+        )"
+    fi
+
+    export APISERVER_URL APISERVER_CLIENT_TLS_CONFIG NODE_NAME RUNTIME_BINARY RUNTIME_CONFIG_FILE
     render_template \
         "${INSTALLER_DIR}/configs/agent.config.toml.tpl" \
         /etc/tugboat/agent/config.toml
@@ -234,7 +272,11 @@ print_registration_hint() {
     local nodes_url="${APISERVER_URL%/}/api/v1/nodes"
 
     log_info "To verify node registration, run:"
-    printf '  curl %s\n' "${nodes_url}"
+    if [[ -n "${CA_CERT}" ]]; then
+        printf '  curl --cacert %s/ca.crt %s\n' "${PKI_DIR}" "${nodes_url}"
+    else
+        printf '  curl %s\n' "${nodes_url}"
+    fi
 }
 
 main() {

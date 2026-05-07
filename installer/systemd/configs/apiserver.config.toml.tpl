@@ -1,5 +1,6 @@
 [http]
 listen = "${APISERVER_LISTEN}"
+${APISERVER_TLS_CONFIG}
 
 [etcd]
 endpoints = ["${ETCD_ENDPOINT}"]

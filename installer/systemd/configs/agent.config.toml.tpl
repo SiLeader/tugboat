@@ -8,6 +8,7 @@ args = ["--config", "/etc/tugboat/runtime/${RUNTIME_CONFIG_FILE}"]
 
 [apiserver]
 url = "${APISERVER_URL}"
+${APISERVER_CLIENT_TLS_CONFIG}
 
 [apiserver.auth]
 type = "anonymous"

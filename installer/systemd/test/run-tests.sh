@@ -121,6 +121,11 @@ missing_dependency() {
             [[ -f "${INSTALLER_DIR}/install-control-plane.sh" ]] || printf '%s\n' "installer/systemd/install-control-plane.sh is not implemented yet"
             [[ -f "${INSTALLER_DIR}/uninstall.sh" ]] || printf '%s\n' "installer/systemd/uninstall.sh is not implemented yet"
             ;;
+        05-tls-pki.sh)
+            [[ -f "${INSTALLER_DIR}/install-control-plane.sh" ]] || printf '%s\n' "installer/systemd/install-control-plane.sh is not implemented yet"
+            [[ -f "${INSTALLER_DIR}/install-worker.sh" ]] || printf '%s\n' "installer/systemd/install-worker.sh is not implemented yet"
+            [[ -f "${INSTALLER_DIR}/setup-pki.sh" ]] || printf '%s\n' "installer/systemd/setup-pki.sh is not implemented yet"
+            ;;
     esac
 }
 

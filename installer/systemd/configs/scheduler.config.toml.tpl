@@ -1,5 +1,6 @@
 [apiserver]
 url = "${APISERVER_URL}"
+${APISERVER_CLIENT_TLS_CONFIG}
 
 [apiserver.auth]
 type = "anonymous"
