@@ -1,0 +1,164 @@
+# Copyright 2025- SiLeader (Cerussite).
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: installer-systemd-test
+
+on:
+  pull_request:
+    paths:
+      - 'installer/systemd/**'
+      - '.github/workflows/installer-systemd-test.yml'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'tugboat-apiserver/**'
+      - 'tugboat-agent/**'
+      - 'tugboat-scheduler/**'
+      - 'tugboat-controller-manager/**'
+      - 'tugboat-qemu-runtime/**'
+      - 'tugboat-cloud-hypervisor-runtime/**'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install shellcheck
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          find installer/systemd -type f -name '*.sh' -print0 |
+            xargs -0 -r bash -n
+
+      - name: Run shellcheck
+        shell: bash
+        run: |
+          shellcheck -x installer/systemd/*.sh installer/systemd/test/*.sh installer/systemd/test/scenarios/*.sh
+
+  e2e-test:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler shellcheck
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-installer-systemd-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-installer-systemd-cargo-
+
+      - name: Cache release binaries
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/release/.fingerprint
+            target/release/build
+            target/release/deps
+            target/release/tugboat-apiserver
+            target/release/tugboat-apiserver.d
+            target/release/tugboat-agent
+            target/release/tugboat-agent.d
+            target/release/tugboat-scheduler
+            target/release/tugboat-scheduler.d
+            target/release/tugboat-controller-manager
+            target/release/tugboat-controller-manager.d
+            target/release/tugboat-qemu-runtime
+            target/release/tugboat-qemu-runtime.d
+            target/release/tugboat-cloud-hypervisor-runtime
+            target/release/tugboat-cloud-hypervisor-runtime.d
+          key: ${{ runner.os }}-installer-systemd-release-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-installer-systemd-release-
+
+      - name: Build release binaries
+        shell: bash
+        run: |
+          cargo build --release --workspace --bins
+
+      - name: Run scenario 00-lib-unit
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 00-lib-unit --use-prebuilt --keep
+
+      - name: Run scenario 01-control-plane-only
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 01-control-plane-only --use-prebuilt --keep
+
+      - name: Run scenario 02-worker-join
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 02-worker-join --use-prebuilt --keep
+
+      - name: Run scenario 03-flannel-bootstrap
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 03-flannel-bootstrap --use-prebuilt --keep
+
+      - name: Run scenario 04-uninstall-purge
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 04-uninstall-purge --use-prebuilt --keep
+
+      - name: Collect docker compose logs
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p installer/systemd/test/artifacts
+          docker compose \
+            -f installer/systemd/test/docker-compose.test.yml \
+            -p "${TUGBOAT_TEST_PROJECT_NAME:-tugboat-systemd-test}" \
+            logs --no-color > installer/systemd/test/artifacts/docker-compose.log 2>&1 || true
+
+      - name: Upload installer test artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer-systemd-test-artifacts
+          path: installer/systemd/test/artifacts/
+          if-no-files-found: ignore
+
+      - name: Stop docker compose
+        if: always()
+        shell: bash
+        run: |
+          docker compose \
+            -f installer/systemd/test/docker-compose.test.yml \
+            -p "${TUGBOAT_TEST_PROJECT_NAME:-tugboat-systemd-test}" \
+            down -v
