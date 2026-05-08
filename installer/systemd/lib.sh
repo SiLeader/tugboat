@@ -167,14 +167,28 @@ install_binary() {
 
 install_cni_plugins() {
     local subnet="${1:-}"
+    local mode="${2:-static}"
     local tmpfiles_src="${INSTALLER_DIR}/tmpfiles.d/tugboat-flannel.conf"
     local tmpfiles_dst="${TMPFILES_DIR}/tugboat-flannel.conf"
     local CNI_SUBNET
+    local FLANNEL_SUBNET_ENV_LINE
 
     if [[ -z "${subnet}" ]]; then
         log_error "install_cni_plugins requires a CNI subnet CIDR."
         return 2
     fi
+    case "${mode}" in
+        static)
+            FLANNEL_SUBNET_ENV_LINE="f /run/flannel/subnet.env 0644 root root - FLANNEL_NETWORK=${subnet}"
+            ;;
+        dynamic)
+            FLANNEL_SUBNET_ENV_LINE=""
+            ;;
+        *)
+            log_error "install_cni_plugins mode must be static or dynamic."
+            return 2
+            ;;
+    esac
 
     mkdir -p -- "${CNI_BIN_DIR}"
     fetch_tarball "${CNI_PLUGINS_URL}" "${CNI_PLUGINS_SHA256}" "${CNI_BIN_DIR}"
@@ -184,7 +198,7 @@ install_cni_plugins() {
     fi
 
     CNI_SUBNET="${subnet}"
-    export CNI_SUBNET
+    export CNI_SUBNET FLANNEL_SUBNET_ENV_LINE
     render_template "${tmpfiles_src}" "${tmpfiles_dst}"
     chmod 0644 -- "${tmpfiles_dst}"
 

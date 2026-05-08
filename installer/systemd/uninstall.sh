@@ -152,8 +152,11 @@ remove_control_plane() {
 remove_worker() {
     log_info "Removing worker services."
     disable_unit tugboat-agent.service
+    disable_unit flanneld.service
 
-    rm -f -- "${SYSTEMD_UNIT_DIR}/tugboat-agent.service"
+    rm -f -- \
+        "${SYSTEMD_UNIT_DIR}/tugboat-agent.service" \
+        "${SYSTEMD_UNIT_DIR}/flanneld.service"
     systemctl daemon-reload
 
     remove_binaries "${WORKER_BINARIES[@]}"
@@ -164,7 +167,7 @@ remove_worker() {
     rmdir --ignore-fail-on-non-empty /etc/tugboat 2>/dev/null || true
 
     if [[ "${PURGE}" -eq 1 ]]; then
-        rm -rf -- /var/lib/tugboat-agent /run/flannel
+        rm -rf -- /var/lib/tugboat-agent /var/lib/cni/flannel /run/flannel
         remove_cni_plugins
     fi
 }

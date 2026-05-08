@@ -2,6 +2,7 @@
 Description=Tugboat Agent
 After=network-online.target
 Wants=network-online.target
+${AGENT_FLANNEL_UNIT_DEPENDENCIES}
 
 [Service]
 User=root

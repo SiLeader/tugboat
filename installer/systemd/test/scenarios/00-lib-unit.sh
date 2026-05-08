@@ -221,7 +221,7 @@ test_install_cni_plugins() (
         chmod 0755 -- "${dest_dir}/bridge" "${dest_dir}/loopback" "${dest_dir}/flannel" "${dest_dir}/flanneld" 2>/dev/null || true
     }
 
-    make_mock_bin "envsubst" 'content="$(cat)"; content="${content//\$\{CNI_SUBNET\}/${CNI_SUBNET}}"; printf "%s" "${content}"'
+    make_mock_bin "envsubst" 'content="$(cat)"; content="${content//\$\{FLANNEL_SUBNET_ENV_LINE\}/${FLANNEL_SUBNET_ENV_LINE}}"; content="${content//\$\{CNI_SUBNET\}/${CNI_SUBNET}}"; printf "%s" "${content}"'
     make_mock_bin "systemd-tmpfiles" 'printf "%s\n" "$*" >> "${MOCK_LOG}/systemd-tmpfiles.log"'
 
     CNI_BIN_DIR="${cni_dir}" TMPFILES_DIR="${tmpfiles_dir}" PATH="${TMP_DIR}/bin:${PATH}" MOCK_LOG="${TMP_DIR}" install_cni_plugins "${subnet}"
@@ -233,6 +233,47 @@ test_install_cni_plugins() (
     assert_file_contains "${TMP_DIR}/fetch-cni.log" "cni-plugins-linux-amd64-v1.9.0.tgz|58c03705426e929658f45a851df15a86d06ef680cacbf3f2dc127731ca265c28|${cni_dir}"
     assert_file_contains "${TMP_DIR}/fetch-cni.log" "flannel-v0.28.2-linux-amd64.tar.gz|dda1d5120ae6678666eef492531a7ad04492f80bd7740e5f9739908ef12f1bee|${cni_dir}"
     assert_file_contains "${TMP_DIR}/systemd-tmpfiles.log" "--create ${tmpfiles_dir}/tugboat-flannel.conf"
+)
+
+test_install_cni_plugins_dynamic_mode() (
+    set -euo pipefail
+
+    local cni_dir="${TMP_DIR}/cni-dynamic-bin"
+    local tmpfiles_dir="${TMP_DIR}/tmpfiles-dynamic"
+    local subnet="10.43.0.0/16"
+
+    # shellcheck disable=SC2317
+    fetch_tarball() {
+        local url="$1"
+        local dest_dir="$3"
+
+        mkdir -p -- "${dest_dir}"
+        case "${url}" in
+            *cni-plugins*)
+                : > "${dest_dir}/bridge"
+                : > "${dest_dir}/loopback"
+                ;;
+            *flannel*)
+                : > "${dest_dir}/flannel"
+                : > "${dest_dir}/flanneld"
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+        chmod 0755 -- "${dest_dir}/bridge" "${dest_dir}/loopback" "${dest_dir}/flannel" "${dest_dir}/flanneld" 2>/dev/null || true
+    }
+
+    make_mock_bin "envsubst" 'content="$(cat)"; content="${content//\$\{FLANNEL_SUBNET_ENV_LINE\}/${FLANNEL_SUBNET_ENV_LINE}}"; printf "%s" "${content}"'
+    make_mock_bin "systemd-tmpfiles" 'printf "%s\n" "$*" >> "${MOCK_LOG}/systemd-tmpfiles-dynamic.log"'
+
+    CNI_BIN_DIR="${cni_dir}" TMPFILES_DIR="${tmpfiles_dir}" PATH="${TMP_DIR}/bin:${PATH}" MOCK_LOG="${TMP_DIR}" install_cni_plugins "${subnet}" dynamic
+
+    [[ -x "${cni_dir}/flanneld" ]] || fail "flanneld binary should be installed"
+    if grep -Fq -- "FLANNEL_NETWORK=" "${tmpfiles_dir}/tugboat-flannel.conf"; then
+        fail "dynamic flannel mode should not render a static subnet.env tmpfiles entry"
+    fi
+    assert_file_contains "${TMP_DIR}/systemd-tmpfiles-dynamic.log" "--create ${tmpfiles_dir}/tugboat-flannel.conf"
 )
 
 test_render_template() {
@@ -291,6 +332,7 @@ test_install_binary_build
 test_fetch_tarball
 test_fetch_tarball_rejects_bad_checksum
 test_install_cni_plugins
+test_install_cni_plugins_dynamic_mode
 test_render_template
 test_create_system_user
 test_install_unit

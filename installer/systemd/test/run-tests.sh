@@ -136,6 +136,12 @@ missing_dependency() {
             [[ -f "${INSTALLER_DIR}/install-control-plane.sh" ]] || printf '%s\n' "installer/systemd/install-control-plane.sh is not implemented yet"
             [[ -f "${INSTALLER_DIR}/setup-etcd-pki.sh" ]] || printf '%s\n' "installer/systemd/setup-etcd-pki.sh is not implemented yet"
             ;;
+        09-flanneld-daemon.sh)
+            [[ -f "${INSTALLER_DIR}/install-control-plane.sh" ]] || printf '%s\n' "installer/systemd/install-control-plane.sh is not implemented yet"
+            [[ -f "${INSTALLER_DIR}/install-worker.sh" ]] || printf '%s\n' "installer/systemd/install-worker.sh is not implemented yet"
+            [[ -f "${INSTALLER_DIR}/bootstrap-flannel-etcd.sh" ]] || printf '%s\n' "installer/systemd/bootstrap-flannel-etcd.sh is not implemented yet"
+            [[ -f "${INSTALLER_DIR}/units/flanneld.service.tpl" ]] || printf '%s\n' "installer/systemd/units/flanneld.service.tpl is not implemented yet"
+            ;;
     esac
 }
 
@@ -196,7 +202,7 @@ collect_journals() {
 
     for service in control-plane control-plane-2 control-plane-3 worker; do
         if compose ps -q "${service}" >/dev/null 2>&1; then
-            compose exec -T "${service}" bash -lc 'journalctl --no-pager -u "tugboat*" -u etcd.service || true; systemctl --failed --no-pager || true' \
+            compose exec -T "${service}" bash -lc 'journalctl --no-pager -u "tugboat*" -u etcd.service -u flanneld.service || true; systemctl --failed --no-pager || true' \
                 > "${ARTIFACT_DIR}/${service}-journal.log" 2>&1 || true
         fi
     done

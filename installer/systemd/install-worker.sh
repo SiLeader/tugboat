@@ -11,6 +11,12 @@ PKI_DIR="/etc/tugboat/pki"
 NODE_NAME="$(hostname -s)"
 RUNTIME="qemu"
 CNI_SUBNET="10.244.0.0/16"
+FLANNEL_MODE="static"
+FLANNEL_ETCD_ENDPOINTS=""
+FLANNEL_ETCD_PREFIX="/coreos.com/network"
+FLANNEL_ETCD_CA=""
+FLANNEL_ETCD_CERT=""
+FLANNEL_ETCD_KEY=""
 RUNTIME_BINARY="tugboat-qemu-runtime"
 RUNTIME_CONFIG_FILE="config.toml"
 SECURE=0
@@ -36,6 +42,12 @@ Options:
   --runtime <qemu|cloud-hypervisor>
                                   VM runtime. Default: qemu.
   --cni-subnet <cidr>             CIDR written to /run/flannel/subnet.env. Default: 10.244.0.0/16.
+  --flannel-mode <static|vxlan|host-gw>
+                                  static writes subnet.env; vxlan/host-gw run flanneld. Default: static.
+  --flannel-etcd-endpoints <urls> Comma-separated etcd endpoints for flanneld.
+  --flannel-etcd-ca <path>        etcd TLS CA certificate for flanneld.
+  --flannel-etcd-cert <path>      etcd TLS client certificate for flanneld.
+  --flannel-etcd-key <path>       etcd TLS client private key for flanneld.
 USAGE
 }
 
@@ -139,6 +151,66 @@ parse_worker_args() {
                 CNI_SUBNET="${1#--cni-subnet=}"
                 shift
                 ;;
+            --flannel-mode)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--flannel-mode requires static, vxlan, or host-gw."
+                    return 2
+                fi
+                FLANNEL_MODE="$2"
+                shift 2
+                ;;
+            --flannel-mode=*)
+                FLANNEL_MODE="${1#--flannel-mode=}"
+                shift
+                ;;
+            --flannel-etcd-endpoints)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--flannel-etcd-endpoints requires a URL list."
+                    return 2
+                fi
+                FLANNEL_ETCD_ENDPOINTS="$2"
+                shift 2
+                ;;
+            --flannel-etcd-endpoints=*)
+                FLANNEL_ETCD_ENDPOINTS="${1#--flannel-etcd-endpoints=}"
+                shift
+                ;;
+            --flannel-etcd-ca)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--flannel-etcd-ca requires a path."
+                    return 2
+                fi
+                FLANNEL_ETCD_CA="$2"
+                shift 2
+                ;;
+            --flannel-etcd-ca=*)
+                FLANNEL_ETCD_CA="${1#--flannel-etcd-ca=}"
+                shift
+                ;;
+            --flannel-etcd-cert)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--flannel-etcd-cert requires a path."
+                    return 2
+                fi
+                FLANNEL_ETCD_CERT="$2"
+                shift 2
+                ;;
+            --flannel-etcd-cert=*)
+                FLANNEL_ETCD_CERT="${1#--flannel-etcd-cert=}"
+                shift
+                ;;
+            --flannel-etcd-key)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--flannel-etcd-key requires a path."
+                    return 2
+                fi
+                FLANNEL_ETCD_KEY="$2"
+                shift 2
+                ;;
+            --flannel-etcd-key=*)
+                FLANNEL_ETCD_KEY="${1#--flannel-etcd-key=}"
+                shift
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -174,6 +246,39 @@ parse_worker_args() {
         return 2
     fi
 
+    case "${FLANNEL_MODE}" in
+        static|vxlan|host-gw)
+            ;;
+        *)
+            log_error "--flannel-mode must be static, vxlan, or host-gw."
+            return 2
+            ;;
+    esac
+
+    if [[ "${FLANNEL_MODE}" == "static" ]]; then
+        if [[ -n "${FLANNEL_ETCD_ENDPOINTS}${FLANNEL_ETCD_CA}${FLANNEL_ETCD_CERT}${FLANNEL_ETCD_KEY}" ]]; then
+            log_error "--flannel-etcd-* options can only be used with --flannel-mode vxlan or host-gw."
+            return 2
+        fi
+    else
+        if [[ -z "${FLANNEL_ETCD_ENDPOINTS}" ]]; then
+            log_error "--flannel-etcd-endpoints is required when --flannel-mode is ${FLANNEL_MODE}."
+            return 2
+        fi
+        if [[ -n "${FLANNEL_ETCD_CA}${FLANNEL_ETCD_CERT}${FLANNEL_ETCD_KEY}" ]]; then
+            if [[ -z "${FLANNEL_ETCD_CA}" || -z "${FLANNEL_ETCD_CERT}" || -z "${FLANNEL_ETCD_KEY}" ]]; then
+                log_error "--flannel-etcd-ca, --flannel-etcd-cert, and --flannel-etcd-key must be provided together."
+                return 2
+            fi
+            for path in "${FLANNEL_ETCD_CA}" "${FLANNEL_ETCD_CERT}" "${FLANNEL_ETCD_KEY}"; do
+                if [[ ! -f "${path}" ]]; then
+                    log_error "Flannel etcd TLS file not found: ${path}"
+                    return 2
+                fi
+            done
+        fi
+    fi
+
     case "${RUNTIME}" in
         qemu)
             RUNTIME_BINARY="tugboat-qemu-runtime"
@@ -192,7 +297,7 @@ parse_worker_args() {
 
 install_base_packages() {
     apt-get update
-    apt-get install -y ca-certificates curl gettext-base tar wget
+    apt-get install -y ca-certificates curl gettext-base kmod tar wget
 }
 
 install_qemu_dependencies() {
@@ -264,6 +369,27 @@ install_runtime_binary() {
     esac
 }
 
+ensure_br_netfilter() {
+    if [[ "${FLANNEL_MODE}" == "static" ]]; then
+        return 0
+    fi
+    if [[ -e /proc/sys/net/bridge/bridge-nf-call-iptables ]]; then
+        return 0
+    fi
+    if modprobe br_netfilter 2>/dev/null; then
+        return 0
+    fi
+
+    log_warn "br_netfilter is not available; trying to install linux-modules-extra for the running kernel."
+    if apt-get install -y "linux-modules-extra-$(uname -r)"; then
+        modprobe br_netfilter 2>/dev/null || true
+    fi
+
+    if [[ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ]]; then
+        log_warn "br_netfilter is still unavailable; flanneld may fail until the module is installed on the host."
+    fi
+}
+
 install_service_account_token() {
     if [[ "${SECURE}" -ne 1 ]]; then
         return 0
@@ -329,6 +455,23 @@ render_configs() {
 }
 
 install_units() {
+    local AGENT_FLANNEL_UNIT_DEPENDENCIES=""
+    local FLANNEL_ETCD_TLS_ARGS=""
+
+    if [[ "${FLANNEL_MODE}" != "static" ]]; then
+        AGENT_FLANNEL_UNIT_DEPENDENCIES=$'Requires=flanneld.service\nAfter=flanneld.service'
+        if [[ -n "${FLANNEL_ETCD_CA}" ]]; then
+            FLANNEL_ETCD_TLS_ARGS="--etcd-cafile ${FLANNEL_ETCD_CA} --etcd-certfile ${FLANNEL_ETCD_CERT} --etcd-keyfile ${FLANNEL_ETCD_KEY}"
+        fi
+
+        export \
+            FLANNEL_ETCD_ENDPOINTS \
+            FLANNEL_ETCD_PREFIX \
+            FLANNEL_ETCD_TLS_ARGS
+        install_unit "${INSTALLER_DIR}/units/flanneld.service.tpl" flanneld.service
+    fi
+
+    export AGENT_FLANNEL_UNIT_DEPENDENCIES
     install_unit "${INSTALLER_DIR}/units/tugboat-agent.service.tpl" tugboat-agent.service
 }
 
@@ -355,11 +498,22 @@ main() {
     install_binary tugboat-agent /usr/local/bin
     install_runtime_binary
 
-    install_cni_plugins "${CNI_SUBNET}"
+    if [[ "${FLANNEL_MODE}" == "static" ]]; then
+        install_cni_plugins "${CNI_SUBNET}" static
+    else
+        install_cni_plugins "${CNI_SUBNET}" dynamic
+    fi
+    ensure_br_netfilter
     install_service_account_token
     render_configs
     install_units
 
+    if [[ "${FLANNEL_MODE}" == "static" ]]; then
+        disable_unit flanneld.service
+    else
+        rm -f -- /run/flannel/subnet.env
+        enable_unit flanneld.service
+    fi
     enable_unit tugboat-agent.service
     print_registration_hint
 }
