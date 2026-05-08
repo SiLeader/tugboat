@@ -719,6 +719,8 @@ main() {
     create_system_user tugboat-scheduler
     create_system_user tugboat-controller-manager
     create_system_user tugboat-etcd
+    usermod -aG tugboat tugboat-scheduler
+    usermod -aG tugboat tugboat-controller-manager
     configure_tls
     configure_etcd_pki
     APISERVER_URL="$(apiserver_client_url "${APISERVER_LISTEN}" "${APISERVER_SCHEME}")"

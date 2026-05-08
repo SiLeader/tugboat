@@ -15,6 +15,7 @@ cd /workspace
 bash installer/systemd/install-control-plane.sh \
     --use-prebuilt \
     --bin-dir '${TUGBOAT_TEST_PREBUILT_BIN_DIR}' \
+    --insecure \
     --listen 0.0.0.0:8080 \
     --etcd-listen 0.0.0.0:2379 \
     --etcd-advertise-client-url https://control-plane:2379 \

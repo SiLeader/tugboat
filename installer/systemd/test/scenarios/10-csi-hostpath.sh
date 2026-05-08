@@ -22,6 +22,7 @@ if ! curl -sf http://localhost:8080/healthz >/dev/null; then
     bash installer/systemd/install-control-plane.sh \
         --use-prebuilt \
         --bin-dir '${TUGBOAT_TEST_PREBUILT_BIN_DIR}' \
+        --insecure \
         --listen 0.0.0.0:8080 \
         --etcd-listen 127.0.0.1:2379
 fi
