@@ -136,6 +136,36 @@ jobs:
         run: |
           installer/systemd/test/run-tests.sh --scenario 04-uninstall-purge --use-prebuilt --keep
 
+      - name: Run scenario 05-tls-pki
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 05-tls-pki --use-prebuilt --keep
+
+      - name: Run scenario 06-serviceaccount-rbac
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 06-serviceaccount-rbac --use-prebuilt --keep
+
+      - name: Run scenario 07-etcd-client-tls
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 07-etcd-client-tls --use-prebuilt --keep
+
+      - name: Run scenario 08-etcd-ha
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 08-etcd-ha --use-prebuilt --keep
+
+      - name: Run scenario 09-flanneld-daemon
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 09-flanneld-daemon --use-prebuilt --keep
+
+      - name: Run scenario 10-csi-hostpath
+        shell: bash
+        run: |
+          installer/systemd/test/run-tests.sh --scenario 10-csi-hostpath --use-prebuilt --keep
+
       - name: Collect docker compose logs
         if: always()
         shell: bash

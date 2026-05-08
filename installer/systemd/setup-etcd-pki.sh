@@ -11,7 +11,6 @@ SERVER_HOSTS=()
 SERVER_IPS=()
 PEER_HOSTS=()
 PEER_IPS=()
-WORK_DIR=""
 
 usage() {
     cat <<'USAGE'
@@ -252,6 +251,7 @@ generate_pki() {
     local client_ext
     local peer_ext
     local server_ext
+    local WORK_DIR
 
     if [[ "${FORCE}" -ne 1 ]]; then
         if all_outputs_exist; then

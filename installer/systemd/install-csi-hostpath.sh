@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "${SCRIPT_DIR}/lib.sh"
 
 HOSTPATH_VERSION="v1.17.0"
+# SHA256 of the upstream source tarball; must be updated when HOSTPATH_VERSION changes.
+HOSTPATH_SHA256="d0c26d203126fc2d0d15c1a06ed6eb5c48bb284599881106c9e2d271cd64c199"
 HOSTPATH_BINARY=""
 HOSTPATH_NODE_ID="$(hostname -s)"
 HOSTPATH_DATA_DIR="/var/lib/tugboat-csi-hostpath"
@@ -126,14 +128,22 @@ install_go_toolchain() {
 
 build_hostpathplugin() {
     local work_dir
+    local tarball
     local source_dir
 
     install_go_toolchain
     work_dir="$(mktemp -d -t tugboat-hostpathplugin.XXXXXXXXXX)"
     (
         trap 'rm -rf -- "${work_dir}"' EXIT
-        curl -fsSL "https://github.com/kubernetes-csi/csi-driver-host-path/archive/refs/tags/${HOSTPATH_VERSION}.tar.gz" |
-            tar xzf - -C "${work_dir}"
+        tarball="${work_dir}/src.tar.gz"
+        wget -O "${tarball}" \
+            "https://github.com/kubernetes-csi/csi-driver-host-path/archive/refs/tags/${HOSTPATH_VERSION}.tar.gz" ||
+            exit 1
+        if ! printf '%s  %s\n' "${HOSTPATH_SHA256}" "${tarball}" | sha256sum --check --status; then
+            log_error "Checksum verification failed for csi-driver-host-path ${HOSTPATH_VERSION}"
+            exit 1
+        fi
+        tar xzf "${tarball}" -C "${work_dir}"
         source_dir="${work_dir}/csi-driver-host-path-${HOSTPATH_VERSION#v}"
         cd -- "${source_dir}" || exit 1
         go build -o "${work_dir}/hostpathplugin" ./cmd/hostpathplugin
