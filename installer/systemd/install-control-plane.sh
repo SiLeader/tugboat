@@ -477,7 +477,7 @@ configure_tls() {
     local setup_args=()
     local value
 
-    APISERVER_TLS_CONFIG=""
+    APISERVER_TLS_CONFIG="allow_insecure_http = true"
     APISERVER_CLIENT_TLS_CONFIG=""
     APISERVER_SCHEME="http"
 
