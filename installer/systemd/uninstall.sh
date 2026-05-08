@@ -10,6 +10,7 @@ WORKER=0
 PURGE=0
 
 CONTROL_PLANE_UNITS=(
+    hostpath-provisioner.service
     tugboat-controller-manager.service
     tugboat-scheduler.service
     tugboat-apiserver.service
@@ -17,12 +18,14 @@ CONTROL_PLANE_UNITS=(
 )
 
 CONTROL_PLANE_BINARIES=(
+    hostpathplugin
     tugboat-apiserver
     tugboat-scheduler
     tugboat-controller-manager
 )
 
 WORKER_BINARIES=(
+    hostpathplugin
     tugboat-agent
     tugboat-qemu-runtime
     tugboat-cloud-hypervisor-runtime
@@ -126,6 +129,7 @@ remove_control_plane() {
     done
 
     rm -f -- \
+        "${SYSTEMD_UNIT_DIR}/hostpath-provisioner.service" \
         "${SYSTEMD_UNIT_DIR}/etcd.service" \
         "${SYSTEMD_UNIT_DIR}/tugboat-apiserver.service" \
         "${SYSTEMD_UNIT_DIR}/tugboat-scheduler.service" \
@@ -145,6 +149,8 @@ remove_control_plane() {
             /var/lib/tugboat-apiserver \
             /var/lib/tugboat-scheduler \
             /var/lib/tugboat-controller-manager \
+            /var/lib/tugboat-csi-hostpath \
+            /var/run/csi \
             /var/lib/tugboat-etcd
     fi
 }
@@ -153,10 +159,12 @@ remove_worker() {
     log_info "Removing worker services."
     disable_unit tugboat-agent.service
     disable_unit flanneld.service
+    disable_unit hostpath-provisioner.service
 
     rm -f -- \
         "${SYSTEMD_UNIT_DIR}/tugboat-agent.service" \
-        "${SYSTEMD_UNIT_DIR}/flanneld.service"
+        "${SYSTEMD_UNIT_DIR}/flanneld.service" \
+        "${SYSTEMD_UNIT_DIR}/hostpath-provisioner.service"
     systemctl daemon-reload
 
     remove_binaries "${WORKER_BINARIES[@]}"
@@ -167,7 +175,12 @@ remove_worker() {
     rmdir --ignore-fail-on-non-empty /etc/tugboat 2>/dev/null || true
 
     if [[ "${PURGE}" -eq 1 ]]; then
-        rm -rf -- /var/lib/tugboat-agent /var/lib/cni/flannel /run/flannel
+        rm -rf -- \
+            /var/lib/tugboat-agent \
+            /var/lib/tugboat-csi-hostpath \
+            /var/lib/cni/flannel \
+            /var/run/csi \
+            /run/flannel
         remove_cni_plugins
     fi
 }

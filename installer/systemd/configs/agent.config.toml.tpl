@@ -21,3 +21,6 @@ cache_dir = "/var/lib/tugboat-agent/images"
 publish_dir = "/var/lib/tugboat-agent/csi"
 socket_connect_timeout_seconds = 5
 rpc_timeout_seconds = 30
+
+[csi.drivers]
+"hostpath.csi.k8s.io" = "/var/run/csi/csi.sock"

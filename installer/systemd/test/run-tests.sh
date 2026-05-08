@@ -202,7 +202,7 @@ collect_journals() {
 
     for service in control-plane control-plane-2 control-plane-3 worker; do
         if compose ps -q "${service}" >/dev/null 2>&1; then
-            compose exec -T "${service}" bash -lc 'journalctl --no-pager -u "tugboat*" -u etcd.service -u flanneld.service || true; systemctl --failed --no-pager || true' \
+            compose exec -T "${service}" bash -lc 'journalctl --no-pager -u "tugboat*" -u etcd.service -u flanneld.service -u hostpath-provisioner.service || true; systemctl --failed --no-pager || true' \
                 > "${ARTIFACT_DIR}/${service}-journal.log" 2>&1 || true
         fi
     done

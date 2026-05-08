@@ -312,6 +312,7 @@ pub(crate) fn build_persistent_volume(
                 ),
                 (CLAIM_NAME_ANNOTATION.to_string(), claim_name.to_string()),
             ]),
+            finalizers: vec![PV_FINALIZER.to_string()],
             ..Default::default()
         }),
         spec: Some(PersistentVolumeSpec {
