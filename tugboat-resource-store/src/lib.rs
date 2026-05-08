@@ -119,10 +119,7 @@ impl ResourceStore {
         })
     }
 
-    pub async fn new(
-        endpoints: &[String],
-        tls_config: EtcdTlsConfig,
-    ) -> Result<Self, Error> {
+    pub async fn new(endpoints: &[String], tls_config: EtcdTlsConfig) -> Result<Self, Error> {
         info!("Creating secure etcd client: endpoints: {endpoints:?}");
         let options = build_connect_options(tls_config)?;
         let client = Client::connect(endpoints, Some(options)).await?;

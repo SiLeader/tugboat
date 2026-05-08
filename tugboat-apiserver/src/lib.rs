@@ -26,8 +26,8 @@ use openssl::ssl::{SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod, SslV
 use openssl::x509::X509;
 use std::any::Any;
 use std::net::TcpListener;
-use utoipa_actix_web::AppExt;
 use tracing::warn;
+use utoipa_actix_web::AppExt;
 
 pub mod auth;
 pub mod config;
@@ -97,10 +97,14 @@ impl ApiServer {
             let builder = build_tls_acceptor(tls).map_err(std::io::Error::other)?;
             server.bind_openssl(self.listen, builder)?.run().await
         } else if self.allow_insecure_http {
-            warn!("API server is running without TLS. This is insecure and not recommended for production use.");
+            warn!(
+                "API server is running without TLS. This is insecure and not recommended for production use."
+            );
             server.bind(self.listen)?.run().await
         } else {
-            Err(std::io::Error::other("TLS configuration is missing and allow_insecure_http is false. Refusing to start in insecure mode."))
+            Err(std::io::Error::other(
+                "TLS configuration is missing and allow_insecure_http is false. Refusing to start in insecure mode.",
+            ))
         }
     }
 
@@ -192,7 +196,9 @@ async fn run_with_bound_listener(
             }
         }
     } else if allow_insecure_http {
-        warn!("API server is running without TLS. This is insecure and not recommended for production use.");
+        warn!(
+            "API server is running without TLS. This is insecure and not recommended for production use."
+        );
         match server.listen(listener) {
             Ok(server) => server,
             Err(err) => {
@@ -201,7 +207,9 @@ async fn run_with_bound_listener(
             }
         }
     } else {
-        tracing::error!("TLS configuration is missing and allow_insecure_http is false. Refusing to start in insecure mode.");
+        tracing::error!(
+            "TLS configuration is missing and allow_insecure_http is false. Refusing to start in insecure mode."
+        );
         return;
     };
     if let Err(err) = server.run().await {
