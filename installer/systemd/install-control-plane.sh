@@ -461,10 +461,10 @@ configure_etcd_pki() {
     fi
 
     "${INSTALLER_DIR}/setup-etcd-pki.sh" "${setup_args[@]}"
-    chown root:tugboat-etcd -- "${ETCD_PKI_DIR}/server.key" "${ETCD_PKI_DIR}/peer.key"
-    chmod 0640 -- "${ETCD_PKI_DIR}/server.key" "${ETCD_PKI_DIR}/peer.key"
-    chown root:tugboat -- "${ETCD_PKI_DIR}/client.key"
-    chmod 0640 -- "${ETCD_PKI_DIR}/client.key"
+    chown tugboat-etcd:tugboat-etcd -- "${ETCD_PKI_DIR}/server.key" "${ETCD_PKI_DIR}/peer.key"
+    chmod 0600 -- "${ETCD_PKI_DIR}/server.key" "${ETCD_PKI_DIR}/peer.key"
+    chown tugboat-apiserver:tugboat-apiserver -- "${ETCD_PKI_DIR}/client.key"
+    chmod 0600 -- "${ETCD_PKI_DIR}/client.key"
 }
 
 install_base_packages() {
@@ -513,8 +513,8 @@ configure_tls() {
     fi
 
     "${INSTALLER_DIR}/setup-pki.sh" "${setup_args[@]}"
-    chown root:tugboat -- "${PKI_DIR}/apiserver.key"
-    chmod 0640 -- "${PKI_DIR}/apiserver.key"
+    chown tugboat-apiserver:tugboat-apiserver -- "${PKI_DIR}/apiserver.key"
+    chmod 0600 -- "${PKI_DIR}/apiserver.key"
 
     APISERVER_TLS_CONFIG="$(
         printf '[http.tls]\ncert_file = "%s/apiserver.crt"\nkey_file = "%s/apiserver.key"' \
@@ -618,12 +618,20 @@ render_configs() {
     render_template \
         "${INSTALLER_DIR}/configs/apiserver.config.toml.tpl" \
         /etc/tugboat/apiserver/config.toml
+    chown tugboat-apiserver:tugboat-apiserver /etc/tugboat/apiserver/config.toml
+    chmod 0600 /etc/tugboat/apiserver/config.toml
+
     render_template \
         "${INSTALLER_DIR}/configs/scheduler.config.toml.tpl" \
         /etc/tugboat/scheduler/config.toml
+    chown tugboat-scheduler:tugboat-scheduler /etc/tugboat/scheduler/config.toml
+    chmod 0600 /etc/tugboat/scheduler/config.toml
+
     render_template \
         "${INSTALLER_DIR}/configs/controller-manager.config.toml.tpl" \
         /etc/tugboat/controller-manager/config.toml
+    chown tugboat-controller-manager:tugboat-controller-manager /etc/tugboat/controller-manager/config.toml
+    chmod 0600 /etc/tugboat/controller-manager/config.toml
 }
 
 install_units() {
@@ -707,6 +715,9 @@ main() {
     install_base_packages
     install_etcd
     create_system_user tugboat
+    create_system_user tugboat-apiserver
+    create_system_user tugboat-scheduler
+    create_system_user tugboat-controller-manager
     create_system_user tugboat-etcd
     configure_tls
     configure_etcd_pki
@@ -714,6 +725,9 @@ main() {
     export APISERVER_LISTEN APISERVER_URL
     install -d -m 0700 -o tugboat-etcd -- "${DATA_DIR}"
     install -d -m 0755 -o tugboat -- /var/log/tugboat
+    install -d -m 0755 -o tugboat-apiserver -- /var/log/tugboat/apiserver
+    install -d -m 0755 -o tugboat-scheduler -- /var/log/tugboat/scheduler
+    install -d -m 0755 -o tugboat-controller-manager -- /var/log/tugboat/controller-manager
 
     install_binary tugboat-apiserver /usr/local/bin
     install_binary tugboat-scheduler /usr/local/bin

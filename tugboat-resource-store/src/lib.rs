@@ -110,17 +110,22 @@ impl ResourceStore {
         })
     }
 
-    pub async fn new(endpoints: &[String]) -> Result<Self, Error> {
-        Self::new_with_tls(endpoints, None).await
+    pub async fn new_insecure(endpoints: &[String]) -> Result<Self, Error> {
+        info!("Creating insecure etcd client: endpoints: {endpoints:?}");
+        let client = Client::connect(endpoints, None).await?;
+        Ok(Self {
+            etcd: client.clone(),
+            watch_mux: watch::WatchMuxAggregator::new(client),
+        })
     }
 
-    pub async fn new_with_tls(
+    pub async fn new(
         endpoints: &[String],
-        tls_config: Option<EtcdTlsConfig>,
+        tls_config: EtcdTlsConfig,
     ) -> Result<Self, Error> {
-        info!("Creating etcd client: endpoints: {endpoints:?}");
-        let options = tls_config.map(build_connect_options).transpose()?;
-        let client = Client::connect(endpoints, options).await?;
+        info!("Creating secure etcd client: endpoints: {endpoints:?}");
+        let options = build_connect_options(tls_config)?;
+        let client = Client::connect(endpoints, Some(options)).await?;
         Ok(Self {
             etcd: client.clone(),
             watch_mux: watch::WatchMuxAggregator::new(client),

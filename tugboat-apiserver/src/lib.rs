@@ -42,6 +42,7 @@ pub struct ApiServer {
     tls: Option<TlsConfig>,
     authentication: AuthenticationConfig,
     authorization: AuthorizationConfig,
+    allow_insecure_http: bool,
 }
 
 impl ApiServer {
@@ -51,6 +52,7 @@ impl ApiServer {
         tls: Option<TlsConfig>,
         authentication: AuthenticationConfig,
         authorization: AuthorizationConfig,
+        allow_insecure_http: bool,
     ) -> Self {
         Self {
             listen,
@@ -58,6 +60,7 @@ impl ApiServer {
             tls,
             authentication,
             authorization,
+            allow_insecure_http,
         }
     }
 
@@ -93,9 +96,11 @@ impl ApiServer {
         if let Some(tls) = self.tls {
             let builder = build_tls_acceptor(tls).map_err(std::io::Error::other)?;
             server.bind_openssl(self.listen, builder)?.run().await
-        } else {
+        } else if self.allow_insecure_http {
             warn!("API server is running without TLS. This is insecure and not recommended for production use.");
             server.bind(self.listen)?.run().await
+        } else {
+            Err(std::io::Error::other("TLS configuration is missing and allow_insecure_http is false. Refusing to start in insecure mode."))
         }
     }
 
@@ -105,9 +110,18 @@ impl ApiServer {
             tls,
             authentication,
             authorization,
+            allow_insecure_http,
             ..
         } = self;
-        run_with_bound_listener(operator, authentication, authorization, listener, tls).await;
+        run_with_bound_listener(
+            operator,
+            authentication,
+            authorization,
+            listener,
+            tls,
+            allow_insecure_http,
+        )
+        .await;
     }
 
     pub async fn run_with_tls_listener(self, listener: TcpListener, tls: TlsConfig) {
@@ -117,7 +131,15 @@ impl ApiServer {
             authorization,
             ..
         } = self;
-        run_with_bound_listener(operator, authentication, authorization, listener, Some(tls)).await;
+        run_with_bound_listener(
+            operator,
+            authentication,
+            authorization,
+            listener,
+            Some(tls),
+            false,
+        )
+        .await;
     }
 }
 
@@ -127,6 +149,7 @@ async fn run_with_bound_listener(
     authorization: AuthorizationConfig,
     listener: TcpListener,
     tls: Option<TlsConfig>,
+    allow_insecure_http: bool,
 ) {
     if let Err(err) = crate::auth::bootstrap::bootstrap_default_rbac(&operator.store).await {
         tracing::error!("Failed to bootstrap default RBAC resources: {err}");
@@ -168,7 +191,8 @@ async fn run_with_bound_listener(
                 return;
             }
         }
-    } else {
+    } else if allow_insecure_http {
+        warn!("API server is running without TLS. This is insecure and not recommended for production use.");
         match server.listen(listener) {
             Ok(server) => server,
             Err(err) => {
@@ -176,6 +200,9 @@ async fn run_with_bound_listener(
                 return;
             }
         }
+    } else {
+        tracing::error!("TLS configuration is missing and allow_insecure_http is false. Refusing to start in insecure mode.");
+        return;
     };
     if let Err(err) = server.run().await {
         tracing::error!("Failed to run server: {err}");

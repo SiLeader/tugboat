@@ -29,6 +29,8 @@ pub struct ApiServerConfig {
 pub(crate) struct EtcdConfig {
     endpoints: Vec<String>,
     tls: Option<EtcdTlsConfigToml>,
+    #[serde(default)]
+    allow_insecure_etcd: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -43,6 +45,8 @@ pub(crate) struct EtcdTlsConfigToml {
 pub(crate) struct HttpConfig {
     listen: String,
     tls: Option<TlsConfig>,
+    #[serde(default)]
+    allow_insecure_http: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -88,11 +92,16 @@ impl crate::ApiServer {
     pub async fn from_config(
         value: ApiServerConfig,
     ) -> Result<Self, tugboat_resource_store::error::Error> {
-        let store = ResourceStore::new_with_tls(
-            value.etcd.endpoints.as_slice(),
-            value.etcd.tls.map(Into::into),
-        )
-        .await?;
+        let store = if let Some(tls) = value.etcd.tls {
+            ResourceStore::new(value.etcd.endpoints.as_slice(), tls.into()).await?
+        } else if value.etcd.allow_insecure_etcd {
+            ResourceStore::new_insecure(value.etcd.endpoints.as_slice()).await?
+        } else {
+            return Err(tugboat_resource_store::error::Error::InvalidField(
+                "etcd.tls".to_string(),
+                "TLS configuration is missing and allow_insecure_etcd is false. Refusing to connect to etcd in insecure mode.".to_string(),
+            ));
+        };
         let operator = ApiOperator::new(store);
         Ok(Self::new(
             value.http.listen,
@@ -100,6 +109,7 @@ impl crate::ApiServer {
             value.http.tls,
             value.authentication,
             value.authorization,
+            value.http.allow_insecure_http,
         ))
     }
 }
@@ -110,10 +120,12 @@ impl ApiServerConfig {
             http: HttpConfig {
                 listen: listen.into(),
                 tls: None,
+                allow_insecure_http: false,
             },
             etcd: EtcdConfig {
                 endpoints: etcd_endpoints,
                 tls: None,
+                allow_insecure_etcd: false,
             },
             authentication: AuthenticationConfig::default(),
             authorization: AuthorizationConfig::default(),
