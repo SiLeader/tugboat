@@ -27,6 +27,7 @@ use openssl::x509::X509;
 use std::any::Any;
 use std::net::TcpListener;
 use utoipa_actix_web::AppExt;
+use tracing::warn;
 
 pub mod auth;
 pub mod config;
@@ -93,6 +94,7 @@ impl ApiServer {
             let builder = build_tls_acceptor(tls).map_err(std::io::Error::other)?;
             server.bind_openssl(self.listen, builder)?.run().await
         } else {
+            warn!("API server is running without TLS. This is insecure and not recommended for production use.");
             server.bind(self.listen)?.run().await
         }
     }

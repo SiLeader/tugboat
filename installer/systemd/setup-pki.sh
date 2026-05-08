@@ -190,6 +190,7 @@ generate_pki() {
     mkdir -p -- "${PKI_DIR}"
     work_dir="$(mktemp -d -t tugboat-pki.XXXXXXXXXX)"
     (
+        umask 077
         trap 'rm -rf -- "${work_dir}"' EXIT
         extfile="${work_dir}/apiserver.ext"
         write_extfile "${extfile}"

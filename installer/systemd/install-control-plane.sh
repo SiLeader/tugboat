@@ -11,7 +11,7 @@ ETCD_PEER_LISTEN="127.0.0.1:2380"
 DATA_DIR="/var/lib/tugboat-etcd"
 PKI_DIR="/etc/tugboat/pki"
 ETCD_PKI_DIR="/etc/tugboat/pki/etcd"
-SECURE=0
+SECURE=1
 FORCE_PKI=0
 LISTEN_SET=0
 APISERVER_CERT_HOSTS=()
@@ -39,8 +39,9 @@ Options:
   --build                 Build Tugboat binaries with cargo.
   --use-prebuilt          Use binaries from --bin-dir.
   --bin-dir <path>        Directory containing prebuilt Tugboat binaries.
-  --listen <addr:port>    API server HTTP listen address. Default: 0.0.0.0:8080.
-  --secure                Enable HTTPS with a locally generated Tugboat CA. Default listen: 0.0.0.0:8443.
+  --listen <addr:port>    API server HTTP listen address. Default: 0.0.0.0:8443 (Secure) or 0.0.0.0:8080 (Insecure).
+  --secure                Enable HTTPS with a locally generated Tugboat CA (Default).
+  --insecure              Disable HTTPS and use insecure HTTP.
   --pki-dir <path>        PKI directory used with --secure. Default: /etc/tugboat/pki.
   --apiserver-host <name> DNS SAN for the apiserver certificate. May be repeated.
   --apiserver-ip <addr>   IP SAN for the apiserver certificate. May be repeated.
@@ -188,6 +189,10 @@ parse_args() {
                 ;;
             --secure)
                 SECURE=1
+                shift
+                ;;
+            --insecure)
+                SECURE=0
                 shift
                 ;;
             --pki-dir)

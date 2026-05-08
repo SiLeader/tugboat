@@ -19,7 +19,7 @@ FLANNEL_ETCD_CERT=""
 FLANNEL_ETCD_KEY=""
 RUNTIME_BINARY="tugboat-qemu-runtime"
 RUNTIME_CONFIG_FILE="config.toml"
-SECURE=0
+SECURE=1
 SERVICE_ACCOUNT_TOKEN_SOURCE=""
 SERVICE_ACCOUNT_TOKEN_PATH="/var/run/secrets/tugboat.cloud/serviceaccount/agent/token"
 
@@ -34,9 +34,10 @@ Options:
   --build                         Build Tugboat binaries with cargo.
   --use-prebuilt                  Use binaries from --bin-dir.
   --bin-dir <path>                Directory containing prebuilt Tugboat binaries.
-  --apiserver-url <url>           API server URL, for example http://192.168.0.1:8080. Required.
+  --apiserver-url <url>           API server URL, for example https://192.168.0.1:8443. Required.
   --ca-cert <path>                CA certificate for https apiserver URLs. Required for https.
-  --secure                        Use a ServiceAccount token for apiserver authentication.
+  --secure                        Use a ServiceAccount token for apiserver authentication (Default).
+  --insecure                      Use anonymous authentication for apiserver.
   --service-account-token <path>  Token file to install when --secure is set.
   --node-name <name>              Tugboat node name. Default: hostname -s.
   --runtime <qemu|cloud-hypervisor>
@@ -97,6 +98,10 @@ parse_worker_args() {
                 ;;
             --secure)
                 SECURE=1
+                shift
+                ;;
+            --insecure)
+                SECURE=0
                 shift
                 ;;
             --service-account-token)

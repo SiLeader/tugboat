@@ -231,7 +231,10 @@ generate_leaf() {
     local common_name="$2"
     local extfile="$3"
 
-    openssl genrsa -out "${PKI_DIR}/${name}.key" 4096
+    (
+        umask 077
+        openssl genrsa -out "${PKI_DIR}/${name}.key" 4096
+    )
     openssl req -new \
         -key "${PKI_DIR}/${name}.key" \
         -subj "/CN=${common_name}" \
@@ -268,6 +271,7 @@ generate_pki() {
     mkdir -p -- "${PKI_DIR}"
     WORK_DIR="$(mktemp -d -t tugboat-etcd-pki.XXXXXXXXXX)"
     (
+        umask 077
         trap 'rm -rf -- "${WORK_DIR}"' EXIT
         server_ext="${WORK_DIR}/server.ext"
         peer_ext="${WORK_DIR}/peer.ext"
