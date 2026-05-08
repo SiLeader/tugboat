@@ -154,7 +154,7 @@ write_extfile() {
 
     {
         printf 'basicConstraints = CA:FALSE\n'
-        printf 'keyUsage = digitalSignature, keyEncipherment\n'
+        printf 'keyUsage = digitalSignature\n'
         printf 'extendedKeyUsage = serverAuth\n'
         printf 'subjectAltName = @alt_names\n'
         printf '\n'
@@ -195,7 +195,7 @@ generate_pki() {
         extfile="${work_dir}/apiserver.ext"
         write_extfile "${extfile}"
 
-        openssl genrsa -out "${PKI_DIR}/ca.key" 4096
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "${PKI_DIR}/ca.key"
         openssl req -x509 -new -nodes \
             -key "${PKI_DIR}/ca.key" \
             -sha256 \
@@ -203,7 +203,7 @@ generate_pki() {
             -subj "/CN=tugboat-ca" \
             -out "${PKI_DIR}/ca.crt"
 
-        openssl genrsa -out "${PKI_DIR}/apiserver.key" 4096
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "${PKI_DIR}/apiserver.key"
         openssl req -new \
             -key "${PKI_DIR}/apiserver.key" \
             -subj "/CN=tugboat-apiserver" \

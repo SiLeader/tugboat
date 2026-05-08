@@ -207,7 +207,7 @@ write_extfile() {
 
     {
         printf 'basicConstraints = CA:FALSE\n'
-        printf 'keyUsage = digitalSignature, keyEncipherment\n'
+        printf 'keyUsage = digitalSignature\n'
         printf 'extendedKeyUsage = %s\n' "${usage}"
         if [[ "${#hosts_ref[@]}" -gt 0 || "${#ips_ref[@]}" -gt 0 ]]; then
             printf 'subjectAltName = @alt_names\n'
@@ -233,7 +233,7 @@ generate_leaf() {
 
     (
         umask 077
-        openssl genrsa -out "${PKI_DIR}/${name}.key" 4096
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "${PKI_DIR}/${name}.key"
     )
     openssl req -new \
         -key "${PKI_DIR}/${name}.key" \
@@ -280,7 +280,7 @@ generate_pki() {
         write_extfile "${peer_ext}" "serverAuth, clientAuth" PEER_HOSTS PEER_IPS
         write_extfile "${client_ext}" clientAuth SERVER_HOSTS SERVER_IPS
 
-        openssl genrsa -out "${PKI_DIR}/ca.key" 4096
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "${PKI_DIR}/ca.key"
         openssl req -x509 -new -nodes \
             -key "${PKI_DIR}/ca.key" \
             -sha256 \
