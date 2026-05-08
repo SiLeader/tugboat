@@ -59,10 +59,10 @@ jobs:
         run: |
           shellcheck -x installer/systemd/*.sh installer/systemd/test/*.sh installer/systemd/test/scenarios/*.sh
 
-  e2e-test:
+  build-release-binaries:
     needs: lint
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -71,7 +71,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler shellcheck
+          sudo apt-get install -y protobuf-compiler
 
       - name: Cache cargo dependencies
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -83,88 +83,79 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-installer-systemd-cargo-
 
-      - name: Cache release binaries
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target/release/.fingerprint
-            target/release/build
-            target/release/deps
-            target/release/tugboat-apiserver
-            target/release/tugboat-apiserver.d
-            target/release/tugboat-agent
-            target/release/tugboat-agent.d
-            target/release/tugboat-scheduler
-            target/release/tugboat-scheduler.d
-            target/release/tugboat-controller-manager
-            target/release/tugboat-controller-manager.d
-            target/release/tugboat-qemu-runtime
-            target/release/tugboat-qemu-runtime.d
-            target/release/tugboat-cloud-hypervisor-runtime
-            target/release/tugboat-cloud-hypervisor-runtime.d
-          key: ${{ runner.os }}-installer-systemd-release-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-installer-systemd-release-
-
       - name: Build release binaries
         shell: bash
         run: |
           cargo build --release --workspace --bins
 
-      - name: Run scenario 00-lib-unit
+      - name: Archive prebuilt release binaries
         shell: bash
         run: |
-          installer/systemd/test/run-tests.sh --scenario 00-lib-unit --use-prebuilt --keep
+          mkdir -p installer/systemd/test/artifacts
+          tar \
+            -C target/release \
+            -czf installer/systemd/test/artifacts/prebuilt-release-binaries.tar.gz \
+            tugboat-apiserver \
+            tugboat-agent \
+            tugboat-scheduler \
+            tugboat-controller-manager \
+            tugboat-qemu-runtime \
+            tugboat-cloud-hypervisor-runtime
 
-      - name: Run scenario 01-control-plane-only
-        shell: bash
-        run: |
-          installer/systemd/test/run-tests.sh --scenario 01-control-plane-only --use-prebuilt --keep
+      - name: Upload prebuilt release binaries
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer-systemd-prebuilt-release-binaries
+          path: installer/systemd/test/artifacts/prebuilt-release-binaries.tar.gz
+          if-no-files-found: error
 
-      - name: Run scenario 02-worker-join
-        shell: bash
-        run: |
-          installer/systemd/test/run-tests.sh --scenario 02-worker-join --use-prebuilt --keep
+  e2e-test:
+    needs: build-release-binaries
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - 00-lib-unit
+          - 01-control-plane-only
+          - 02-worker-join
+          - 03-flannel-bootstrap
+          - 04-uninstall-purge
+          - 05-tls-pki
+          - 06-serviceaccount-rbac
+          - 07-etcd-client-tls
+          - 08-etcd-ha
+          - 09-flanneld-daemon
+          - 10-csi-hostpath
+    timeout-minutes: 25
+    env:
+      TUGBOAT_TEST_PROJECT_NAME: tugboat-systemd-test-${{ matrix.scenario }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Run scenario 03-flannel-bootstrap
+      - name: Install system dependencies
         shell: bash
         run: |
-          installer/systemd/test/run-tests.sh --scenario 03-flannel-bootstrap --use-prebuilt --keep
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler shellcheck
 
-      - name: Run scenario 04-uninstall-purge
-        shell: bash
-        run: |
-          installer/systemd/test/run-tests.sh --scenario 04-uninstall-purge --use-prebuilt --keep
+      - name: Download prebuilt release binaries
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: installer-systemd-prebuilt-release-binaries
+          path: installer/systemd/test/artifacts
 
-      - name: Run scenario 05-tls-pki
+      - name: Extract prebuilt release binaries
         shell: bash
         run: |
-          installer/systemd/test/run-tests.sh --scenario 05-tls-pki --use-prebuilt --keep
+          mkdir -p target/release
+          tar -C target/release -xzf installer/systemd/test/artifacts/prebuilt-release-binaries.tar.gz
 
-      - name: Run scenario 06-serviceaccount-rbac
+      - name: Run scenario
         shell: bash
         run: |
-          installer/systemd/test/run-tests.sh --scenario 06-serviceaccount-rbac --use-prebuilt --keep
-
-      - name: Run scenario 07-etcd-client-tls
-        shell: bash
-        run: |
-          installer/systemd/test/run-tests.sh --scenario 07-etcd-client-tls --use-prebuilt --keep
-
-      - name: Run scenario 08-etcd-ha
-        shell: bash
-        run: |
-          installer/systemd/test/run-tests.sh --scenario 08-etcd-ha --use-prebuilt --keep
-
-      - name: Run scenario 09-flanneld-daemon
-        shell: bash
-        run: |
-          installer/systemd/test/run-tests.sh --scenario 09-flanneld-daemon --use-prebuilt --keep
-
-      - name: Run scenario 10-csi-hostpath
-        shell: bash
-        run: |
-          installer/systemd/test/run-tests.sh --scenario 10-csi-hostpath --use-prebuilt --keep
+          installer/systemd/test/run-tests.sh --scenario "${{ matrix.scenario }}" --use-prebuilt --keep
 
       - name: Collect docker compose logs
         if: always()
@@ -180,7 +171,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: installer-systemd-test-artifacts
+          name: installer-systemd-test-artifacts-${{ matrix.scenario }}
           path: installer/systemd/test/artifacts/
           if-no-files-found: ignore
 
