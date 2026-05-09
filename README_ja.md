@@ -481,7 +481,71 @@ subjects:
     - [ ] 外部IDプロバイダとのOIDC統合
     - [ ] 集約ClusterRole
     - [ ] 監査ログ
+- [x] インストーラー (systemd)
+    - [x] `install-control-plane.sh` — etcd・apiserver・scheduler・controller-manager を systemd ユニットとしてインストール
+    - [x] `install-worker.sh` — agent と VM ランタイム（QEMU または Cloud Hypervisor）を systemd ユニットとしてインストール
+    - [x] TLS / PKI 自動生成 (`setup-pki.sh`、`setup-etcd-pki.sh`)
+    - [x] コントロールプレーン用 ServiceAccount トークンの RBAC ブートストラップ (`bootstrap-rbac.sh`)
+    - [x] Flannel CNI サポート（static subnet.env / vxlan / host-gw）(`bootstrap-flannel.sh`)
+    - [x] CSI hostpath プロビジョナーインストーラー (`install-csi-hostpath.sh`)
+    - [x] `uninstall.sh` — Tugboat の全ユニット・バイナリ・設定ファイルを停止・削除
+    - [x] シナリオスクリプト付き Docker 分離テスト環境 (`installer/systemd/test/`)
 - [ ] CRD
+
+## インストール
+
+`installer/systemd/` ディレクトリには、Debian/Ubuntu ホストへ systemd を使って
+Tugboat をインストール・設定するシェルスクリプトが含まれています。
+root 権限と `apt-get` が必要です。
+
+### コントロールプレーン
+
+```bash
+sudo installer/systemd/install-control-plane.sh \
+    --build \
+    --apiserver-host control-plane.example.com \
+    --apiserver-ip 192.168.0.1
+```
+
+**etcd**、**tugboat-apiserver**、**tugboat-scheduler**、**tugboat-controller-manager** を
+systemd サービスとしてインストールします。デフォルトでは API サーバーは TLS を有効にして
+`0.0.0.0:8443` で待ち受けます（CA とサーバー証明書は自動生成）。
+平文 HTTP（ポート 8080）を使う場合は `--insecure` を指定してください。
+
+コンパイル済みバイナリを使う場合は `--build` の代わりに
+`--use-prebuilt --bin-dir <path>` を指定します。
+
+### ワーカー
+
+```bash
+sudo installer/systemd/install-worker.sh \
+    --use-prebuilt --bin-dir /path/to/bins \
+    --apiserver-url https://192.168.0.1:8443 \
+    --ca-cert /etc/tugboat/pki/ca.crt \
+    --service-account-token /path/to/agent-token
+```
+
+**tugboat-agent** と選択した VM ランタイム（`--runtime qemu` または
+`--runtime cloud-hypervisor`）をインストールします。CNI プラグインは自動でインストールされます。
+Flannel モードは `--flannel-mode static|vxlan|host-gw` で切り替えます
+（デフォルト: `static`、この場合は flanneld を起動せずに `/run/flannel/subnet.env` を書き込みます）。
+
+### アンインストール
+
+```bash
+sudo installer/systemd/uninstall.sh --control-plane   # コントロールプレーンノード
+sudo installer/systemd/uninstall.sh --worker          # ワーカーノード
+sudo installer/systemd/uninstall.sh --control-plane --worker --purge  # 全削除
+```
+
+### インストーラーのテスト
+
+`installer/systemd/test/` に、systemd を PID 1 として動かす Ubuntu 24.04 コンテナを使った
+Docker 分離テスト環境があります。全シナリオの実行は以下のコマンドで行います。
+
+```bash
+installer/systemd/test/run-tests.sh
+```
 
 ## Contributing
 
