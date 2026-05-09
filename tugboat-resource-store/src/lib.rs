@@ -16,8 +16,10 @@ use crate::error::Error;
 use crate::serializer::StaticSerializable;
 use crate::watch::WatchReceiver;
 use etcd_client::{
-    Client, Compare, CompareOp, DeleteOptions, GetOptions, Txn, TxnOp, TxnOpResponse,
+    Certificate, Client, Compare, CompareOp, ConnectOptions, DeleteOptions, GetOptions, Identity,
+    TlsOptions, Txn, TxnOp, TxnOpResponse,
 };
+use std::path::PathBuf;
 use tracing::{debug, info};
 use tugboat_resources::manifests::meta::v1::ObjectMeta;
 use tugboat_resources::{ObjectMetaResource, StaticResource};
@@ -32,6 +34,14 @@ pub struct ResourceStore {
 }
 
 const BASE_PATH: &str = "/tugboat/registry";
+
+#[derive(Clone, Debug)]
+pub struct EtcdTlsConfig {
+    pub ca_cert_path: PathBuf,
+    pub cert_path: PathBuf,
+    pub key_path: PathBuf,
+    pub domain_name: Option<String>,
+}
 
 pub struct ContentData<T> {
     pub data: T,
@@ -100,9 +110,19 @@ impl ResourceStore {
         })
     }
 
-    pub async fn new(endpoints: &[String]) -> Result<Self, Error> {
-        info!("Creating etcd client: endpoints: {endpoints:?}");
+    pub async fn new_insecure(endpoints: &[String]) -> Result<Self, Error> {
+        info!("Creating insecure etcd client: endpoints: {endpoints:?}");
         let client = Client::connect(endpoints, None).await?;
+        Ok(Self {
+            etcd: client.clone(),
+            watch_mux: watch::WatchMuxAggregator::new(client),
+        })
+    }
+
+    pub async fn new(endpoints: &[String], tls_config: EtcdTlsConfig) -> Result<Self, Error> {
+        info!("Creating secure etcd client: endpoints: {endpoints:?}");
+        let options = build_connect_options(tls_config)?;
+        let client = Client::connect(endpoints, Some(options)).await?;
         Ok(Self {
             etcd: client.clone(),
             watch_mux: watch::WatchMuxAggregator::new(client),
@@ -336,6 +356,21 @@ impl ResourceStore {
             revision: kv.mod_revision(),
         }))
     }
+}
+
+fn build_connect_options(tls_config: EtcdTlsConfig) -> Result<ConnectOptions, Error> {
+    let ca_cert = std::fs::read(&tls_config.ca_cert_path)?;
+    let cert = std::fs::read(&tls_config.cert_path)?;
+    let key = std::fs::read(&tls_config.key_path)?;
+    let mut tls = TlsOptions::new()
+        .ca_certificate(Certificate::from_pem(ca_cert))
+        .identity(Identity::from_pem(cert, key));
+
+    if let Some(domain_name) = tls_config.domain_name {
+        tls = tls.domain_name(domain_name);
+    }
+
+    Ok(ConnectOptions::default().with_tls(tls))
 }
 
 #[cfg(test)]

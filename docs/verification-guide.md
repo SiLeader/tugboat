@@ -621,98 +621,73 @@ Despite these limitations, the following flows are fully verifiable in Docker Co
 
 ---
 
-## 8. Quick Reference: All Verification Commands
+## 8. Quick Reference: systemd + HTTP Verification
 
-Copy-paste this block to verify everything at once:
+These commands verify a systemd installation where the control-plane host is
+available as `CP_HOST` and the API server listens on HTTP port `8080`.
 
 ```bash
-APISERVER=http://localhost:8080
-
-echo "=== Node ==="
-curl -s $APISERVER/api/v1/nodes \
-  | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; [print(i['metadata']['name'], '| CniReady:', next((c['status'] for c in i.get('status',{}).get('conditions',[]) if c['type']=='CniReady'), 'N/A')) for i in items]"
-
-echo "=== Namespace ==="
-curl -s $APISERVER/api/v1/namespaces/demo \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['metadata']['name'], '- OK')"
-
-echo "=== ShipClass ==="
-curl -s $APISERVER/api/v1/shipclasses/small \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); s=d['spec']; print(s['cpu']['architecture'], s['cpu']['cores'], 'cores,', s['memory']['size'], 'RAM')"
-
-echo "=== StorageClass ==="
-curl -s $APISERVER/api/v1/storageclasses/hostpath \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print('provisioner:', d['spec']['provisioner'])"
-
-echo "=== ClusterNetworkClass ==="
-curl -s $APISERVER/api/v1/clusternetworkclasses/demo-network \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); s=d['spec']; print('subnet:', s['subnet'], '| cniPlugin:', s['cniPlugin'])"
-
-echo "=== NetworkClass ==="
-curl -s $APISERVER/api/v1/namespaces/demo/networkclasses/internal-network \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); s=d['spec']; print('subnet:', s['subnet'], '| cniPlugin:', s['cniPlugin'])"
-
-echo "=== ConfigMap ==="
-curl -s $APISERVER/api/v1/namespaces/demo/configmaps/app-config \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print('keys:', list(d['data'].keys()))"
-
-echo "=== Secret ==="
-curl -s $APISERVER/api/v1/namespaces/demo/secrets/app-secret \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print('keys:', list(d.get('stringData',d.get('data',{})).keys()))"
-
-echo "=== PVC ==="
-curl -s $APISERVER/api/v1/namespaces/demo/persistentvolumeclaims/data-disk \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print('storageClass:', d['spec'].get('storageClassName'), '| phase:', d.get('status',{}).get('phase','(pending)'))"
-
-echo "=== PV list ==="
-curl -s $APISERVER/api/v1/persistentvolumes \
-  | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; print(f'{len(items)} PV(s) provisioned')"
-
-echo "=== Ship ==="
-curl -s $APISERVER/api/v1/namespaces/demo/ships/demo-ship \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print('nodeName:', d['spec'].get('nodeName','(not scheduled yet)'), '| networks:', [r['name'] for r in d['spec'].get('networkClassRef',[])])"
+export CP="http://${CP_HOST:-localhost}:8080"
 ```
 
-**Expected healthy output:**
+### 8.1 Control-plane services
 
-```
-=== Node ===
-node1 | CniReady: True
+```bash
+systemctl is-active \
+  etcd \
+  tugboat-apiserver \
+  tugboat-scheduler \
+  tugboat-controller-manager
 
-=== Namespace ===
-demo - OK
-
-=== ShipClass ===
-x86_64 2 cores, 4Gi RAM
-
-=== StorageClass ===
-provisioner: hostpath.csi.k8s.io
-
-=== ClusterNetworkClass ===
-subnet: 10.100.0.0/24 | cniPlugin: bridge
-
-=== NetworkClass ===
-subnet: 10.200.0.0/24 | cniPlugin: bridge
-
-=== ConfigMap ===
-keys: ['app.conf', 'log.level', 'timezone']
-
-=== Secret ===
-keys: ['username', 'password']
-
-=== PVC ===
-storageClass: hostpath | phase: Bound
-
-=== PV list ===
-1 PV(s) provisioned
-
-=== Ship ===
-nodeName: node1 | networks: ['demo-network', 'internal-network']
+curl -sf "$CP/healthz" && echo "OK"
 ```
 
-> The `PVC phase: Bound` and `1 PV(s) provisioned` lines require loop device support. In
-> Docker Compose you may see `phase: (pending)` and `0 PV(s)` — this is the only expected
-> difference. All other lines should match.
+All four services should print `active`, and the health check should print
+`OK`.
+
+### 8.2 Node registration
+
+```bash
+curl -s "$CP/api/v1/nodes" | python3 -m json.tool
+```
+
+After at least one worker joins, the response should contain one or more
+entries in `items`. When Flannel is installed, the node status should include a
+ready plugin entry like:
+
+```json
+{"name": "flannel", "ready": true, "message": "Found flannel plugin binary and runtime state (...)"}
+```
+
+See [Node - Agent Registration](#61-node--agent-registration)
+for the detailed status fields.
+
+### 8.3 Flannel ClusterNetworkClass
+
+```bash
+curl -s "$CP/api/v1/clusternetworkclasses/cluster-network" | python3 -m json.tool
+```
+
+The expected value is:
+
+```json
+{"cniPlugin": "flannel"}
+```
+
+### 8.4 Component logs
+
+```bash
+journalctl \
+  -u tugboat-apiserver \
+  -u tugboat-scheduler \
+  -u tugboat-controller-manager \
+  --since "5 min ago" \
+  | grep -E 'ERROR|WARN'
+
+journalctl -u tugboat-agent --since "5 min ago" | grep -E 'ERROR|WARN'
+```
+
+No output means no recent warning or error lines were found.
 
 ---
 

@@ -570,7 +570,7 @@ async fn wait_for_etcd(endpoint: &str) -> Result<(), DynError> {
 }
 
 async fn seed_admin_service_account(etcd_endpoint: &str) -> Result<String, DynError> {
-    let store = ResourceStore::new(&[etcd_endpoint.to_string()]).await?;
+    let store = ResourceStore::new_insecure(&[etcd_endpoint.to_string()]).await?;
     let token = format!(
         "rbac-admin-{}",
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
@@ -656,7 +656,7 @@ fn write_apiserver_config(
     tls_assets: Option<&GeneratedTlsAssets>,
 ) -> Result<PathBuf, DynError> {
     let mut config = format!(
-        "[http]\nlisten = \"127.0.0.1:{port}\"\n\n[etcd]\nendpoints = [\"{etcd_endpoint}\"]\n\n[authentication]\nanonymous_enabled = true\n\n[authorization]\nmode = \"{}\"\n",
+        "[http]\nlisten = \"127.0.0.1:{port}\"\nallow_insecure_http = true\n\n[etcd]\nendpoints = [\"{etcd_endpoint}\"]\nallow_insecure_etcd = true\n\n[authentication]\nanonymous_enabled = true\n\n[authorization]\nmode = \"{}\"\n",
         match options.authorization_mode {
             AuthorizationModeSetting::AlwaysAllow => "AlwaysAllow",
             AuthorizationModeSetting::Rbac => "RBAC",

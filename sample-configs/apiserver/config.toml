@@ -25,7 +25,12 @@ key_file = "/etc/tugboat/pki/apiserver.key"
 # client_cert_file = "/etc/tugboat/pki/ca.crt"
 
 [etcd]
-endpoints = ["etcd:2379"]
+endpoints = ["https://etcd:2379"]
+
+[etcd.tls]
+ca_cert_path = "/etc/tugboat/pki/etcd/ca.crt"
+cert_path = "/etc/tugboat/pki/etcd/client.crt"
+key_path = "/etc/tugboat/pki/etcd/client.key"
 
 [authorization]
 # Use AlwaysAllow only for local development; RBAC is the secure default.

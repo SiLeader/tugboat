@@ -1,0 +1,95 @@
+services:
+  control-plane:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ../../..:/workspace:ro
+      - prebuilt-binaries:/var/cache/tugboat-prebuilt
+    working_dir: /workspace
+    ports:
+      - "8080:8080"
+    environment:
+      CARGO_MANIFEST_DIR: /workspace
+    networks:
+      tugboat-test:
+        aliases:
+          - control-plane
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    privileged: true
+    cgroup: host
+    depends_on:
+      - control-plane
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ../../..:/workspace:ro
+      - prebuilt-binaries:/var/cache/tugboat-prebuilt
+    working_dir: /workspace
+    environment:
+      CARGO_MANIFEST_DIR: /workspace
+    networks:
+      tugboat-test:
+        aliases:
+          - worker
+
+  control-plane-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ../../..:/workspace:ro
+      - prebuilt-binaries:/var/cache/tugboat-prebuilt
+    working_dir: /workspace
+    environment:
+      CARGO_MANIFEST_DIR: /workspace
+    networks:
+      tugboat-test:
+        aliases:
+          - control-plane-2
+
+  control-plane-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ../../..:/workspace:ro
+      - prebuilt-binaries:/var/cache/tugboat-prebuilt
+    working_dir: /workspace
+    environment:
+      CARGO_MANIFEST_DIR: /workspace
+    networks:
+      tugboat-test:
+        aliases:
+          - control-plane-3
+
+volumes:
+  prebuilt-binaries:
+
+networks:
+  tugboat-test:
+    driver: bridge

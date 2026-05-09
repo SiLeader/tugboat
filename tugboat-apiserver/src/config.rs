@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::operator::ApiOperator;
-use tugboat_resource_store::ResourceStore;
+use tugboat_resource_store::{EtcdTlsConfig, ResourceStore};
 
 #[derive(serde::Deserialize)]
 pub struct ApiServerConfig {
@@ -28,12 +28,25 @@ pub struct ApiServerConfig {
 #[derive(serde::Deserialize)]
 pub(crate) struct EtcdConfig {
     endpoints: Vec<String>,
+    tls: Option<EtcdTlsConfigToml>,
+    #[serde(default)]
+    allow_insecure_etcd: bool,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct EtcdTlsConfigToml {
+    ca_cert_path: String,
+    cert_path: String,
+    key_path: String,
+    domain_name: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 pub(crate) struct HttpConfig {
     listen: String,
     tls: Option<TlsConfig>,
+    #[serde(default)]
+    allow_insecure_http: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -79,7 +92,16 @@ impl crate::ApiServer {
     pub async fn from_config(
         value: ApiServerConfig,
     ) -> Result<Self, tugboat_resource_store::error::Error> {
-        let store = ResourceStore::new(value.etcd.endpoints.as_slice()).await?;
+        let store = if let Some(tls) = value.etcd.tls {
+            ResourceStore::new(value.etcd.endpoints.as_slice(), tls.into()).await?
+        } else if value.etcd.allow_insecure_etcd {
+            ResourceStore::new_insecure(value.etcd.endpoints.as_slice()).await?
+        } else {
+            return Err(tugboat_resource_store::error::Error::InvalidField(
+                "etcd.tls".to_string(),
+                "TLS configuration is missing and allow_insecure_etcd is false. Refusing to connect to etcd in insecure mode.".to_string(),
+            ));
+        };
         let operator = ApiOperator::new(store);
         Ok(Self::new(
             value.http.listen,
@@ -87,6 +109,7 @@ impl crate::ApiServer {
             value.http.tls,
             value.authentication,
             value.authorization,
+            value.http.allow_insecure_http,
         ))
     }
 }
@@ -97,9 +120,12 @@ impl ApiServerConfig {
             http: HttpConfig {
                 listen: listen.into(),
                 tls: None,
+                allow_insecure_http: false,
             },
             etcd: EtcdConfig {
                 endpoints: etcd_endpoints,
+                tls: None,
+                allow_insecure_etcd: false,
             },
             authentication: AuthenticationConfig::default(),
             authorization: AuthorizationConfig::default(),
@@ -116,6 +142,17 @@ impl ApiServerConfig {
         toml::from_str(&file).map_err(|e| {
             std::io::Error::other(format!("Failed to parse config file {:?}: {e}", path)).into()
         })
+    }
+}
+
+impl From<EtcdTlsConfigToml> for EtcdTlsConfig {
+    fn from(value: EtcdTlsConfigToml) -> Self {
+        Self {
+            ca_cert_path: value.ca_cert_path.into(),
+            cert_path: value.cert_path.into(),
+            key_path: value.key_path.into(),
+            domain_name: value.domain_name,
+        }
     }
 }
 
