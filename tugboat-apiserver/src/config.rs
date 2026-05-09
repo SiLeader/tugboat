@@ -14,6 +14,7 @@
 
 use crate::operator::ApiOperator;
 use tugboat_resource_store::{EtcdTlsConfig, ResourceStore};
+use tugboat_runtime_common::config::{ConfigLoadError, load_component_toml_config};
 
 #[derive(serde::Deserialize)]
 pub struct ApiServerConfig {
@@ -132,16 +133,8 @@ impl ApiServerConfig {
         }
     }
 
-    pub fn load_from_file(
-        file: impl AsRef<std::path::Path>,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let path = file.as_ref();
-        let file = std::fs::read_to_string(path).map_err(|e| {
-            std::io::Error::other(format!("Failed to read config file {:?}: {e}", path))
-        })?;
-        toml::from_str(&file).map_err(|e| {
-            std::io::Error::other(format!("Failed to parse config file {:?}: {e}", path)).into()
-        })
+    pub fn load_from_file(file: impl AsRef<std::path::Path>) -> Result<Self, ConfigLoadError> {
+        load_component_toml_config("tugboat-apiserver", file)
     }
 }
 
@@ -182,5 +175,44 @@ mod tests {
             ApiServerConfig::new("127.0.0.1:8443", vec!["http://127.0.0.1:2379".to_string()]);
 
         assert!(!config.authentication.anonymous_enabled);
+    }
+
+    #[test]
+    fn sample_config_deserializes() {
+        let config = ApiServerConfig::load_from_file(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sample-configs/apiserver/config.toml"
+        ))
+        .unwrap();
+
+        assert_eq!(config.http.listen, "0.0.0.0:8443");
+        assert_eq!(config.etcd.endpoints, vec!["https://etcd:2379"]);
+        assert!(matches!(config.authorization.mode, AuthorizationMode::Rbac));
+    }
+
+    #[test]
+    fn installer_config_template_deserializes_after_rendering() {
+        let template = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../installer/systemd/configs/apiserver.config.toml.tpl"
+        ));
+        let rendered = template
+            .replace("${APISERVER_LISTEN}", "0.0.0.0:8443")
+            .replace(
+                "${APISERVER_TLS_CONFIG}",
+                "[http.tls]\ncert_file = \"/etc/tugboat/pki/apiserver.crt\"\nkey_file = \"/etc/tugboat/pki/apiserver.key\"",
+            )
+            .replace("${APISERVER_ETCD_ENDPOINTS}", "\"https://etcd:2379\"")
+            .replace(
+                "${APISERVER_ETCD_TLS_CONFIG}",
+                "[etcd.tls]\nca_cert_path = \"/etc/tugboat/pki/etcd/ca.crt\"\ncert_path = \"/etc/tugboat/pki/etcd/client.crt\"\nkey_path = \"/etc/tugboat/pki/etcd/client.key\"",
+            )
+            .replace("${APISERVER_AUTHORIZATION_MODE}", "RBAC")
+            .replace("${APISERVER_ANONYMOUS_ENABLED}", "false");
+
+        let config: ApiServerConfig = toml::from_str(&rendered).unwrap();
+
+        assert_eq!(config.http.listen, "0.0.0.0:8443");
+        assert_eq!(config.etcd.endpoints, vec!["https://etcd:2379"]);
     }
 }

@@ -15,6 +15,7 @@
 mod error;
 mod parser;
 
+use crate::build::error::BuildError;
 use crate::build::parser::Imagefile;
 use clap::Parser;
 use std::str::FromStr;
@@ -36,28 +37,38 @@ pub(crate) struct BuildArgs {
     context: String,
 }
 
-pub(crate) async fn run_build(args: BuildArgs) {
+pub(crate) async fn run_build(args: BuildArgs) -> Result<(), BuildError> {
     info!(
         "Build command: Imagefile {} Context {}",
         args.file, args.context
     );
 
-    let imagefile = Imagefile::from_str(
-        tokio::fs::read_to_string(args.file)
-            .await
-            .expect("Failed to read Imagefile")
-            .as_str(),
-    )
-    .expect("Failed to parse Imagefile");
+    let imagefile_content = tokio::fs::read_to_string(&args.file)
+        .await
+        .map_err(|source| BuildError::ReadImagefile {
+            path: args.file.clone(),
+            source,
+        })?;
+    let imagefile =
+        Imagefile::from_str(&imagefile_content).map_err(|source| BuildError::ParseImagefile {
+            path: args.file.clone(),
+            source: Box::new(source),
+        })?;
     debug!("Imagefile: {:?}", imagefile);
 
-    let disk_data = imagefile
-        .read_disk(&args.context)
-        .await
-        .expect("Failed to read context directory");
+    let disk_path = imagefile.disk_path(&args.context);
+    let disk_data =
+        imagefile
+            .read_disk(&args.context)
+            .await
+            .map_err(|source| BuildError::ReadDisk {
+                path: disk_path,
+                source,
+            })?;
     debug!("Disk data size: {} bytes", disk_data.len());
 
     let client = VmImageRegistry::new("/tmp");
+    let tag = args.tag.clone();
     client
         .push(
             args.tag,
@@ -67,5 +78,6 @@ pub(crate) async fn run_build(args: BuildArgs) {
             if args.http { Some(true) } else { None },
         )
         .await
-        .expect("Failed to push image");
+        .map_err(|source| BuildError::PushImage { tag, source })?;
+    Ok(())
 }

@@ -34,7 +34,7 @@ struct Args {
 
 pub async fn run() {
     let args = Args::parse();
-    let config = config::SchedulerConfig::load_or_panic(args.config);
+    let config = config::SchedulerConfig::load(args.config).unwrap_or_else(|e| panic!("{e}"));
     tokio::select! {
         _ = run_with_loaded_config(config) => {}
         _ = wait_for_shutdown_signal() => {
@@ -45,7 +45,7 @@ pub async fn run() {
 }
 
 pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
-    let config = config::SchedulerConfig::load_or_panic(path);
+    let config = config::SchedulerConfig::load(path).unwrap_or_else(|e| panic!("{e}"));
     run_with_loaded_config(config).await;
 }
 
@@ -55,7 +55,7 @@ async fn run_with_loaded_config(config: config::SchedulerConfig) {
         config.apiserver.auth,
         config.apiserver.tls,
     )
-    .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
+    .unwrap_or_else(|e| panic!("tugboat-scheduler failed to configure tugboat client: {e}"));
 
     let mut fw = framework::Framework::new();
     for name in &config.scheduler.plugins.filter {

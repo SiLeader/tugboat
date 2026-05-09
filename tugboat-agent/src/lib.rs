@@ -38,7 +38,7 @@ struct Args {
 
 pub async fn run() {
     let args = Args::parse();
-    let config = config::AgentConfig::load_or_panic(args.config);
+    let config = config::AgentConfig::load(args.config).unwrap_or_else(|e| panic!("{e}"));
 
     let node_name = config.node.name.clone();
     let runtime_class = config.node.runtime_class.clone();
@@ -49,10 +49,10 @@ pub async fn run() {
         config.apiserver.auth,
         config.apiserver.tls,
     )
-    .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
+    .unwrap_or_else(|e| panic!("tugboat-agent failed to configure tugboat client: {e}"));
     node_registration::ensure_node_exists(client.clone(), node_name.clone(), runtime_class)
         .await
-        .unwrap_or_else(|e| panic!("Failed to ensure node resource exists: {e}"));
+        .unwrap_or_else(|e| panic!("tugboat-agent failed to ensure node resource exists: {e}"));
     let runtime_operator = RuntimeOperator::new(
         config.runtime,
         config.image.cache_dir,
@@ -65,11 +65,11 @@ pub async fn run() {
     cni_operator
         .initialize()
         .await
-        .unwrap_or_else(|e| panic!("Failed to initialize CNI operator: {e}"));
+        .unwrap_or_else(|e| panic!("tugboat-agent failed to initialize CNI operator: {e}"));
 
     node_registration::publish_node_status(client.clone(), &node_name, &cni_config)
         .await
-        .unwrap_or_else(|e| panic!("Failed to publish node CNI status: {e}"));
+        .unwrap_or_else(|e| panic!("tugboat-agent failed to publish node CNI status: {e}"));
     tokio::spawn(node_registration::refresh_node_status_loop(
         client.clone(),
         node_name.clone(),

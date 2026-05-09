@@ -28,13 +28,15 @@ mod service_account_token_controller;
 mod workload;
 
 pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
-    let config = ControllerManagerConfig::load_or_panic(path);
+    let config = ControllerManagerConfig::load(path).unwrap_or_else(|e| panic!("{e}"));
     let client = TugboatClient::try_new(
         config.apiserver.url.clone(),
         config.apiserver.auth.clone(),
         config.apiserver.tls.clone(),
     )
-    .unwrap_or_else(|e| panic!("Failed to configure tugboat client: {e}"));
+    .unwrap_or_else(|e| {
+        panic!("tugboat-controller-manager failed to configure tugboat client: {e}")
+    });
     let csi_operator = TugboatCsiOperator::with_timeouts(config.csi.timeouts());
 
     let mut tcm = TugboatControllerManager::new();

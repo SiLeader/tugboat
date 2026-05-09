@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use serde::Deserialize;
+use std::path::Path;
 use tugboat_client::{ClientAuth, ClientTlsConfig};
+use tugboat_runtime_common::config::{ConfigLoadError, load_component_toml_config};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SchedulerConfig {
@@ -93,8 +95,54 @@ fn default_score_plugins() -> Vec<String> {
 }
 
 impl SchedulerConfig {
-    pub(crate) fn load_or_panic(path: impl AsRef<std::path::Path>) -> Self {
-        let content = std::fs::read_to_string(path).expect("Failed to read config file");
-        toml::from_str(&content).expect("Failed to parse config file as TOML")
+    pub(crate) fn load(path: impl AsRef<Path>) -> Result<Self, ConfigLoadError> {
+        load_component_toml_config("tugboat-scheduler", path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SchedulerConfig;
+
+    #[test]
+    fn sample_config_deserializes() {
+        let config = SchedulerConfig::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sample-configs/scheduler/config.toml"
+        ))
+        .unwrap();
+
+        assert_eq!(config.scheduler.name, "default-scheduler");
+        assert_eq!(config.apiserver.url, "https://apiserver:8443");
+        assert!(
+            config
+                .scheduler
+                .plugins
+                .filter
+                .contains(&"NetworkFit".to_string())
+        );
+    }
+
+    #[test]
+    fn installer_config_template_deserializes_after_rendering() {
+        let template = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../installer/systemd/configs/scheduler.config.toml.tpl"
+        ));
+        let rendered = template
+            .replace("${APISERVER_URL}", "https://apiserver:8443")
+            .replace(
+                "${APISERVER_CLIENT_TLS_CONFIG}",
+                "[apiserver.tls]\nca_cert_path = \"/etc/tugboat/pki/ca.crt\"",
+            )
+            .replace(
+                "${SCHEDULER_APISERVER_AUTH_CONFIG}",
+                "[apiserver.auth]\ntype = \"service-account\"\ntoken_path = \"/var/run/secrets/tugboat.cloud/serviceaccount/token\"",
+            );
+
+        let config: SchedulerConfig = toml::from_str(&rendered).unwrap();
+
+        assert_eq!(config.scheduler.name, "default-scheduler");
+        assert_eq!(config.apiserver.url, "https://apiserver:8443");
     }
 }

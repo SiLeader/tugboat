@@ -23,3 +23,4 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tugboat-client.workspace = true
 tugboat-csi-operator.workspace = true
 tugboat-resources.workspace = true
+tugboat-runtime-common.workspace = true

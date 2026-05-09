@@ -3,7 +3,8 @@ disk_image_location = "/var/lib/tugboat-agent/images"
 
 [qemu.executables]
 qemu = "/usr/bin/qemu-system-x86_64"
-qemu_img = "/usr/bin/qemu-img"
+ip = "/usr/sbin/ip"
+tc = "/usr/sbin/tc"
 
 [qemu.kvm]
 enabled = true

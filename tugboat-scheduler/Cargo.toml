@@ -21,6 +21,7 @@ license.workspace = true
 [dependencies]
 tugboat-client.workspace = true
 tugboat-resources.workspace = true
+tugboat-runtime-common.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true

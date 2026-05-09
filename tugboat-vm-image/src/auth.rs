@@ -15,11 +15,9 @@
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use oci_distribution::secrets::RegistryAuth;
-use regex::Regex;
 use std::collections::HashMap;
 use std::env::home_dir;
 use std::fs::File;
-use std::sync::LazyLock;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,9 +38,6 @@ pub(crate) async fn load_auth_or_anonymous(host: &str) -> RegistryAuth {
     load_auth(host).await.unwrap_or(RegistryAuth::Anonymous)
 }
 
-static HTTP_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"^https?://([^/]+).*$"#).unwrap());
-
 async fn load_auth(host: &str) -> Option<RegistryAuth> {
     let home = home_dir()?;
     let config = home.join(".docker/config.json");
@@ -53,7 +48,7 @@ async fn load_auth(host: &str) -> Option<RegistryAuth> {
     let cred_helpers: HashMap<_, _> = config
         .cred_helpers
         .into_iter()
-        .map(|(k, v)| (HTTP_REGEX.replace(&k, "$1").to_string(), v))
+        .map(|(k, v)| (docker_registry_key_host(&k), v))
         .collect();
     if let Some(helper) = cred_helpers.get(host)
         && let Some(auth) = call_helper(helper, host).await
@@ -72,7 +67,7 @@ async fn load_auth(host: &str) -> Option<RegistryAuth> {
     let auths: HashMap<_, _> = config
         .auths
         .into_iter()
-        .map(|(k, v)| (HTTP_REGEX.replace(&k, "$1").to_string(), v.auth))
+        .map(|(k, v)| (docker_registry_key_host(&k), v.auth))
         .collect();
     if let Some(Some(auth)) = auths.get(host) {
         let auth = String::from_utf8(BASE64_STANDARD.decode(auth).ok()?).ok()?;
@@ -81,6 +76,18 @@ async fn load_auth(host: &str) -> Option<RegistryAuth> {
     }
 
     None
+}
+
+fn docker_registry_key_host(key: &str) -> String {
+    let without_scheme = key
+        .strip_prefix("https://")
+        .or_else(|| key.strip_prefix("http://"))
+        .unwrap_or(key);
+    without_scheme
+        .split('/')
+        .next()
+        .unwrap_or(without_scheme)
+        .to_string()
 }
 
 #[derive(serde::Deserialize)]
@@ -132,4 +139,22 @@ async fn call_helper(helper: &str, host: &str) -> Option<RegistryAuth> {
     let stdout = stdout_task.await.ok()?;
     let res: HelperOutput = serde_json::from_slice(&stdout).ok()?;
     Some(RegistryAuth::Basic(res.username, res.secret))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::docker_registry_key_host;
+
+    #[test]
+    fn docker_registry_key_host_strips_scheme_and_path() {
+        assert_eq!(
+            docker_registry_key_host("https://index.docker.io/v1/"),
+            "index.docker.io"
+        );
+        assert_eq!(
+            docker_registry_key_host("http://localhost:5000/v2"),
+            "localhost:5000"
+        );
+        assert_eq!(docker_registry_key_host("ghcr.io"), "ghcr.io");
+    }
 }

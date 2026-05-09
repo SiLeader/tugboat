@@ -15,10 +15,12 @@
 use crate::runtime::RuntimeConfig;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::Duration;
 use tugboat_client::{ClientAuth, ClientTlsConfig};
 use tugboat_cni_operator::CniOperatorConfig;
 use tugboat_csi_operator::CsiTimeouts;
+use tugboat_runtime_common::config::{ConfigLoadError, load_component_toml_config};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentConfig {
@@ -85,9 +87,8 @@ fn default_csi_rpc_timeout_seconds() -> u64 {
 }
 
 impl AgentConfig {
-    pub(crate) fn load_or_panic(path: impl AsRef<std::path::Path>) -> Self {
-        let content = std::fs::read_to_string(path).expect("Failed to read config file");
-        toml::from_str(&content).expect("Failed to parse config file as TOML")
+    pub(crate) fn load(path: impl AsRef<Path>) -> Result<Self, ConfigLoadError> {
+        load_component_toml_config("tugboat-agent", path)
     }
 }
 
@@ -103,5 +104,53 @@ impl CsiConfig {
             socket_connect_timeout: Duration::from_secs(self.socket_connect_timeout_seconds),
             rpc_call_timeout: Duration::from_secs(self.rpc_timeout_seconds),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentConfig;
+
+    #[test]
+    fn sample_config_deserializes() {
+        let config = AgentConfig::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sample-configs/agent/config.toml"
+        ))
+        .unwrap();
+
+        assert_eq!(config.node.name, "node1");
+        assert_eq!(config.apiserver.url, "https://apiserver:8443");
+        assert_eq!(config.csi.publish_dir, "/var/lib/tugboat-agent/csi");
+    }
+
+    #[test]
+    fn installer_config_template_deserializes_after_rendering() {
+        let template = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../installer/systemd/configs/agent.config.toml.tpl"
+        ));
+        let rendered = template
+            .replace("${NODE_NAME}", "node-a")
+            .replace("${RUNTIME_BINARY}", "tugboat-qemu-runtime")
+            .replace("${RUNTIME_CONFIG_FILE}", "runtime-qemu.config.toml")
+            .replace("${APISERVER_URL}", "https://apiserver:8443")
+            .replace(
+                "${APISERVER_CLIENT_TLS_CONFIG}",
+                "[apiserver.tls]\nca_cert_path = \"/etc/tugboat/pki/ca.crt\"",
+            )
+            .replace(
+                "${AGENT_APISERVER_AUTH_CONFIG}",
+                "[apiserver.auth]\ntype = \"service-account\"\ntoken_path = \"/var/run/secrets/tugboat.cloud/serviceaccount/token\"",
+            );
+
+        let config: AgentConfig = toml::from_str(&rendered).unwrap();
+
+        assert_eq!(config.node.name, "node-a");
+        assert_eq!(
+            config.runtime.executable,
+            "/usr/local/bin/tugboat-qemu-runtime"
+        );
+        assert_eq!(config.image.cache_dir, "/var/lib/tugboat-agent/images");
     }
 }

@@ -60,6 +60,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("TOML Error: {0}")]
     Toml(#[from] toml::de::Error),
+    #[error("{0}")]
+    Config(#[from] tugboat_runtime_common::config::ConfigLoadError),
     #[error("System call Error: {0}")]
     Syscall(#[from] Errno),
     #[error("Failed to setup network: {0}")]
@@ -114,7 +116,10 @@ pub fn run() {
             _ => {}
         }
 
-        let config: Config = tugboat_runtime_common::config::load_toml_config(&args.config)?;
+        let config: Config = tugboat_runtime_common::config::load_component_toml_config(
+            "tugboat-cloud-hypervisor-runtime",
+            &args.config,
+        )?;
         let Config { cloud_hypervisor } = config;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -189,6 +194,38 @@ impl From<Error> for tugboat_vm_runtime_interface::error::Error {
                     "format": "toml"
                 })),
             },
+            Error::Config(e) => {
+                let (kind, details) = match &e {
+                    tugboat_runtime_common::config::ConfigLoadError::Read {
+                        component,
+                        path,
+                        ..
+                    } => (
+                        ErrorKind::Io,
+                        serde_json::json!({
+                            "component": component,
+                            "path": path,
+                        }),
+                    ),
+                    tugboat_runtime_common::config::ConfigLoadError::ParseToml {
+                        component,
+                        path,
+                        ..
+                    } => (
+                        ErrorKind::Serialization,
+                        serde_json::json!({
+                            "component": component,
+                            "path": path,
+                            "format": "toml",
+                        }),
+                    ),
+                };
+                Self {
+                    kind,
+                    message: e.to_string(),
+                    details: Some(details),
+                }
+            }
             Error::Syscall(e) => Self {
                 kind: ErrorKind::Syscall,
                 message: e.to_string(),
@@ -292,6 +329,24 @@ initramfs = "/var/lib/tugboat-agent/initramfs.img"
         );
         assert_eq!(config.cloud_hypervisor.boot.initramfs, None);
         assert_eq!(config.cloud_hypervisor.boot.firmware, None);
+    }
+
+    #[test]
+    fn cloud_hypervisor_installer_config_template_deserializes_from_toml() {
+        let config = toml::from_str::<Config>(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../installer/systemd/configs/runtime-cloud-hypervisor.config.toml.tpl"
+        )))
+        .unwrap();
+
+        assert_eq!(
+            config.cloud_hypervisor.disk_image_location,
+            "/var/lib/tugboat-agent/images"
+        );
+        assert_eq!(
+            config.cloud_hypervisor.boot.kernel.as_deref(),
+            Some("/var/lib/tugboat-agent/vmlinux")
+        );
     }
 
     #[test]
