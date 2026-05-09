@@ -183,3 +183,17 @@ jobs:
             -f installer/systemd/test/docker-compose.test.yml \
             -p "${TUGBOAT_TEST_PROJECT_NAME:-tugboat-systemd-test}" \
             down -v
+
+  e2e-required:
+    if: always()
+    needs: e2e-test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all e2e scenarios to pass
+        shell: bash
+        run: |
+          if [[ "${{ needs.e2e-test.result }}" != "success" ]]; then
+            echo "e2e-test result: ${{ needs.e2e-test.result }}" >&2
+            echo "One or more installer-systemd e2e scenarios did not pass." >&2
+            exit 1
+          fi
