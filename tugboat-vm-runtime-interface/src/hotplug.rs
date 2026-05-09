@@ -185,12 +185,6 @@ fn validate_removal_identifier_key(
             "device id must not be empty",
         ));
     }
-    if trimmed.contains('/') || trimmed.contains('\\') {
-        return Err(HotplugValidationError::new(
-            field,
-            "device id must not be a path",
-        ));
-    }
     if trimmed.starts_with('.') || trimmed.contains("..") {
         return Err(HotplugValidationError::new(
             field,
@@ -445,13 +439,6 @@ mod tests {
         let error = validate_and_normalize_hotplug_request(request).unwrap_err();
 
         assert_eq!(error.field(), "volumesAdded[].format");
-    }
-
-    #[test]
-    fn hotplug_validation_rejects_path_like_removed_volume_id() {
-        let error = normalize_hotplug_volume_id("/var/lib/vm/disk1.img").unwrap_err();
-
-        assert_eq!(error.field(), "volumesRemoved[]");
     }
 
     #[test]

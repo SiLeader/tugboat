@@ -19,9 +19,12 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use tracing::debug;
 
+use tugboat_resources::manifests::meta::v1::ObjectMeta;
+
 #[derive(Deserialize)]
-struct ListResponse<T> {
-    items: Vec<T>,
+pub struct ListResponse<T> {
+    pub metadata: ObjectMeta,
+    pub items: Vec<T>,
 }
 
 impl TugboatClient {
@@ -47,6 +50,12 @@ impl TugboatClient {
     ) -> Result<Vec<T>, Error> {
         let list: ListResponse<T> = Self::parse_impl(response).await?;
         Ok(list.items)
+    }
+
+    pub(crate) async fn parse_response_list_full<T: DeserializeOwned>(
+        response: Response,
+    ) -> Result<ListResponse<T>, Error> {
+        Self::parse_impl(response).await
     }
 
     async fn parse_impl<T: DeserializeOwned>(response: Response) -> Result<T, Error> {

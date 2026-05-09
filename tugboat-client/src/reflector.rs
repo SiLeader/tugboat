@@ -31,11 +31,14 @@ where
         &self,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
-        let watch_stream = self.watch_raw(params).await?;
-        let initial = self.list_with_params(params).await?;
+        let initial_list = self.list_with_params_full(params).await?;
+        let mut watch_params = params.clone();
+        watch_params.resource_version = initial_list.metadata.resource_version;
+
+        let watch_stream = self.watch_raw(watch_params).await?;
 
         Ok(stream! {
-            for item in initial {
+            for item in initial_list.items {
                 yield Ok(WatchEvent::Added(item));
             }
             futures::pin_mut!(watch_stream);

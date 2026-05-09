@@ -34,7 +34,13 @@ struct Args {
 
 pub async fn run() {
     let args = Args::parse();
-    let config = config::SchedulerConfig::load(args.config).unwrap_or_else(|e| panic!("{e}"));
+    let config = match config::SchedulerConfig::load(args.config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("tugboat-scheduler failed to load configuration: {e}");
+            std::process::exit(1);
+        }
+    };
     tokio::select! {
         _ = run_with_loaded_config(config) => {}
         _ = wait_for_shutdown_signal() => {
@@ -45,7 +51,13 @@ pub async fn run() {
 }
 
 pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
-    let config = config::SchedulerConfig::load(path).unwrap_or_else(|e| panic!("{e}"));
+    let config = match config::SchedulerConfig::load(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("tugboat-scheduler failed to load configuration: {e}");
+            std::process::exit(1);
+        }
+    };
     run_with_loaded_config(config).await;
 }
 
@@ -55,7 +67,10 @@ async fn run_with_loaded_config(config: config::SchedulerConfig) {
         config.apiserver.auth,
         config.apiserver.tls,
     )
-    .unwrap_or_else(|e| panic!("tugboat-scheduler failed to configure tugboat client: {e}"));
+    .unwrap_or_else(|e| {
+        eprintln!("tugboat-scheduler failed to configure tugboat client: {e}");
+        std::process::exit(1);
+    });
 
     let mut fw = framework::Framework::new();
     for name in &config.scheduler.plugins.filter {

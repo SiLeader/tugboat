@@ -56,7 +56,7 @@ impl TugboatClient {
     pub(crate) async fn watch_impl<T: DeserializeOwned>(
         &self,
         path: String,
-        params: &WatchParams,
+        params: WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
         let mut url = self.build_url(&path);
         {

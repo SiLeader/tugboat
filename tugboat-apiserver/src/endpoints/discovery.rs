@@ -96,12 +96,12 @@ fn status_subresource_entry(resource: resource_registry::ResourceApiDescriptor) 
     }
 }
 
-fn expand_resources(resources: Vec<resource_registry::ResourceApiDescriptor>) -> Vec<ApiResource> {
+fn expand_resources(resources: &[resource_registry::ResourceApiDescriptor]) -> Vec<ApiResource> {
     let mut entries = Vec::new();
     for resource in resources {
-        entries.push(resource_entry(resource));
+        entries.push(resource_entry(*resource));
         if resource.operations.has_status_subresource() {
-            entries.push(status_subresource_entry(resource));
+            entries.push(status_subresource_entry(*resource));
         }
     }
     entries
@@ -133,7 +133,7 @@ pub(super) async fn handle_api_v1_resources() -> HttpResponse {
         kind: "APIResourceList",
         api_version: "v1",
         group_version: "v1".to_string(),
-        resources: expand_resources(resources),
+        resources: expand_resources(&resources),
     })
 }
 
@@ -206,7 +206,7 @@ pub(super) async fn handle_api_group_version_resources(
         kind: "APIResourceList",
         api_version: "v1",
         group_version: format!("{}/{}", path.group, path.version),
-        resources: expand_resources(resources),
+        resources: expand_resources(&resources),
     }))
 }
 

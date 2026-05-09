@@ -38,7 +38,13 @@ struct Args {
 
 pub async fn run() {
     let args = Args::parse();
-    let config = config::AgentConfig::load(args.config).unwrap_or_else(|e| panic!("{e}"));
+    let config = match config::AgentConfig::load(args.config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("tugboat-agent failed to load configuration: {e}");
+            std::process::exit(1);
+        }
+    };
 
     let node_name = config.node.name.clone();
     let runtime_class = config.node.runtime_class.clone();
@@ -49,10 +55,16 @@ pub async fn run() {
         config.apiserver.auth,
         config.apiserver.tls,
     )
-    .unwrap_or_else(|e| panic!("tugboat-agent failed to configure tugboat client: {e}"));
+    .unwrap_or_else(|e| {
+        eprintln!("tugboat-agent failed to configure tugboat client: {e}");
+        std::process::exit(1);
+    });
     node_registration::ensure_node_exists(client.clone(), node_name.clone(), runtime_class)
         .await
-        .unwrap_or_else(|e| panic!("tugboat-agent failed to ensure node resource exists: {e}"));
+        .unwrap_or_else(|e| {
+            eprintln!("tugboat-agent failed to ensure node resource exists: {e}");
+            std::process::exit(1);
+        });
     let runtime_operator = RuntimeOperator::new(
         config.runtime,
         config.image.cache_dir,
@@ -62,14 +74,17 @@ pub async fn run() {
         tugboat_csi_operator::TugboatCsiOperator::with_timeouts(config.csi.timeouts());
     let cni_operator = tugboat_cni_operator::TugboatCniOperator::new(config.cni);
 
-    cni_operator
-        .initialize()
-        .await
-        .unwrap_or_else(|e| panic!("tugboat-agent failed to initialize CNI operator: {e}"));
+    cni_operator.initialize().await.unwrap_or_else(|e| {
+        eprintln!("tugboat-agent failed to initialize CNI operator: {e}");
+        std::process::exit(1);
+    });
 
     node_registration::publish_node_status(client.clone(), &node_name, &cni_config)
         .await
-        .unwrap_or_else(|e| panic!("tugboat-agent failed to publish node CNI status: {e}"));
+        .unwrap_or_else(|e| {
+            eprintln!("tugboat-agent failed to publish node CNI status: {e}");
+            std::process::exit(1);
+        });
     tokio::spawn(node_registration::refresh_node_status_loop(
         client.clone(),
         node_name.clone(),
