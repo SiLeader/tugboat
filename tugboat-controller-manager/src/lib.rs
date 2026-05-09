@@ -25,6 +25,7 @@ mod pv_cleanup;
 mod pvc_provisioner;
 mod replicaset;
 mod service_account_token_controller;
+mod workload;
 
 pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
     let config = ControllerManagerConfig::load_or_panic(path);

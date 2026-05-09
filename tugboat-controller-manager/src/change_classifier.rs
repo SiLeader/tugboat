@@ -2,7 +2,7 @@ use tugboat_resources::manifests::apps::v1::ShipTemplateSpec;
 use tugboat_resources::manifests::core::v1::RuntimeClass;
 
 #[allow(dead_code)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TemplateChangeKind {
     NoChange,
     InPlace,

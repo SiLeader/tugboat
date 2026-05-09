@@ -1,3 +1,4 @@
+use crate::workload::{SHIP_TEMPLATE_HASH_LABEL, is_controlled_by, owner_reference_for};
 use std::collections::HashMap;
 use tugboat_resources::manifests::apps::v1::{
     Deployment, DeploymentStatus, ReplicaSet, ReplicaSetSpec,
@@ -9,36 +10,11 @@ pub(super) const REPLICASET_UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.cloud/up
 pub(super) const REPLICASET_UPDATE_STRATEGY_ALL: &str = "all";
 
 pub(super) fn owner_reference_for_deployment(dep: &Deployment) -> OwnerReference {
-    OwnerReference {
-        api_version: "apps/v1".to_string(),
-        kind: "Deployment".to_string(),
-        name: dep.name().unwrap_or_default().to_string(),
-        uid: dep
-            .object_meta()
-            .as_ref()
-            .and_then(|meta| meta.uid.as_deref())
-            .unwrap_or_default()
-            .to_string(),
-        controller: Some(true),
-    }
+    owner_reference_for(dep)
 }
 
 pub(super) fn is_owned_by_deployment(rs: &ReplicaSet, dep: &Deployment) -> bool {
-    let dep_name = dep.name().unwrap_or_default();
-    let dep_uid = dep
-        .object_meta()
-        .as_ref()
-        .and_then(|meta| meta.uid.as_deref());
-
-    rs.object_meta().as_ref().is_some_and(|meta| {
-        meta.owner_references.iter().any(|owner_ref| {
-            owner_ref.kind == "Deployment"
-                && owner_ref.name == dep_name
-                && dep_uid
-                    .map(|uid| owner_ref.uid == uid)
-                    .unwrap_or_else(|| owner_ref.uid.is_empty())
-        })
-    })
+    is_controlled_by(rs.object_meta().as_ref(), dep, "Deployment")
 }
 
 pub(super) fn managed_replicasets<'a>(
@@ -132,10 +108,10 @@ pub(super) fn build_replicaset_with_replicas(
     let dep_namespace = dep.namespace().map(str::to_string);
     let dep_spec = dep.spec.as_ref().cloned().unwrap_or_default();
     let mut selector = dep_spec.selector;
-    selector.insert("ship-template-hash".to_string(), hash.to_string());
+    selector.insert(SHIP_TEMPLATE_HASH_LABEL.to_string(), hash.to_string());
 
     let mut labels: HashMap<String, String> = selector.clone();
-    labels.insert("ship-template-hash".to_string(), hash.to_string());
+    labels.insert(SHIP_TEMPLATE_HASH_LABEL.to_string(), hash.to_string());
 
     let mut rs = ReplicaSet {
         object_meta: Some(ObjectMeta {
