@@ -31,8 +31,8 @@ where
         &self,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
-        let initial = self.list_with_params(params).await?;
         let watch_stream = self.watch_raw(params).await?;
+        let initial = self.list_with_params(params).await?;
 
         Ok(stream! {
             for item in initial {

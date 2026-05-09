@@ -240,6 +240,31 @@ async fn ship_watch_respects_resource_version() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn ship_watch_rejects_invalid_resource_version() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let client = ctx.http_client()?;
+    create_namespace(&client, &ctx.base_url, "test-ns").await?;
+
+    let response = client
+        .get(format!(
+            "{}/api/v1/namespaces/test-ns/ships?watch=True&resourceVersion=latest",
+            ctx.base_url
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: Value = response.json().await?;
+    assert_eq!(body["reason"], "BadRequest");
+    assert_eq!(body["details"]["field"], "resourceVersion");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn ship_watch_respects_label_selectors() -> Result<(), DynError> {
     let Some(ctx) = setup_or_skip().await? else {
         return Ok(());
