@@ -12,25 +12,31 @@ cargo build --release
 cargo build --release --package tugboat-apiserver
 
 # Run tests
-cargo test
+cargo test --workspace --all-targets
 cargo test --package tugboat-resources
 
 # Lint & format
-cargo clippy
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --check
 cargo fmt  # auto-format
 
-# Dependency security audit (uses deny.toml)
+# Dependency policy and security audit (uses deny.toml)
 cargo deny check
 ```
 
-### Final checks (pre-merge)
+### Required Gates
 
-As a final verification before merging or releasing, run the following commands and address any issues they report:
+Run the PR gate before merging changes:
 
-- cargo clippy
-- cargo fmt --check
-- cargo test
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets
+cargo deny check
+```
+
+`cargo deny check` is both a PR gate and a release-blocking gate. Release verification also includes the fixed installer
+scenario set in `docs/verification-guide.md`.
 
 Packages: `tugboat-resources`, `tugboat-apiserver`, `tugboat-agent`, `tugboat-qemu-runtime`,
 `tugboat-cloud-hypervisor-runtime`, `tugboat-resource-store`, `tugboat-client`, `tugboat-cli`,
@@ -40,14 +46,16 @@ Packages: `tugboat-resources`, `tugboat-apiserver`, `tugboat-agent`, `tugboat-qe
 ## Architecture
 
 Tugboat is a Kubernetes-inspired VM orchestration system written in Rust. It manages VMs declaratively
-using etcd as the single source of truth, with direct QEMU execution (no libvirt).
+using etcd as the single source of truth. QEMU and Cloud Hypervisor are implemented as runtime command backends.
+
+Use `docs/architecture.md` as the public overview of current crate boundaries and extension points.
 
 ### Component Dependency Graph
 
 ```
 tugboat-apiserver (actix-web REST API)
   ├─ tugboat-resources (with "schema" feature for OpenAPI)
-  └─ tugboat-resource-store (etcd wrapper)
+  └─ tugboat-resource-store (etcd CRUD/watch wrapper)
 
 tugboat-agent (node reconciler)
   ├─ tugboat-client (HTTP client)
@@ -66,16 +74,18 @@ tugboat-scheduler (ship scheduler)
   ├─ tugboat-client
   └─ tugboat-resources
 
-tugboat-csi-operator (storage operator)
-  └─ tugboat-resources (implicit via proto)
+tugboat-cni-operator / tugboat-csi-operator (node integration operators)
+  └─ external process/protocol boundaries
 
 tugboat-qemu-runtime (QEMU executor)
   ├─ tugboat-resources
-  └─ tugboat-vm-runtime-interface
+  ├─ tugboat-vm-runtime-interface
+  └─ tugboat-runtime-common
 
 tugboat-cloud-hypervisor-runtime (Cloud Hypervisor executor)
   ├─ tugboat-resources
-  └─ tugboat-vm-runtime-interface
+  ├─ tugboat-vm-runtime-interface
+  └─ tugboat-runtime-common
 ```
 
 ### Resource System (tugboat-resources)
@@ -86,7 +96,7 @@ using prost-build. The build script applies serde + optional utoipa (OpenAPI) de
 API groups and their resources:
 
 - **core/v1**: Ship, ShipClass, Node, Namespace, PersistentVolume, PersistentVolumeClaim,
-  NetworkClass, ClusterNetworkClass, Secret, RuntimeClass, StorageClass, ConfigMap
+  NetworkClass, ClusterNetworkClass, Secret, ServiceAccount, RuntimeClass, StorageClass, ConfigMap
 - **apps/v1**: Deployment, ReplicaSet, Fleet
 - **authorization/v1**: Role, RoleBinding, ClusterRole, ClusterRoleBinding
 - **coordination/v1**: Lease
@@ -111,11 +121,12 @@ Endpoints live in `tugboat-apiserver/src/endpoints/` organized by API group:
 
 - `v1_core/` – core/v1 resources
 - `v1_apps/` – apps/v1 resources (Deployment, ReplicaSet, Fleet)
+- `v1_authorization/` – authorization/v1 RBAC resources
 - `v1_coordination/` – coordination/v1 resources (Lease)
 
-Each resource has separate files for create, list, read, and other operations.
-All resources are registered centrally in `endpoints/resource_registry.rs`, which wires routes and exposes discovery
-verbs from the shared resource metadata descriptors.
+Each resource has a thin endpoint wrapper. All resources are registered centrally in
+`endpoints/resource_registry.rs`, which wires routes and exposes discovery verbs from the shared resource metadata
+descriptors.
 
 Key patterns:
 
@@ -136,7 +147,16 @@ Runs multiple reconciliation controllers as concurrent tasks:
 - **FleetController** – manages Fleet workloads (DaemonSet-equivalent), creates ReplicaSets per component
 - **DeploymentController** – manages Deployment rollouts via ReplicaSets
 - **ReplicaSetController** – manages individual Ship replicas for a ReplicaSet
+- **NamespaceDefaultServiceAccountController** – creates the default ServiceAccount in each Namespace
+- **ServiceAccountTokenController** – creates service-account-token Secrets
 - **PersistentVolumeCleanupController** – deletes CSI-backed PVs when released
+
+Shared controller boundaries:
+
+- `base.rs` and `error.rs` define the controller runtime surface used inside controller-manager
+- `workload/mod.rs` contains selector, owner reference, and workload helper logic
+- `deployment/rs_ops.rs` and `deployment/template_hash.rs` isolate Deployment-to-ReplicaSet behavior
+- `replicaset/scale.rs`, `ship_builder.rs`, `status.rs`, and `template_update.rs` split ReplicaSet responsibilities
 
 Config path: `/etc/tugboat/controller-manager/config.toml`
 
@@ -148,9 +168,23 @@ Follow `docs/resource-registration.md`. The short version is:
 2. Add one descriptor in `tugboat-resources/src/resource_api.rs`
 3. Register the generated type with `apply_resource!` and `apply_validators!` in
    `tugboat-resources/src/manifests/mod.rs`
-4. Create endpoint files in `tugboat-apiserver/src/endpoints/v1_{group}/`
+4. Create thin endpoint wrapper files in `tugboat-apiserver/src/endpoints/v1_{group}/`
 5. Wire the descriptor to the endpoint wrapper in `tugboat-apiserver/src/endpoints/resource_registry.rs`
 6. Add the resource type to `tugboat-resource-store/src/serializer/mod.rs` via `protobuf_serializable!`
+7. Add or update descriptor, serializer, discovery, RBAC, and integration tests listed in `docs/resource-registration.md`
+
+### Adding a Controller
+
+Controller-manager controllers implement the local trait in `tugboat-controller-manager/src/base.rs`, return errors
+through `error.rs`, and are registered in `tugboat-controller-manager/src/lib.rs`. Workload controllers should reuse
+`workload/`, `deployment/rs_ops.rs`, and `replicaset/` helpers before adding new cross-controller helpers.
+
+### Adding a Runtime Command
+
+Runtime command names and JSON payloads are external contracts. Add request/response structs and shared logical
+validation in `tugboat-vm-runtime-interface`; put config, path, signal, and process helpers in
+`tugboat-runtime-common`; then implement backend-specific loading, planning, API calls, rollback, and reporting in
+both runtime crates when the command is supported by both backends.
 
 ### Configuration
 

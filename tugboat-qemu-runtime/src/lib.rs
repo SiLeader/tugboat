@@ -38,8 +38,6 @@ pub enum Error {
     Config(#[from] tugboat_runtime_common::config::ConfigLoadError),
     #[error("System call Error: {0}")]
     Syscall(#[from] Errno),
-    #[error("Failed to setup network: {0}")]
-    NetworkSetupFailed(String),
     #[error("QMP operation failed: {0}")]
     Qmp(String),
     #[error("Action failed: {0}")]
@@ -197,11 +195,6 @@ impl From<Error> for tugboat_vm_runtime_interface::error::Error {
                     "errno": e as i32,
                 })),
             },
-            Error::NetworkSetupFailed(message) => Self {
-                kind: ErrorKind::Network,
-                message,
-                details: None,
-            },
             Error::Qmp(message) => Self {
                 kind: ErrorKind::VmOperation,
                 message,
@@ -247,8 +240,6 @@ mod tests {
 
         assert_eq!(config.qemu.disk_image_location, "./test/data");
         assert_eq!(config.qemu.executables.qemu, "/usr/bin/qemu-system-x86_64");
-        assert_eq!(config.qemu.executables.ip, "/usr/sbin/ip");
-        assert_eq!(config.qemu.executables.tc, "/usr/sbin/tc");
     }
 
     #[test]
@@ -263,7 +254,6 @@ mod tests {
             config.qemu.disk_image_location,
             "/var/lib/tugboat-agent/images"
         );
-        assert_eq!(config.qemu.executables.ip, "/usr/sbin/ip");
-        assert_eq!(config.qemu.executables.tc, "/usr/sbin/tc");
+        assert_eq!(config.qemu.executables.qemu, "/usr/bin/qemu-system-x86_64");
     }
 }
