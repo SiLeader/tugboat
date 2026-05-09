@@ -18,9 +18,7 @@ use crate::csi::{
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::ops::add_helpers::{validate_recovered_published_volumes, vm_volume_config};
-use crate::reconciler::ops::{
-    PHASE_COMPLETED, PHASE_FAILED, PHASE_MIGRATING, PHASE_PENDING, PHASE_READY,
-};
+use crate::reconciler::ops::{PHASE_FAILED, PHASE_READY};
 use crate::reconciler::reconcile::AppendStatus;
 use crate::reconciler::volume::VolumeInfo;
 use crate::runtime::RuntimeCreateRequest;
@@ -29,125 +27,17 @@ use std::future::Future;
 use tracing::{debug, error, info, warn};
 use tugboat_client::Api;
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{Node, Ship, ShipCondition, ShipSpec};
+use tugboat_resources::manifests::core::v1::{Node, Ship, ShipCondition};
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CleanupSecretPolicy {
-    BestEffort,
-    RequireControllerPublishSecrets,
-}
-
-fn best_effort_stale_volume_cleanup<T>(
-    namespace: &str,
-    claim_name: &str,
-    result: Result<T, ReconcileError>,
-) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(err) => {
-            // The PVC or its referenced Secret may have already been deleted.
-            // We deliberately continue with no entry for this claim so that
-            // cleanup_published_volumes falls back to an empty secrets map and
-            // still attempts ControllerUnpublishVolume. This is best-effort:
-            // CSI drivers that require controller-publish secrets for unpublish
-            // may fail, but there is no way to recover the secrets at this point
-            // and blocking cleanup would permanently leak the volume attachment.
-            warn!(
-                "Failed to resolve stale volume '{}' secrets in namespace '{}', \
-                 proceeding with empty secrets for best-effort cleanup. \
-                 ControllerUnpublishVolume may fail and manual CSI cleanup may be required: {}",
-                claim_name, namespace, err
-            );
-            None
-        }
-    }
-}
-
-fn runtime_fingerprints_for_ship(
-    ship_spec: &ShipSpec,
-    local_node_name: &str,
-) -> Result<super::ShipFingerprints, ReconcileError> {
-    if ship_spec.target_node_name.as_deref() == Some(local_node_name) {
-        let mut migrated_spec = ship_spec.clone();
-        migrated_spec.node_name = Some(local_node_name.to_string());
-        migrated_spec.target_node_name = None;
-        super::ShipFingerprints::new(&migrated_spec)
-    } else {
-        super::ShipFingerprints::new(ship_spec)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RecoveredRuntimeAction {
-    Register,
-    RecreateTarget,
-    CleanupFailedTarget,
-}
-
 use super::upsert_ship_condition;
-
-fn recovered_runtime_action(ship: &Ship, local_node_name: &str) -> RecoveredRuntimeAction {
-    let Some(spec) = ship.spec.as_ref() else {
-        return RecoveredRuntimeAction::Register;
-    };
-    if spec.target_node_name.as_deref() != Some(local_node_name) {
-        return RecoveredRuntimeAction::Register;
-    }
-
-    match ship
-        .status
-        .as_ref()
-        .and_then(|status| status.migration.as_ref())
-        .map(|migration| migration.phase.as_str())
-    {
-        Some(PHASE_FAILED) => RecoveredRuntimeAction::CleanupFailedTarget,
-        None | Some(PHASE_PENDING) => RecoveredRuntimeAction::RecreateTarget,
-        Some(PHASE_READY | PHASE_MIGRATING | PHASE_COMPLETED) => RecoveredRuntimeAction::Register,
-        Some(_) => RecoveredRuntimeAction::Register,
-    }
-}
-
-fn controller_publish_secrets_for_cleanup(
-    volume: &PublishedVolume,
-    controller_publish_secrets: &HashMap<String, HashMap<String, String>>,
-    policy: CleanupSecretPolicy,
-) -> Result<HashMap<String, String>, String> {
-    match controller_publish_secrets.get(&volume.claim_name) {
-        Some(secrets) => Ok(secrets.clone()),
-        None if !volume.controller_published => Ok(HashMap::new()),
-        None if matches!(policy, CleanupSecretPolicy::BestEffort) => {
-            warn!(
-                "Missing controller publish secrets for stale CSI volume alias '{}' \
-                 (driver='{}', volume_id='{}'); cleanup will continue best-effort with empty \
-                 secrets and may require manual detach",
-                volume.claim_name, volume.driver, volume.volume_id
-            );
-            Ok(HashMap::new())
-        }
-        None => Err(format!(
-            "missing controller publish secrets for claim alias '{}' \
-             (driver='{}', volume_id='{}', target_path='{}')",
-            volume.claim_name, volume.driver, volume.volume_id, volume.target_path
-        )),
-    }
-}
-
-fn find_recovered_published_volume<'a>(
-    recovered_published_volumes: &'a [PublishedVolume],
-    claim_name: &str,
-    volume_id: &str,
-) -> Option<&'a PublishedVolume> {
-    recovered_published_volumes
-        .iter()
-        .find(|published| published.claim_name == claim_name)
-        .or_else(|| {
-            recovered_published_volumes
-                .iter()
-                .find(|published| published.volume_id == volume_id)
-        })
-}
+mod recovery;
+use recovery::{
+    CleanupSecretPolicy, RecoveredRuntimeAction, best_effort_stale_volume_cleanup,
+    controller_publish_secrets_for_cleanup, find_recovered_published_volume,
+    recovered_runtime_action, runtime_fingerprints_for_ship,
+};
 
 struct VolumeSetupGuard<'a> {
     reconciler: &'a ShipReconciler,

@@ -33,6 +33,18 @@ use tugboat_vm_runtime_interface::run::VmVolumeConfig;
 
 use super::migration::MigrationStateMachine;
 use super::{PHASE_COMPLETED, PHASE_FAILED};
+mod plan;
+use plan::{ModifyPlan, plan_modify_action};
+
+struct RuntimeReconfigureExecution<'a> {
+    ship: &'a Ship,
+    ship_id: &'a str,
+    namespace: &'a str,
+    ship_spec: &'a ShipSpec,
+    fingerprints: &'a super::ShipFingerprints,
+    spec_changed: bool,
+    pvc_changed: bool,
+}
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_modified(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -128,63 +140,91 @@ impl ShipReconciler {
             .matches_materialized_volume_fingerprint(ship_id, &fingerprints.materialized_volume)
             .await;
 
-        if !spec_changed && !pvc_changed && !mat_changed {
-            debug!("Ship '{}' runtime-significant spec is unchanged", ship_id);
-            // Even though the spec is unchanged, check for pending volume expansions
-            // since PV status updates are external to the Ship resource.
-            self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
-                .await;
+        match plan_modify_action(spec_changed, pvc_changed, mat_changed, &fingerprints) {
+            ModifyPlan::Unchanged => {
+                debug!("Ship '{}' runtime-significant spec is unchanged", ship_id);
+                // Even though the spec is unchanged, check for pending volume expansions
+                // since PV status updates are external to the Ship resource.
+                self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
+                    .await;
+                Ok(())
+            }
+            ModifyPlan::RuntimeReconfigure {
+                spec_changed,
+                pvc_changed,
+            } => {
+                self.execute_runtime_reconfigure_plan(RuntimeReconfigureExecution {
+                    ship: &ship,
+                    ship_id,
+                    namespace: &namespace,
+                    ship_spec,
+                    fingerprints: &fingerprints,
+                    spec_changed,
+                    pvc_changed,
+                })
+                .await
+            }
+            ModifyPlan::RefreshMaterializedVolumes {
+                materialized_volume_fingerprint,
+            } => {
+                debug!(
+                    "Ship '{}' materialized volumes changed; refreshing in-place",
+                    ship_id
+                );
+                self.refresh_materialized_volumes_for_ship_with_fingerprint(
+                    ship.clone(),
+                    Some(materialized_volume_fingerprint),
+                )
+                .await
+            }
+        }
+    }
+
+    async fn execute_runtime_reconfigure_plan(
+        &self,
+        plan: RuntimeReconfigureExecution<'_>,
+    ) -> Result<(), ReconcileError> {
+        if plan.spec_changed {
+            let migration_sm = MigrationStateMachine::new(self);
+            if migration_sm.try_reconcile(plan.ship, plan.ship_id).await? {
+                return Ok(());
+            }
+        }
+
+        if plan.ship.has_active_migration() {
+            debug!(
+                "Ship '{}' is migrating; skipping hotplug until migration settles",
+                plan.ship_id
+            );
             return Ok(());
         }
 
-        if spec_changed {
-            let migration_sm = MigrationStateMachine::new(self);
-            if migration_sm.try_reconcile(&ship, ship_id).await? {
-                return Ok(());
-            }
+        if self
+            .try_reconcile_hotplug(
+                plan.ship,
+                plan.ship_id,
+                plan.namespace,
+                plan.ship_spec,
+                plan.fingerprints,
+            )
+            .await?
+        {
+            return Ok(());
         }
 
-        if spec_changed || pvc_changed {
-            if ship.has_active_migration() {
-                debug!(
-                    "Ship '{}' is migrating; skipping hotplug until migration settles",
-                    ship_id
-                );
-                return Ok(());
-            }
-
-            if self
-                .try_reconcile_hotplug(&ship, ship_id, &namespace, ship_spec, &fingerprints)
-                .await?
-            {
-                return Ok(());
-            }
-
-            if spec_changed {
-                info!(
-                    "Ship '{}' VM spec changed (image/class/network/uefi); recreating",
-                    ship_id
-                );
-            }
-            if pvc_changed {
-                info!(
-                    "Ship '{}' PVC volume references changed; recreating",
-                    ship_id
-                );
-            }
-            return self.reconcile_recreate(ship).await;
+        if plan.spec_changed {
+            info!(
+                "Ship '{}' VM spec changed (image/class/network/uefi); recreating",
+                plan.ship_id
+            );
         }
-
-        // Only materialized volumes (ConfigMap / Secret) changed — refresh in-place.
-        debug!(
-            "Ship '{}' materialized volumes changed; refreshing in-place",
-            ship_id
-        );
-        self.refresh_materialized_volumes_for_ship_with_fingerprint(
-            ship,
-            Some(fingerprints.materialized_volume),
-        )
-        .await
+        if plan.pvc_changed {
+            info!(
+                "Ship '{}' PVC volume references changed; recreating",
+                plan.ship_id
+            );
+        }
+        self.reconcile_recreate(plan.ship.clone()).await
     }
 
     /// Recreate the VM by deleting it and then adding it again.
