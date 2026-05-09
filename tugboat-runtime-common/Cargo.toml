@@ -9,6 +9,7 @@ tugboat-vm-runtime-interface.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+toml.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 nix = { workspace = true, features = ["sched", "user", "signal", "fs", "mount"] }

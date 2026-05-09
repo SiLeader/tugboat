@@ -21,9 +21,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tracing::warn;
 use tugboat_runtime_common::config::load_config;
-use tugboat_runtime_common::validate::validate_safe_id;
 use tugboat_vm_runtime_interface::hotplug::{
     VmHotplugRequest, VmMemoryHotplugConfig, normalize_identifier_key, sanitize_identifier,
+    validate_and_normalize_hotplug_request,
 };
 use tugboat_vm_runtime_interface::run::{VmNetworkConfig, VmVolumeConfig, VmVolumeKind};
 
@@ -117,8 +117,8 @@ async fn execute_rollback(qmp: &mut QmpClient, actions: Vec<HotplugRollback>) {
 }
 
 pub async fn run(config: QemuVmConfig, args: HotplugArgs) -> crate::Result<()> {
-    let req: VmHotplugRequest = load_config(args.config)?;
-    validate_safe_id(&req.id, "vm id")?;
+    let req: VmHotplugRequest = validate_and_normalize_hotplug_request(load_config(args.config)?)
+        .map_err(|err| crate::Error::Validation(err.to_string()))?;
     let mut qmp = QmpClient::connect(config.get_uds_path(&req.id)).await?;
 
     let mut rollback: Vec<HotplugRollback> = Vec::new();

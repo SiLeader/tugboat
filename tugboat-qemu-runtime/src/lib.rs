@@ -88,8 +88,7 @@ pub fn run() {
             _ => {}
         }
 
-        let file = std::fs::read_to_string(&args.config)?;
-        let config: Config = toml::from_str(&file)?;
+        let config: Config = tugboat_runtime_common::config::load_toml_config(&args.config)?;
         let Config { qemu } = config;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -177,7 +176,7 @@ impl From<Error> for tugboat_vm_runtime_interface::error::Error {
                 details: None,
             },
             Error::Validation(message) => Self {
-                kind: ErrorKind::VmOperation,
+                kind: ErrorKind::Validation,
                 message,
                 details: None,
             },
@@ -190,6 +189,7 @@ impl From<tugboat_runtime_common::Error> for Error {
         match value {
             tugboat_runtime_common::Error::Io(e) => Self::Io(e),
             tugboat_runtime_common::Error::Json(e) => Self::Json(e),
+            tugboat_runtime_common::Error::Toml(e) => Self::Toml(e),
             tugboat_runtime_common::Error::Syscall(e) => Self::Syscall(e),
             tugboat_runtime_common::Error::Validation(message) => Self::Validation(message),
         }
