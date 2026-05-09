@@ -29,8 +29,8 @@ mod watch;
 
 pub use api::*;
 pub use error::*;
-pub use watch::*;
 pub use response::ListResponse;
+pub use watch::*;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -282,7 +282,9 @@ impl TugboatClient {
         self.list_impl_with_params(&path, params).await
     }
 
-    pub(crate) async fn list_cluster_scoped_with_params_full<T: StaticResource + DeserializeOwned>(
+    pub(crate) async fn list_cluster_scoped_with_params_full<
+        T: StaticResource + DeserializeOwned,
+    >(
         &self,
         params: &WatchParams,
     ) -> Result<response::ListResponse<T>, Error> {

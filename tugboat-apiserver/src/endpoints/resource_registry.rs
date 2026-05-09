@@ -112,7 +112,10 @@ pub(crate) fn all_resource_apis() -> &'static [ResourceApiDescriptor] {
                 &resource_api::REPLICA_SET,
                 v1_apps::register_replicaset,
             ),
-            ResourceApiDescriptor::new::<Role>(&resource_api::ROLE, v1_authorization::register_role),
+            ResourceApiDescriptor::new::<Role>(
+                &resource_api::ROLE,
+                v1_authorization::register_role,
+            ),
             ResourceApiDescriptor::new::<RoleBinding>(
                 &resource_api::ROLE_BINDING,
                 v1_authorization::register_role_binding,
@@ -135,7 +138,10 @@ pub(crate) fn all_resource_apis() -> &'static [ResourceApiDescriptor] {
                 &resource_api::STORAGE_CLASS,
                 v1_core::register_storage_class,
             ),
-            ResourceApiDescriptor::new::<Lease>(&resource_api::LEASE, v1_coordination::register_lease),
+            ResourceApiDescriptor::new::<Lease>(
+                &resource_api::LEASE,
+                v1_coordination::register_lease,
+            ),
         ]
     })
 }
