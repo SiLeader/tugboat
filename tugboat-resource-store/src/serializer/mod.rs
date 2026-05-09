@@ -95,9 +95,65 @@ protobuf_serializable!(ReplicaSet);
 #[cfg(test)]
 mod tests {
     use super::Serializable;
+    use super::StaticSerializable;
+    use std::collections::BTreeSet;
     use std::collections::HashMap;
+    use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
+    use tugboat_resources::manifests::authorization::v1::{
+        ClusterRole, ClusterRoleBinding, Role, RoleBinding,
+    };
+    use tugboat_resources::manifests::coordination::v1::Lease;
     use tugboat_resources::manifests::core::v1::ConfigMap;
+    use tugboat_resources::manifests::core::v1::{
+        ClusterNetworkClass, Namespace, NetworkClass, Node, PersistentVolume,
+        PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
+    };
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
+    use tugboat_resources::resource_api;
+
+    fn serializable_descriptor<T: StaticSerializable>() -> resource_api::ResourceApiDescriptor {
+        *T::descriptor()
+    }
+
+    fn registered_serializable_descriptors() -> Vec<resource_api::ResourceApiDescriptor> {
+        vec![
+            serializable_descriptor::<ClusterNetworkClass>(),
+            serializable_descriptor::<ClusterRole>(),
+            serializable_descriptor::<ClusterRoleBinding>(),
+            serializable_descriptor::<ConfigMap>(),
+            serializable_descriptor::<Deployment>(),
+            serializable_descriptor::<Fleet>(),
+            serializable_descriptor::<Lease>(),
+            serializable_descriptor::<Namespace>(),
+            serializable_descriptor::<NetworkClass>(),
+            serializable_descriptor::<Node>(),
+            serializable_descriptor::<Role>(),
+            serializable_descriptor::<RoleBinding>(),
+            serializable_descriptor::<RuntimeClass>(),
+            serializable_descriptor::<ServiceAccount>(),
+            serializable_descriptor::<Ship>(),
+            serializable_descriptor::<ShipClass>(),
+            serializable_descriptor::<StorageClass>(),
+            serializable_descriptor::<Secret>(),
+            serializable_descriptor::<PersistentVolume>(),
+            serializable_descriptor::<PersistentVolumeClaim>(),
+            serializable_descriptor::<ReplicaSet>(),
+        ]
+    }
+
+    #[test]
+    fn serializer_registration_covers_every_resource_descriptor() {
+        let serializable = registered_serializable_descriptors()
+            .into_iter()
+            .map(|descriptor| (descriptor.group, descriptor.version, descriptor.plural))
+            .collect::<BTreeSet<_>>();
+        let expected = resource_api::all_resource_descriptors()
+            .iter()
+            .map(|descriptor| (descriptor.group, descriptor.version, descriptor.plural))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(serializable, expected);
+    }
 
     #[test]
     fn can_round_trip_configmap() {

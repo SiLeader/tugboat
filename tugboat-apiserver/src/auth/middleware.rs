@@ -291,7 +291,7 @@ fn parse_resource_path(
     let (namespace, resource_index) = match path {
         ["namespaces", namespace, resource, ..] => {
             match descriptors.iter().find(|entry| entry.plural == *resource) {
-                Some(descriptor) => (descriptor.namespaced.then(|| (*namespace).to_string()), 2),
+                Some(descriptor) => (descriptor.namespaced().then(|| (*namespace).to_string()), 2),
                 None => (None, 0),
             }
         }
@@ -303,7 +303,7 @@ fn parse_resource_path(
         .into_iter()
         .find(|entry| entry.plural == resource)?;
 
-    let path_namespace = if descriptor.namespaced {
+    let path_namespace = if descriptor.namespaced() {
         namespace
     } else {
         None
@@ -358,6 +358,7 @@ mod tests {
         query_requests_watch,
     };
     use crate::auth::user_info::UserInfo;
+    use crate::endpoints::resource_registry;
     use actix_web::test::TestRequest;
     use openssl::asn1::Asn1Time;
     use openssl::hash::MessageDigest;
@@ -474,6 +475,48 @@ mod tests {
         assert!(query_requests_watch("watch=true"));
         assert!(query_requests_watch("resourceVersion=10&watch=ndJson"));
         assert!(!query_requests_watch("watch=false"));
+    }
+
+    #[test]
+    fn rbac_resource_names_are_derived_from_resource_descriptors() {
+        for descriptor in resource_registry::all_resource_apis() {
+            let collection_path = if descriptor.namespaced() {
+                vec!["namespaces", "default", descriptor.plural]
+            } else {
+                vec![descriptor.plural]
+            };
+            let parsed =
+                parse_resource_path(descriptor.group, descriptor.version, &collection_path)
+                    .expect("collection path should parse");
+            assert_eq!(parsed.resource, descriptor.plural);
+            assert_eq!(
+                parsed.namespace.as_deref(),
+                descriptor.namespaced().then_some("default")
+            );
+
+            if descriptor.operations.has_status_subresource() {
+                let status_path = if descriptor.namespaced() {
+                    vec![
+                        "namespaces",
+                        "default",
+                        descriptor.plural,
+                        "example",
+                        "status",
+                    ]
+                } else {
+                    vec![descriptor.plural, "example", "status"]
+                };
+                let parsed =
+                    parse_resource_path(descriptor.group, descriptor.version, &status_path)
+                        .expect("status path should parse");
+                assert_eq!(parsed.resource, format!("{}/status", descriptor.plural));
+                assert_eq!(parsed.resource_name.as_deref(), Some("example"));
+                assert_eq!(
+                    parsed.namespace.as_deref(),
+                    descriptor.namespaced().then_some("default")
+                );
+            }
+        }
     }
 
     fn test_cert(subject_entries: &[(&str, &str)]) -> X509 {

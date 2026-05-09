@@ -21,79 +21,31 @@ pub mod core {
         use crate::validators::{
             HasReclaimPolicy, NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator,
         };
-        use crate::{apply_resource, apply_validators};
+        use crate::{apply_resource, apply_validators, resource_api};
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.core.v1.rs"));
 
-        apply_resource!(
-            ConfigMap,
-            "core",
-            "v1",
-            "configmaps",
-            "configmap",
-            namespaced
-        );
-        apply_resource!(Namespace, "core", "v1", "namespaces", "namespace", cluster);
-        apply_resource!(
-            NetworkClass,
-            "core",
-            "v1",
-            "networkclasses",
-            "networkclass",
-            namespaced
-        );
+        apply_resource!(ConfigMap, resource_api::CONFIG_MAP, namespaced);
+        apply_resource!(Namespace, resource_api::NAMESPACE, cluster);
+        apply_resource!(NetworkClass, resource_api::NETWORK_CLASS, namespaced);
         apply_resource!(
             ClusterNetworkClass,
-            "core",
-            "v1",
-            "clusternetworkclasses",
-            "clusternetworkclass",
+            resource_api::CLUSTER_NETWORK_CLASS,
             cluster
         );
-        apply_resource!(Node, "core", "v1", "nodes", "node", cluster);
-        apply_resource!(
-            PersistentVolume,
-            "core",
-            "v1",
-            "persistentvolumes",
-            "persistentvolume",
-            cluster
-        );
+        apply_resource!(Node, resource_api::NODE, cluster);
+        apply_resource!(PersistentVolume, resource_api::PERSISTENT_VOLUME, cluster);
         apply_resource!(
             PersistentVolumeClaim,
-            "core",
-            "v1",
-            "persistentvolumeclaims",
-            "persistentvolumeclaim",
+            resource_api::PERSISTENT_VOLUME_CLAIM,
             namespaced
         );
-        apply_resource!(Secret, "core", "v1", "secrets", "secret", namespaced);
-        apply_resource!(
-            ServiceAccount,
-            "core",
-            "v1",
-            "serviceaccounts",
-            "serviceaccount",
-            namespaced
-        );
-        apply_resource!(
-            RuntimeClass,
-            "core",
-            "v1",
-            "runtimeclasses",
-            "runtimeclass",
-            cluster
-        );
-        apply_resource!(
-            StorageClass,
-            "core",
-            "v1",
-            "storageclasses",
-            "storageclass",
-            cluster
-        );
-        apply_resource!(Ship, "core", "v1", "ships", "ship", namespaced);
-        apply_resource!(ShipClass, "core", "v1", "shipclasses", "shipclass", cluster);
+        apply_resource!(Secret, resource_api::SECRET, namespaced);
+        apply_resource!(ServiceAccount, resource_api::SERVICE_ACCOUNT, namespaced);
+        apply_resource!(RuntimeClass, resource_api::RUNTIME_CLASS, cluster);
+        apply_resource!(StorageClass, resource_api::STORAGE_CLASS, cluster);
+        apply_resource!(Ship, resource_api::SHIP, namespaced);
+        apply_resource!(ShipClass, resource_api::SHIP_CLASS, cluster);
 
         apply_validators!(ConfigMap, validators NameValidator);
         apply_validators!(Namespace, validators NameValidator, NamespaceProhibitedValidator);
@@ -195,27 +147,13 @@ pub mod core {
 pub mod apps {
     pub mod v1 {
         use crate::validators::NameValidator;
-        use crate::{apply_resource, apply_validators};
+        use crate::{apply_resource, apply_validators, resource_api};
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.apps.v1.rs"));
 
-        apply_resource!(
-            Deployment,
-            "apps",
-            "v1",
-            "deployments",
-            "deployment",
-            namespaced
-        );
-        apply_resource!(
-            ReplicaSet,
-            "apps",
-            "v1",
-            "replicasets",
-            "replicaset",
-            namespaced
-        );
-        apply_resource!(Fleet, "apps", "v1", "fleets", "fleet", namespaced);
+        apply_resource!(Deployment, resource_api::DEPLOYMENT, namespaced);
+        apply_resource!(ReplicaSet, resource_api::REPLICA_SET, namespaced);
+        apply_resource!(Fleet, resource_api::FLEET, namespaced);
 
         apply_validators!(Deployment, validators NameValidator);
         apply_validators!(ReplicaSet, validators NameValidator);
@@ -226,35 +164,18 @@ pub mod apps {
 pub mod authorization {
     pub mod v1 {
         use crate::validators::{NameValidator, NamespaceProhibitedValidator};
-        use crate::{apply_resource, apply_validators};
+        use crate::{apply_resource, apply_validators, resource_api};
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.authorization.v1.rs"));
 
-        apply_resource!(
-            ClusterRole,
-            "authorization",
-            "v1",
-            "clusterroles",
-            "clusterrole",
-            cluster
-        );
+        apply_resource!(ClusterRole, resource_api::CLUSTER_ROLE, cluster);
         apply_resource!(
             ClusterRoleBinding,
-            "authorization",
-            "v1",
-            "clusterrolebindings",
-            "clusterrolebinding",
+            resource_api::CLUSTER_ROLE_BINDING,
             cluster
         );
-        apply_resource!(Role, "authorization", "v1", "roles", "role", namespaced);
-        apply_resource!(
-            RoleBinding,
-            "authorization",
-            "v1",
-            "rolebindings",
-            "rolebinding",
-            namespaced
-        );
+        apply_resource!(Role, resource_api::ROLE, namespaced);
+        apply_resource!(RoleBinding, resource_api::ROLE_BINDING, namespaced);
 
         apply_validators!(
             ClusterRole,
@@ -274,11 +195,11 @@ pub mod authorization {
 pub mod coordination {
     pub mod v1 {
         use crate::validators::NameValidator;
-        use crate::{apply_resource, apply_validators};
+        use crate::{apply_resource, apply_validators, resource_api};
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.coordination.v1.rs"));
 
-        apply_resource!(Lease, "coordination", "v1", "leases", "lease", namespaced);
+        apply_resource!(Lease, resource_api::LEASE, namespaced);
 
         apply_validators!(Lease, validators NameValidator);
     }

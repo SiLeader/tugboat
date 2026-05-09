@@ -16,6 +16,7 @@ use crate::endpoints::v1_apps;
 use crate::endpoints::v1_authorization;
 use crate::endpoints::v1_coordination;
 use crate::endpoints::v1_core;
+use std::ops::Deref;
 use tugboat_resources::StaticResource;
 use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::authorization::v1::{
@@ -26,90 +27,27 @@ use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
     PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
 };
+use tugboat_resources::resource_api;
+use tugboat_resources::resource_api::ResourceApiDescriptor as ResourceMetadataDescriptor;
 use utoipa_actix_web::service_config::ServiceConfig;
 
 #[derive(Clone, Copy)]
-pub(crate) struct ResourceOperations {
-    pub(crate) create: bool,
-    pub(crate) list: bool,
-    pub(crate) read: bool,
-    pub(crate) patch: bool,
-    pub(crate) update: bool,
-    pub(crate) delete: bool,
-    pub(crate) status_patch: bool,
-    pub(crate) status_update: bool,
-}
-
-impl ResourceOperations {
-    pub(crate) fn has_status_subresource(self) -> bool {
-        self.status_patch || self.status_update
-    }
-
-    pub(crate) fn resource_verbs(self) -> Vec<&'static str> {
-        let mut verbs = Vec::new();
-        if self.create {
-            verbs.push("create");
-        }
-        if self.delete {
-            verbs.push("delete");
-        }
-        if self.read {
-            verbs.push("get");
-        }
-        if self.list {
-            verbs.push("list");
-        }
-        if self.patch {
-            verbs.push("patch");
-        }
-        if self.update {
-            verbs.push("update");
-        }
-        if self.list {
-            verbs.push("watch");
-        }
-        verbs
-    }
-
-    pub(crate) fn status_verbs(self) -> Vec<&'static str> {
-        let mut verbs = Vec::new();
-        if self.status_patch {
-            verbs.push("patch");
-        }
-        if self.status_update {
-            verbs.push("update");
-        }
-        verbs
-    }
-}
-
-#[derive(Clone, Copy)]
 pub(crate) struct ResourceApiDescriptor {
-    pub(crate) group: &'static str,
-    pub(crate) version: &'static str,
-    pub(crate) plural: &'static str,
-    pub(crate) singular: &'static str,
-    pub(crate) kind: &'static str,
-    pub(crate) namespaced: bool,
-    pub(crate) operations: ResourceOperations,
+    pub(crate) metadata: &'static ResourceMetadataDescriptor,
     register: fn(&mut ServiceConfig),
 }
 
 impl ResourceApiDescriptor {
     fn new<T: StaticResource>(
-        operations: ResourceOperations,
+        metadata: &'static ResourceMetadataDescriptor,
         register: fn(&mut ServiceConfig),
     ) -> Self {
-        Self {
-            group: T::group(),
-            version: T::version(),
-            plural: T::plural(),
-            singular: T::singular(),
-            kind: T::kind(),
-            namespaced: !T::is_cluster_scoped(),
-            operations,
-            register,
-        }
+        debug_assert_eq!(
+            T::descriptor(),
+            metadata,
+            "registered resource metadata differs from StaticResource metadata"
+        );
+        Self { metadata, register }
     }
 
     fn register(self, service: &mut ServiceConfig) {
@@ -117,184 +55,82 @@ impl ResourceApiDescriptor {
     }
 }
 
-const CLUSTER_DEFAULT_OPS: ResourceOperations = ResourceOperations {
-    create: true,
-    list: true,
-    read: true,
-    patch: false,
-    update: false,
-    delete: false,
-    status_patch: false,
-    status_update: false,
-};
+impl Deref for ResourceApiDescriptor {
+    type Target = ResourceMetadataDescriptor;
 
-const CLUSTER_STATUS_OPS: ResourceOperations = ResourceOperations {
-    status_patch: true,
-    status_update: true,
-    ..CLUSTER_DEFAULT_OPS
-};
-
-const NAMESPACED_DEFAULT_OPS: ResourceOperations = ResourceOperations {
-    create: true,
-    list: true,
-    read: true,
-    patch: false,
-    update: false,
-    delete: false,
-    status_patch: false,
-    status_update: false,
-};
-
-const NAMESPACED_STATUS_OPS: ResourceOperations = ResourceOperations {
-    status_patch: true,
-    status_update: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
-
-const NODE_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    status_patch: true,
-    status_update: true,
-    ..CLUSTER_DEFAULT_OPS
-};
-
-const PERSISTENT_VOLUME_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    status_patch: true,
-    status_update: true,
-    ..CLUSTER_DEFAULT_OPS
-};
-
-const PERSISTENT_VOLUME_CLAIM_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    status_patch: true,
-    status_update: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
-
-const SECRET_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
-
-const SERVICE_ACCOUNT_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
-
-const CONFIGMAP_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
-
-const STORAGE_CLASS_OPS: ResourceOperations = ResourceOperations {
-    delete: true,
-    ..CLUSTER_DEFAULT_OPS
-};
-
-const SHIP_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    status_patch: true,
-    status_update: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
-
-const LEASE_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
-
-const WORKLOAD_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    status_patch: true,
-    status_update: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
-
-const CLUSTER_RBAC_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    ..CLUSTER_DEFAULT_OPS
-};
-
-const NAMESPACED_RBAC_OPS: ResourceOperations = ResourceOperations {
-    patch: true,
-    update: true,
-    delete: true,
-    ..NAMESPACED_DEFAULT_OPS
-};
+    fn deref(&self) -> &Self::Target {
+        self.metadata
+    }
+}
 
 pub(crate) fn all_resource_apis() -> Vec<ResourceApiDescriptor> {
     vec![
         ResourceApiDescriptor::new::<ClusterRole>(
-            CLUSTER_RBAC_OPS,
+            &resource_api::CLUSTER_ROLE,
             v1_authorization::register_cluster_role,
         ),
         ResourceApiDescriptor::new::<ClusterRoleBinding>(
-            CLUSTER_RBAC_OPS,
+            &resource_api::CLUSTER_ROLE_BINDING,
             v1_authorization::register_cluster_role_binding,
         ),
-        ResourceApiDescriptor::new::<Deployment>(WORKLOAD_OPS, v1_apps::register_deployment),
-        ResourceApiDescriptor::new::<Fleet>(WORKLOAD_OPS, v1_apps::register_fleet),
+        ResourceApiDescriptor::new::<Deployment>(
+            &resource_api::DEPLOYMENT,
+            v1_apps::register_deployment,
+        ),
+        ResourceApiDescriptor::new::<Fleet>(&resource_api::FLEET, v1_apps::register_fleet),
         ResourceApiDescriptor::new::<ClusterNetworkClass>(
-            CLUSTER_STATUS_OPS,
+            &resource_api::CLUSTER_NETWORK_CLASS,
             v1_core::register_clusternetworkclass,
         ),
-        ResourceApiDescriptor::new::<ConfigMap>(CONFIGMAP_OPS, v1_core::register_configmap),
-        ResourceApiDescriptor::new::<Namespace>(CLUSTER_DEFAULT_OPS, v1_core::register_namespace),
-        ResourceApiDescriptor::new::<Node>(NODE_OPS, v1_core::register_node),
+        ResourceApiDescriptor::new::<ConfigMap>(
+            &resource_api::CONFIG_MAP,
+            v1_core::register_configmap,
+        ),
+        ResourceApiDescriptor::new::<Namespace>(
+            &resource_api::NAMESPACE,
+            v1_core::register_namespace,
+        ),
+        ResourceApiDescriptor::new::<Node>(&resource_api::NODE, v1_core::register_node),
         ResourceApiDescriptor::new::<PersistentVolume>(
-            PERSISTENT_VOLUME_OPS,
+            &resource_api::PERSISTENT_VOLUME,
             v1_core::register_persistent_volume,
         ),
         ResourceApiDescriptor::new::<NetworkClass>(
-            NAMESPACED_STATUS_OPS,
+            &resource_api::NETWORK_CLASS,
             v1_core::register_networkclass,
         ),
         ResourceApiDescriptor::new::<PersistentVolumeClaim>(
-            PERSISTENT_VOLUME_CLAIM_OPS,
+            &resource_api::PERSISTENT_VOLUME_CLAIM,
             v1_core::register_persistent_volume_claim,
         ),
-        ResourceApiDescriptor::new::<ReplicaSet>(WORKLOAD_OPS, v1_apps::register_replicaset),
-        ResourceApiDescriptor::new::<Role>(NAMESPACED_RBAC_OPS, v1_authorization::register_role),
+        ResourceApiDescriptor::new::<ReplicaSet>(
+            &resource_api::REPLICA_SET,
+            v1_apps::register_replicaset,
+        ),
+        ResourceApiDescriptor::new::<Role>(&resource_api::ROLE, v1_authorization::register_role),
         ResourceApiDescriptor::new::<RoleBinding>(
-            NAMESPACED_RBAC_OPS,
+            &resource_api::ROLE_BINDING,
             v1_authorization::register_role_binding,
         ),
         ResourceApiDescriptor::new::<RuntimeClass>(
-            STORAGE_CLASS_OPS,
+            &resource_api::RUNTIME_CLASS,
             v1_core::register_runtimeclass,
         ),
-        ResourceApiDescriptor::new::<Secret>(SECRET_OPS, v1_core::register_secret),
+        ResourceApiDescriptor::new::<Secret>(&resource_api::SECRET, v1_core::register_secret),
         ResourceApiDescriptor::new::<ServiceAccount>(
-            SERVICE_ACCOUNT_OPS,
+            &resource_api::SERVICE_ACCOUNT,
             v1_core::register_service_account,
         ),
-        ResourceApiDescriptor::new::<Ship>(SHIP_OPS, v1_core::register_ship),
-        ResourceApiDescriptor::new::<ShipClass>(CLUSTER_DEFAULT_OPS, v1_core::register_shipclass),
+        ResourceApiDescriptor::new::<Ship>(&resource_api::SHIP, v1_core::register_ship),
+        ResourceApiDescriptor::new::<ShipClass>(
+            &resource_api::SHIP_CLASS,
+            v1_core::register_shipclass,
+        ),
         ResourceApiDescriptor::new::<StorageClass>(
-            STORAGE_CLASS_OPS,
+            &resource_api::STORAGE_CLASS,
             v1_core::register_storage_class,
         ),
-        ResourceApiDescriptor::new::<Lease>(LEASE_OPS, v1_coordination::register_lease),
+        ResourceApiDescriptor::new::<Lease>(&resource_api::LEASE, v1_coordination::register_lease),
     ]
 }
 
@@ -308,5 +144,23 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<ResourceApiDescri
 pub(crate) fn register_resource_apis(service: &mut ServiceConfig) {
     for resource in all_resource_apis() {
         resource.register(service);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apiserver_registry_covers_resource_metadata_table() {
+        let registered = all_resource_apis()
+            .into_iter()
+            .map(|descriptor| *descriptor.metadata)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            registered.as_slice(),
+            resource_api::all_resource_descriptors()
+        );
     }
 }

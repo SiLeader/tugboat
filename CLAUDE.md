@@ -88,9 +88,12 @@ API groups and their resources:
 - **core/v1**: Ship, ShipClass, Node, Namespace, PersistentVolume, PersistentVolumeClaim,
   NetworkClass, ClusterNetworkClass, Secret, RuntimeClass, StorageClass, ConfigMap
 - **apps/v1**: Deployment, ReplicaSet, Fleet
+- **authorization/v1**: Role, RoleBinding, ClusterRole, ClusterRoleBinding
 - **coordination/v1**: Lease
 
-Resources implement traits via the `apply_resource!` macro in `tugboat-resources/src/manifests/mod.rs`:
+Resource API metadata lives in `tugboat-resources/src/resource_api.rs`. Generated resource types
+implement traits via the `apply_resource!` macro in `tugboat-resources/src/manifests/mod.rs`,
+which points at that metadata table:
 
 - `StaticResource` – group, version, kind, plural, singular
 - `ClusterScopedResource` or `NamespacedResource` – scope marker
@@ -112,7 +115,7 @@ Endpoints live in `tugboat-apiserver/src/endpoints/` organized by API group:
 
 Each resource has separate files for create, list, read, and other operations.
 All resources are registered centrally in `endpoints/resource_registry.rs`, which wires routes and exposes discovery
-verbs.
+verbs from the shared resource metadata descriptors.
 
 Key patterns:
 
@@ -139,11 +142,15 @@ Config path: `/etc/tugboat/controller-manager/config.toml`
 
 ### Adding a New API Resource
 
-1. Define protobuf in `tugboat-resources/proto/{group}/v1/` and add to `build.rs` compile list
-2. Register with `apply_resource!` and `apply_validators!` in `tugboat-resources/src/manifests/mod.rs`
-3. Create endpoint files (create, list, read, etc.) in `tugboat-apiserver/src/endpoints/v1_{group}/`
-4. Register the resource in `tugboat-apiserver/src/endpoints/resource_registry.rs`
-5. Add the resource type to `tugboat-resource-store/src/serializer/mod.rs` via `protobuf_serializable!`
+Follow `docs/resource-registration.md`. The short version is:
+
+1. Define protobuf in `tugboat-resources/proto/{group}/v1/` and add it to the `build.rs` compile list
+2. Add one descriptor in `tugboat-resources/src/resource_api.rs`
+3. Register the generated type with `apply_resource!` and `apply_validators!` in
+   `tugboat-resources/src/manifests/mod.rs`
+4. Create endpoint files in `tugboat-apiserver/src/endpoints/v1_{group}/`
+5. Wire the descriptor to the endpoint wrapper in `tugboat-apiserver/src/endpoints/resource_registry.rs`
+6. Add the resource type to `tugboat-resource-store/src/serializer/mod.rs` via `protobuf_serializable!`
 
 ### Configuration
 
