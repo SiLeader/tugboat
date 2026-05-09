@@ -66,6 +66,10 @@ Existing VM orchestration systems come with significant challenges:
 
 ![architecture overview](./docs/images/tugboat-structure.svg)
 
+The current crate and extension boundaries are documented in
+[docs/architecture.md](./docs/architecture.md). Contributor-facing resource registration steps are documented in
+[docs/resource-registration.md](./docs/resource-registration.md).
+
 ### Mapping to Kubernetes Concepts
 
 |   Kubernetes    |    Tugboat     |

@@ -1,4 +1,5 @@
 use crate::error::ControllerError;
+use crate::workload::SHIP_TEMPLATE_HASH_LABEL;
 use serde_json::{Value, to_string};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -42,12 +43,12 @@ fn canonical_json_string(template: &ShipTemplateSpec) -> String {
 pub(super) fn replicaset_has_template_hash(rs: &ReplicaSet, hash: &str) -> bool {
     rs.object_meta()
         .as_ref()
-        .and_then(|meta| meta.labels.get("ship-template-hash"))
+        .and_then(|meta| meta.labels.get(SHIP_TEMPLATE_HASH_LABEL))
         .is_some_and(|value| value == hash)
         || rs
             .spec
             .as_ref()
-            .and_then(|spec| spec.selector.get("ship-template-hash"))
+            .and_then(|spec| spec.selector.get(SHIP_TEMPLATE_HASH_LABEL))
             .is_some_and(|value| value == hash)
 }
 

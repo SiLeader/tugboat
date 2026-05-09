@@ -15,6 +15,7 @@
 use crate::manifests::meta::v1::{ObjectMeta, Time, TypeMeta};
 
 pub mod manifests;
+pub mod resource_api;
 pub mod resource_version;
 pub mod sized;
 pub mod validators;
@@ -33,12 +34,31 @@ pub trait SetTypeMeta {
 }
 
 pub trait StaticResource: Resource {
-    fn group() -> &'static str;
-    fn version() -> &'static str;
-    fn kind() -> &'static str;
-    fn plural() -> &'static str;
-    fn singular() -> &'static str;
-    fn is_cluster_scoped() -> bool;
+    fn descriptor() -> &'static resource_api::ResourceApiDescriptor;
+
+    fn group() -> &'static str {
+        Self::descriptor().group
+    }
+
+    fn version() -> &'static str {
+        Self::descriptor().version
+    }
+
+    fn kind() -> &'static str {
+        Self::descriptor().kind
+    }
+
+    fn plural() -> &'static str {
+        Self::descriptor().plural
+    }
+
+    fn singular() -> &'static str {
+        Self::descriptor().singular
+    }
+
+    fn is_cluster_scoped() -> bool {
+        Self::descriptor().cluster_scoped()
+    }
 }
 
 pub trait ClusterScopedResource: StaticResource {}
@@ -149,30 +169,10 @@ impl<T: StaticResource> Resource for T {
 
 #[macro_export]
 macro_rules! apply_resource {
-    ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, $cluster_scoped:literal) => {
+    ($ty:ident, $descriptor:path, $cluster_scoped:literal) => {
         impl $crate::StaticResource for $ty {
-            fn group() -> &'static str {
-                $group
-            }
-
-            fn version() -> &'static str {
-                $version
-            }
-
-            fn kind() -> &'static str {
-                stringify!($ty)
-            }
-
-            fn plural() -> &'static str {
-                $plural
-            }
-
-            fn singular() -> &'static str {
-                $singular
-            }
-
-            fn is_cluster_scoped() -> bool {
-                $cluster_scoped
+            fn descriptor() -> &'static $crate::resource_api::ResourceApiDescriptor {
+                &$descriptor
             }
         }
 
@@ -193,14 +193,14 @@ macro_rules! apply_resource {
         }
     };
 
-    ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, namespaced) => {
-        apply_resource!($ty, $group, $version, $plural, $singular, false);
+    ($ty:ident, $descriptor:path, namespaced) => {
+        apply_resource!($ty, $descriptor, false);
 
         impl $crate::NamespacedResource for $ty {}
     };
 
-    ($ty:ident, $group:literal, $version:literal, $plural:literal, $singular:literal, cluster) => {
-        apply_resource!($ty, $group, $version, $plural, $singular, true);
+    ($ty:ident, $descriptor:path, cluster) => {
+        apply_resource!($ty, $descriptor, true);
 
         impl $crate::ClusterScopedResource for $ty {}
     };
@@ -208,10 +208,59 @@ macro_rules! apply_resource {
 
 #[cfg(test)]
 mod tests {
+    use crate::StaticResource;
+    use crate::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
+    use crate::manifests::authorization::v1::{ClusterRole, ClusterRoleBinding, Role, RoleBinding};
+    use crate::manifests::coordination::v1::Lease;
+    use crate::manifests::core::v1::{
+        ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
+        PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, ShipClass, StorageClass,
+    };
     use crate::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
     use crate::manifests::meta::v1::{ObjectMeta, Time};
-    use crate::{ObjectMetaResource, ShipMigrationExt};
+    use crate::{ObjectMetaResource, ShipMigrationExt, resource_api};
     use serde_json::json;
+
+    macro_rules! assert_static_descriptor {
+        ($ty:ty, $descriptor:expr) => {{
+            let descriptor = <$ty as StaticResource>::descriptor();
+            assert_eq!(descriptor, &$descriptor);
+            assert_eq!(<$ty as StaticResource>::group(), $descriptor.group);
+            assert_eq!(<$ty as StaticResource>::version(), $descriptor.version);
+            assert_eq!(<$ty as StaticResource>::kind(), $descriptor.kind);
+            assert_eq!(<$ty as StaticResource>::plural(), $descriptor.plural);
+            assert_eq!(<$ty as StaticResource>::singular(), $descriptor.singular);
+            assert_eq!(
+                <$ty as StaticResource>::is_cluster_scoped(),
+                $descriptor.cluster_scoped()
+            );
+        }};
+    }
+
+    #[test]
+    fn static_resource_metadata_comes_from_resource_descriptors() {
+        assert_static_descriptor!(ClusterRole, resource_api::CLUSTER_ROLE);
+        assert_static_descriptor!(ClusterRoleBinding, resource_api::CLUSTER_ROLE_BINDING);
+        assert_static_descriptor!(Deployment, resource_api::DEPLOYMENT);
+        assert_static_descriptor!(Fleet, resource_api::FLEET);
+        assert_static_descriptor!(ClusterNetworkClass, resource_api::CLUSTER_NETWORK_CLASS);
+        assert_static_descriptor!(ConfigMap, resource_api::CONFIG_MAP);
+        assert_static_descriptor!(Namespace, resource_api::NAMESPACE);
+        assert_static_descriptor!(Node, resource_api::NODE);
+        assert_static_descriptor!(PersistentVolume, resource_api::PERSISTENT_VOLUME);
+        assert_static_descriptor!(NetworkClass, resource_api::NETWORK_CLASS);
+        assert_static_descriptor!(PersistentVolumeClaim, resource_api::PERSISTENT_VOLUME_CLAIM);
+        assert_static_descriptor!(ReplicaSet, resource_api::REPLICA_SET);
+        assert_static_descriptor!(Role, resource_api::ROLE);
+        assert_static_descriptor!(RoleBinding, resource_api::ROLE_BINDING);
+        assert_static_descriptor!(RuntimeClass, resource_api::RUNTIME_CLASS);
+        assert_static_descriptor!(Secret, resource_api::SECRET);
+        assert_static_descriptor!(ServiceAccount, resource_api::SERVICE_ACCOUNT);
+        assert_static_descriptor!(Ship, resource_api::SHIP);
+        assert_static_descriptor!(ShipClass, resource_api::SHIP_CLASS);
+        assert_static_descriptor!(StorageClass, resource_api::STORAGE_CLASS);
+        assert_static_descriptor!(Lease, resource_api::LEASE);
+    }
 
     #[test]
     fn can_manage_finalizers() {

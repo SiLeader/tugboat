@@ -23,6 +23,7 @@ tugboat-client.workspace = true
 tugboat-resources.workspace = true
 tugboat-vm-image.workspace = true
 tugboat-vm-runtime-interface = { workspace = true, features = ["operator"] }
+tugboat-runtime-common.workspace = true
 tugboat-cni-operator.workspace = true
 tugboat-csi-operator.workspace = true
 

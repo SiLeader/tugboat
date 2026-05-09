@@ -15,9 +15,35 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub(super) enum BuildError {
+pub(crate) enum BuildError {
     #[error("Invalid Imagefile format: {0}")]
     InvalidFormat(String),
     #[error("Invalid Imagefile arch: {0}")]
     InvalidArch(String),
+    #[error("Imagefile must include a FROM line with a disk image path")]
+    MissingFrom,
+    #[error("failed to read Imagefile '{path}': {source}")]
+    ReadImagefile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to parse Imagefile '{path}': {source}")]
+    ParseImagefile {
+        path: String,
+        #[source]
+        source: Box<BuildError>,
+    },
+    #[error("failed to read disk image '{path}' from build context: {source}")]
+    ReadDisk {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to push image '{tag}': {source}")]
+    PushImage {
+        tag: String,
+        #[source]
+        source: tugboat_vm_image::Error,
+    },
 }

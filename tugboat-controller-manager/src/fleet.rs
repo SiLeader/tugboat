@@ -1,5 +1,6 @@
 use crate::base::TugboatController;
 use crate::error::ControllerError;
+use crate::workload::{SHIP_TEMPLATE_HASH_LABEL, is_controlled_by, owner_reference_for};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -15,7 +16,6 @@ use tugboat_resources::{ObjectMetaResource, Resource, SetTypeMeta};
 
 const FLEET_NAME_LABEL: &str = "fleet-name";
 const FLEET_COMPONENT_LABEL: &str = "fleet-component";
-const SHIP_TEMPLATE_HASH_LABEL: &str = "ship-template-hash";
 const TEMPLATE_HASH_BYTES: usize = 8;
 
 #[derive(Clone)]
@@ -38,36 +38,11 @@ impl FleetController {
 }
 
 fn owner_reference_for_fleet(fleet: &Fleet) -> OwnerReference {
-    OwnerReference {
-        api_version: "apps/v1".to_string(),
-        kind: "Fleet".to_string(),
-        name: fleet.name().unwrap_or_default().to_string(),
-        uid: fleet
-            .object_meta()
-            .as_ref()
-            .and_then(|meta| meta.uid.as_deref())
-            .unwrap_or_default()
-            .to_string(),
-        controller: Some(true),
-    }
+    owner_reference_for(fleet)
 }
 
 fn is_owned_by_fleet(rs: &ReplicaSet, fleet: &Fleet) -> bool {
-    let fleet_name = fleet.name().unwrap_or_default();
-    let fleet_uid = fleet
-        .object_meta()
-        .as_ref()
-        .and_then(|meta| meta.uid.as_deref());
-
-    rs.object_meta().as_ref().is_some_and(|meta| {
-        meta.owner_references.iter().any(|owner_ref| {
-            owner_ref.kind == "Fleet"
-                && owner_ref.name == fleet_name
-                && fleet_uid
-                    .map(|uid| owner_ref.uid == uid)
-                    .unwrap_or_else(|| owner_ref.uid.is_empty())
-        })
-    })
+    is_controlled_by(rs.object_meta().as_ref(), fleet, "Fleet")
 }
 
 fn managed_replicasets<'a>(replicasets: &'a [ReplicaSet], fleet: &Fleet) -> Vec<&'a ReplicaSet> {
@@ -572,6 +547,7 @@ mod tests {
         };
 
         assert_eq!(template_hash(&left), template_hash(&right));
+        assert_eq!(template_hash(&left), "b1caa8e0fbc2de76");
     }
 
     fn managed_rs(component_name: &str) -> ReplicaSet {

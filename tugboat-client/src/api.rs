@@ -105,6 +105,21 @@ where
         }
     }
 
+    pub async fn list_with_params_full(
+        &self,
+        params: &WatchParams,
+    ) -> Result<crate::response::ListResponse<T>, Error> {
+        if let Some(namespace) = &self.namespace {
+            self.client
+                .list_namespaced_with_params_full(namespace, params)
+                .await
+        } else {
+            self.client
+                .list_cluster_scoped_with_params_full(params)
+                .await
+        }
+    }
+
     pub async fn patch<P: Serialize>(&self, name: &str, patch: P) -> Result<T, Error> {
         if let Some(namespace) = &self.namespace {
             self.client.patch_namespaced(namespace, name, patch).await
@@ -151,7 +166,7 @@ where
 
     pub async fn watch_raw(
         &self,
-        params: &WatchParams,
+        params: WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
         let api_prefix = if T::group() == "core" || T::group().is_empty() {
             format!("/api/{}", T::version())

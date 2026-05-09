@@ -29,6 +29,7 @@ mod watch;
 
 pub use api::*;
 pub use error::*;
+pub use response::ListResponse;
 pub use watch::*;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -195,6 +196,25 @@ impl TugboatClient {
         Self::parse_response_list(res).await
     }
 
+    async fn list_impl_with_params_full<T: StaticResource + DeserializeOwned>(
+        &self,
+        path: &str,
+        params: &WatchParams,
+    ) -> Result<response::ListResponse<T>, Error> {
+        let mut url = self.build_url(path);
+        {
+            let mut pairs = url.query_pairs_mut();
+            if let Some(l) = &params.label_selector {
+                pairs.append_pair("labelSelector", l);
+            }
+            if let Some(f) = &params.field_selector {
+                pairs.append_pair("fieldSelector", f);
+            }
+        }
+        let res = self.client.get(url).send().await?;
+        Self::parse_response_list_full(res).await
+    }
+
     async fn patch_impl<T: StaticResource + DeserializeOwned>(
         &self,
         path: &str,
@@ -260,6 +280,16 @@ impl TugboatClient {
     ) -> Result<Vec<T>, Error> {
         let path = format!("{}/{}", Self::api_path::<T>(), T::plural());
         self.list_impl_with_params(&path, params).await
+    }
+
+    pub(crate) async fn list_cluster_scoped_with_params_full<
+        T: StaticResource + DeserializeOwned,
+    >(
+        &self,
+        params: &WatchParams,
+    ) -> Result<response::ListResponse<T>, Error> {
+        let path = format!("{}/{}", Self::api_path::<T>(), T::plural());
+        self.list_impl_with_params_full(&path, params).await
     }
 
     pub(crate) async fn patch_cluster_scoped<T: StaticResource + DeserializeOwned, P: Serialize>(
@@ -351,6 +381,19 @@ impl TugboatClient {
             T::plural()
         );
         self.list_impl_with_params(&path, params).await
+    }
+
+    pub(crate) async fn list_namespaced_with_params_full<T: StaticResource + DeserializeOwned>(
+        &self,
+        namespace: &str,
+        params: &WatchParams,
+    ) -> Result<response::ListResponse<T>, Error> {
+        let path = format!(
+            "{}/namespaces/{namespace}/{}",
+            Self::api_path::<T>(),
+            T::plural()
+        );
+        self.list_impl_with_params_full(&path, params).await
     }
 
     pub(crate) async fn patch_namespaced<T: StaticResource + DeserializeOwned, P: Serialize>(

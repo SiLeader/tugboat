@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{info, warn};
 use tugboat_runtime_common::config::load_config;
-use tugboat_runtime_common::validate::validate_safe_id;
 use tugboat_vm_runtime_interface::hotplug::{
     VmHotplugRequest, normalize_identifier_key, sanitize_identifier,
+    validate_and_normalize_hotplug_request,
 };
 use tugboat_vm_runtime_interface::run::{VmNetworkConfig, VmVolumeConfig, VmVolumeKind};
 
@@ -111,7 +111,8 @@ async fn hotplug_request(
     config: &CloudHypervisorVmConfig,
     req: &VmHotplugRequest,
 ) -> crate::Result<()> {
-    validate_safe_id(&req.id, "vm id")?;
+    let req = validate_and_normalize_hotplug_request(req.clone())
+        .map_err(|err| crate::Error::Validation(err.to_string()))?;
 
     let socket_path = config.get_api_socket_path(&req.id);
     let mut client = ChApiClient::connect(&socket_path).await?;
@@ -119,7 +120,8 @@ async fn hotplug_request(
     let mut state = VmRuntimeState::from_vm_info(&vm_info);
     let mut rollback = Vec::new();
 
-    let result = apply_hotplug_changes(&mut client, req, &vm_info, &mut state, &mut rollback).await;
+    let result =
+        apply_hotplug_changes(&mut client, &req, &vm_info, &mut state, &mut rollback).await;
     if let Err(ref err) = result {
         warn!("hotplug failed ({err}); attempting best-effort rollback of applied changes");
         execute_rollback(&mut client, &mut state, rollback).await;
@@ -897,13 +899,6 @@ mod tests {
     #[tokio::test]
     async fn test_filesystem_volume_hotplug_is_rejected() {
         let test_vm = TestVm::new("tugboat-ch-hotplug", "vm-fs-hotplug");
-        let server = spawn_mock_server(
-            test_vm.socket_path(),
-            vec![http_json_response(
-                "200 OK",
-                vm_info_body(2, 1024, vec![], vec![]),
-            )],
-        );
 
         let error = hotplug_request(
             &test_vm.config,
@@ -929,11 +924,8 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("filesystem volume hotplug is not supported")
+                .contains("volumesAdded[0].kind must be block for hotplug")
         );
-
-        let requests = server.await.unwrap();
-        assert_eq!(requests.len(), 1);
     }
 
     fn vm_info_body(vcpus: u64, memory_size: u64, net: Vec<Value>, disks: Vec<Value>) -> Value {

@@ -10,22 +10,23 @@ storage provisioning, and VM scheduling. It is written for engineers who are new
 
 1. [Background: What is Tugboat?](#1-background-what-is-tugboat)
 2. [Prerequisites](#2-prerequisites)
-3. [How the Resources Relate to Each Other](#3-how-the-resources-relate-to-each-other)
-4. [Starting the Environment](#4-starting-the-environment)
-5. [Applying the Sample Manifests](#5-applying-the-sample-manifests)
-6. [Verifying Each Resource](#6-verifying-each-resource)
-    - [6.1 Node — Agent Registration](#61-node--agent-registration)
-    - [6.2 Namespace](#62-namespace)
-    - [6.3 ShipClass](#63-shipclass)
-    - [6.4 StorageClass](#64-storageclass)
-    - [6.5 ClusterNetworkClass and NetworkClass](#65-clusternetworkclass-and-networkclass)
-    - [6.6 ConfigMap](#66-configmap)
-    - [6.7 Secret](#67-secret)
-    - [6.8 PersistentVolumeClaim — Storage Provisioning](#68-persistentvolumeclaim--storage-provisioning)
-    - [6.9 Ship — Scheduling and Runtime](#69-ship--scheduling-and-runtime)
-7. [Known Limitations of the Docker Compose Environment](#7-known-limitations-of-the-docker-compose-environment)
-8. [Quick Reference: systemd + HTTP Verification](#8-quick-reference-systemd--http-verification)
-9. [Troubleshooting](#9-troubleshooting)
+3. [Developer Verification Gates](#3-developer-verification-gates)
+4. [How the Resources Relate to Each Other](#4-how-the-resources-relate-to-each-other)
+5. [Starting the Environment](#5-starting-the-environment)
+6. [Applying the Sample Manifests](#6-applying-the-sample-manifests)
+7. [Verifying Each Resource](#7-verifying-each-resource)
+    - [7.1 Node — Agent Registration](#71-node--agent-registration)
+    - [7.2 Namespace](#72-namespace)
+    - [7.3 ShipClass](#73-shipclass)
+    - [7.4 StorageClass](#74-storageclass)
+    - [7.5 ClusterNetworkClass and NetworkClass](#75-clusternetworkclass-and-networkclass)
+    - [7.6 ConfigMap](#76-configmap)
+    - [7.7 Secret](#77-secret)
+    - [7.8 PersistentVolumeClaim — Storage Provisioning](#78-persistentvolumeclaim--storage-provisioning)
+    - [7.9 Ship — Scheduling and Runtime](#79-ship--scheduling-and-runtime)
+8. [Known Limitations of the Docker Compose Environment](#8-known-limitations-of-the-docker-compose-environment)
+9. [Quick Reference: systemd + HTTP Verification](#9-quick-reference-systemd--http-verification)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
@@ -75,7 +76,91 @@ pip install pyyaml
 
 ---
 
-## 3. How the Resources Relate to Each Other
+## 3. Developer Verification Gates
+
+Use these gates when changing Tugboat itself. The Docker Compose verification below is a functional smoke path; it does not replace the Rust and installer gates.
+
+### PR Gate
+
+Run this before merging any change:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets
+cargo deny check
+```
+
+### Component Gates
+
+Run the matching component gate for the boundary you changed.
+
+API/resource/store:
+
+```bash
+cargo test -p tugboat-resources
+cargo test -p tugboat-resource-store
+cargo test -p tugboat-apiserver
+cargo test -p tugboat-integration-tests api_discovery
+cargo test -p tugboat-integration-tests resource_versioning
+cargo test -p tugboat-integration-tests watch
+```
+
+Controller-manager:
+
+```bash
+cargo test -p tugboat-controller-manager
+cargo test -p tugboat-integration-tests replicaset_controller_integration
+cargo test -p tugboat-integration-tests deployment_controller_integration
+cargo test -p tugboat-integration-tests fleet_controller_integration
+```
+
+Agent, CNI, or CSI:
+
+```bash
+cargo test -p tugboat-agent
+cargo test -p tugboat-cni-operator
+cargo test -p tugboat-csi-operator
+cargo test -p tugboat-integration-tests full_ship_lifecycle
+cargo test -p tugboat-integration-tests pv_pvc_binding
+cargo test -p tugboat-integration-tests node_drain
+```
+
+Runtime:
+
+```bash
+cargo test -p tugboat-vm-runtime-interface
+cargo test -p tugboat-runtime-common
+cargo test -p tugboat-qemu-runtime
+cargo test -p tugboat-cloud-hypervisor-runtime
+cargo test -p tugboat-integration-tests live_migration_e2e
+```
+
+Installer:
+
+```bash
+installer/systemd/test/run-tests.sh --scenario 01-control-plane-only
+```
+
+### Release Gate
+
+`cargo deny check` is a release blocker. Run the PR gate, then the fixed installer scenario set:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets
+cargo deny check
+
+installer/systemd/test/run-tests.sh --scenario 00-lib-unit
+installer/systemd/test/run-tests.sh --scenario 01-control-plane-only
+installer/systemd/test/run-tests.sh --scenario 02-worker-join
+installer/systemd/test/run-tests.sh --scenario 06-serviceaccount-rbac
+installer/systemd/test/run-tests.sh --scenario 08-etcd-ha
+installer/systemd/test/run-tests.sh --scenario 10-csi-hostpath
+```
+
+## 4. How the Resources Relate to Each Other
 
 Understanding the dependency chain helps you apply and verify resources in the right order.
 
@@ -113,7 +198,7 @@ apply.sh
 
 ---
 
-## 4. Starting the Environment
+## 5. Starting the Environment
 
 From the repository root:
 
@@ -144,7 +229,7 @@ tugboat-hostpath-provisioner-1  Up
 
 ---
 
-## 5. Applying the Sample Manifests
+## 6. Applying the Sample Manifests
 
 ```bash
 cd manifests/samples
@@ -176,7 +261,7 @@ If any step fails, the script exits and prints the error response from the API s
 
 ---
 
-## 6. Verifying Each Resource
+## 7. Verifying Each Resource
 
 All verification uses plain `curl` against `http://localhost:8080`. The API follows REST
 conventions:
@@ -185,7 +270,7 @@ conventions:
 - **Namespaced resources**: `GET /api/v1/namespaces/{namespace}/{plural}/{name}`
 - **Coordination group resources**: `GET /apis/coordination/v1/namespaces/{namespace}/{plural}/{name}`
 
-### 6.1 Node — Agent Registration
+### 7.1 Node — Agent Registration
 
 When the `agent` container starts, it automatically registers the host it is running on as a
 `Node` resource and reports which CNI plugins are available.
@@ -261,7 +346,7 @@ curl -s http://localhost:8080/api/v1/nodes | python3 -m json.tool
 
 ---
 
-### 6.2 Namespace
+### 7.2 Namespace
 
 ```bash
 curl -s http://localhost:8080/api/v1/namespaces/demo | python3 -m json.tool
@@ -271,7 +356,7 @@ curl -s http://localhost:8080/api/v1/namespaces/demo | python3 -m json.tool
 
 ---
 
-### 6.3 ShipClass
+### 7.3 ShipClass
 
 A `ShipClass` defines the hardware profile (CPU architecture, cores, RAM) that a `Ship` will
 request. Think of it like a VM flavor in OpenStack.
@@ -305,7 +390,7 @@ whether a node has enough free resources to run the Ship.
 
 ---
 
-### 6.4 StorageClass
+### 7.4 StorageClass
 
 A `StorageClass` tells the controller-manager which CSI driver to use when dynamically
 provisioning storage. The sample uses the `hostpath.csi.k8s.io` driver provided by the
@@ -336,7 +421,7 @@ curl -s http://localhost:8080/api/v1/storageclasses/hostpath | python3 -m json.t
 
 ---
 
-### 6.5 ClusterNetworkClass and NetworkClass
+### 7.5 ClusterNetworkClass and NetworkClass
 
 Network classes define the network configuration that Ships attach to. A
 `ClusterNetworkClass` is available cluster-wide; a `NetworkClass` is scoped to a single
@@ -391,7 +476,7 @@ plugin checks before assigning a Ship to a node.
 
 ---
 
-### 6.6 ConfigMap
+### 7.6 ConfigMap
 
 A `ConfigMap` stores non-sensitive configuration data that can be mounted into a VM as files.
 
@@ -420,7 +505,7 @@ curl -s http://localhost:8080/api/v1/namespaces/demo/configmaps/app-config | pyt
 
 ---
 
-### 6.7 Secret
+### 7.7 Secret
 
 A `Secret` stores sensitive data (passwords, tokens). The manifest uses `stringData` (plain
 text); the API server stores it internally as-is.
@@ -449,7 +534,7 @@ curl -s http://localhost:8080/api/v1/namespaces/demo/secrets/app-secret | python
 
 ---
 
-### 6.8 PersistentVolumeClaim — Storage Provisioning
+### 7.8 PersistentVolumeClaim — Storage Provisioning
 
 A `PersistentVolumeClaim` (PVC) is a request for storage. After you create a PVC, the
 `controller-manager` calls the CSI driver to provision a matching `PersistentVolume` (PV) and
@@ -518,7 +603,7 @@ docker compose logs controller-manager | grep -E 'pvc|provision|data-disk|ERROR'
 
 ---
 
-### 6.9 Ship — Scheduling and Runtime
+### 7.9 Ship — Scheduling and Runtime
 
 A `Ship` is the core workload resource. After creation, two things happen automatically:
 
@@ -596,7 +681,7 @@ Total ships: 1
 
 ---
 
-## 7. Known Limitations of the Docker Compose Environment
+## 8. Known Limitations of the Docker Compose Environment
 
 The Docker Compose setup is designed to verify the **control plane flow** end-to-end. Some
 low-level operations require kernel features that are not available inside standard Docker
@@ -621,7 +706,7 @@ Despite these limitations, the following flows are fully verifiable in Docker Co
 
 ---
 
-## 8. Quick Reference: systemd + HTTP Verification
+## 9. Quick Reference: systemd + HTTP Verification
 
 These commands verify a systemd installation where the control-plane host is
 available as `CP_HOST` and the API server listens on HTTP port `8080`.
@@ -630,7 +715,7 @@ available as `CP_HOST` and the API server listens on HTTP port `8080`.
 export CP="http://${CP_HOST:-localhost}:8080"
 ```
 
-### 8.1 Control-plane services
+### 9.1 Control-plane services
 
 ```bash
 systemctl is-active \
@@ -645,7 +730,7 @@ curl -sf "$CP/healthz" && echo "OK"
 All four services should print `active`, and the health check should print
 `OK`.
 
-### 8.2 Node registration
+### 9.2 Node registration
 
 ```bash
 curl -s "$CP/api/v1/nodes" | python3 -m json.tool
@@ -662,7 +747,7 @@ ready plugin entry like:
 See [Node - Agent Registration](#61-node--agent-registration)
 for the detailed status fields.
 
-### 8.3 Flannel ClusterNetworkClass
+### 9.3 Flannel ClusterNetworkClass
 
 ```bash
 curl -s "$CP/api/v1/clusternetworkclasses/cluster-network" | python3 -m json.tool
@@ -674,7 +759,7 @@ The expected value is:
 {"cniPlugin": "flannel"}
 ```
 
-### 8.4 Component logs
+### 9.4 Component logs
 
 ```bash
 journalctl \
@@ -691,7 +776,7 @@ No output means no recent warning or error lines were found.
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 ### API server is not responding
 

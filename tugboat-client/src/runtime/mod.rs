@@ -16,7 +16,10 @@ mod action;
 mod backoff;
 mod controller;
 mod finalizer;
+mod queue;
 mod reconciler;
+mod runner;
+mod stream;
 
 pub use action::Action;
 pub use backoff::BackoffConfig;

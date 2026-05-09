@@ -31,11 +31,17 @@ where
         &self,
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
-        let initial = self.list_with_params(params).await?;
-        let watch_stream = self.watch_raw(params).await?;
+        let initial_list = self.list_with_params_full(params).await?;
+        let mut watch_params = params.clone();
+        apply_list_resource_version(
+            &mut watch_params,
+            initial_list.metadata.resource_version.as_deref(),
+        );
+
+        let watch_stream = self.watch_raw(watch_params).await?;
 
         Ok(stream! {
-            for item in initial {
+            for item in initial_list.items {
                 yield Ok(WatchEvent::Added(item));
             }
             futures::pin_mut!(watch_stream);
@@ -50,5 +56,46 @@ where
         params: &WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
         self.reflector(params).await
+    }
+}
+
+fn apply_list_resource_version(
+    watch_params: &mut WatchParams,
+    list_resource_version: Option<&str>,
+) {
+    if let Some(resource_version) = list_resource_version {
+        watch_params.resource_version = Some(resource_version.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_explicit_resource_version_when_list_revision_is_absent() {
+        let mut params = WatchParams::default().resource_version("42");
+
+        apply_list_resource_version(&mut params, None);
+
+        assert_eq!(params.resource_version.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn uses_list_resource_version_when_available() {
+        let mut params = WatchParams::default().resource_version("42");
+
+        apply_list_resource_version(&mut params, Some("84"));
+
+        assert_eq!(params.resource_version.as_deref(), Some("84"));
+    }
+
+    #[test]
+    fn leaves_resource_version_absent_without_list_revision() {
+        let mut params = WatchParams::default();
+
+        apply_list_resource_version(&mut params, None);
+
+        assert_eq!(params.resource_version, None);
     }
 }

@@ -26,6 +26,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("JSON Error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("TOML Error: {0}")]
+    Toml(#[from] toml::de::Error),
     #[error("System call Error: {0}")]
     Syscall(#[from] Errno),
     #[error("Validation error: {0}")]

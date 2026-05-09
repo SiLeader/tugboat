@@ -34,10 +34,10 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("TOML Error: {0}")]
     Toml(#[from] toml::de::Error),
+    #[error("{0}")]
+    Config(#[from] tugboat_runtime_common::config::ConfigLoadError),
     #[error("System call Error: {0}")]
     Syscall(#[from] Errno),
-    #[error("Failed to setup network: {0}")]
-    NetworkSetupFailed(String),
     #[error("QMP operation failed: {0}")]
     Qmp(String),
     #[error("Action failed: {0}")]
@@ -88,8 +88,10 @@ pub fn run() {
             _ => {}
         }
 
-        let file = std::fs::read_to_string(&args.config)?;
-        let config: Config = toml::from_str(&file)?;
+        let config: Config = tugboat_runtime_common::config::load_component_toml_config(
+            "tugboat-qemu-runtime",
+            &args.config,
+        )?;
         let Config { qemu } = config;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -154,17 +156,44 @@ impl From<Error> for tugboat_vm_runtime_interface::error::Error {
                     "format": "toml"
                 })),
             },
+            Error::Config(e) => {
+                let (kind, details) = match &e {
+                    tugboat_runtime_common::config::ConfigLoadError::Read {
+                        component,
+                        path,
+                        ..
+                    } => (
+                        ErrorKind::Io,
+                        serde_json::json!({
+                            "component": component,
+                            "path": path,
+                        }),
+                    ),
+                    tugboat_runtime_common::config::ConfigLoadError::ParseToml {
+                        component,
+                        path,
+                        ..
+                    } => (
+                        ErrorKind::Serialization,
+                        serde_json::json!({
+                            "component": component,
+                            "path": path,
+                            "format": "toml",
+                        }),
+                    ),
+                };
+                Self {
+                    kind,
+                    message: e.to_string(),
+                    details: Some(details),
+                }
+            }
             Error::Syscall(e) => Self {
                 kind: ErrorKind::Syscall,
                 message: e.to_string(),
                 details: Some(serde_json::json!({
                     "errno": e as i32,
                 })),
-            },
-            Error::NetworkSetupFailed(message) => Self {
-                kind: ErrorKind::Network,
-                message,
-                details: None,
             },
             Error::Qmp(message) => Self {
                 kind: ErrorKind::VmOperation,
@@ -177,7 +206,7 @@ impl From<Error> for tugboat_vm_runtime_interface::error::Error {
                 details: None,
             },
             Error::Validation(message) => Self {
-                kind: ErrorKind::VmOperation,
+                kind: ErrorKind::Validation,
                 message,
                 details: None,
             },
@@ -190,8 +219,41 @@ impl From<tugboat_runtime_common::Error> for Error {
         match value {
             tugboat_runtime_common::Error::Io(e) => Self::Io(e),
             tugboat_runtime_common::Error::Json(e) => Self::Json(e),
+            tugboat_runtime_common::Error::Toml(e) => Self::Toml(e),
             tugboat_runtime_common::Error::Syscall(e) => Self::Syscall(e),
             tugboat_runtime_common::Error::Validation(message) => Self::Validation(message),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn qemu_sample_config_deserializes_from_toml() {
+        let config = toml::from_str::<Config>(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sample-configs/runtime/config.toml"
+        )))
+        .unwrap();
+
+        assert_eq!(config.qemu.disk_image_location, "./test/data");
+        assert_eq!(config.qemu.executables.qemu, "/usr/bin/qemu-system-x86_64");
+    }
+
+    #[test]
+    fn qemu_installer_config_template_deserializes_from_toml() {
+        let config = toml::from_str::<Config>(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../installer/systemd/configs/runtime-qemu.config.toml.tpl"
+        )))
+        .unwrap();
+
+        assert_eq!(
+            config.qemu.disk_image_location,
+            "/var/lib/tugboat-agent/images"
+        );
+        assert_eq!(config.qemu.executables.qemu, "/usr/bin/qemu-system-x86_64");
     }
 }

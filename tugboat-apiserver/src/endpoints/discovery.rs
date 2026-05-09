@@ -80,7 +80,7 @@ fn resource_entry(resource: resource_registry::ResourceApiDescriptor) -> ApiReso
     ApiResource {
         name: resource.plural.to_string(),
         singular_name: resource.singular.to_string(),
-        namespaced: resource.namespaced,
+        namespaced: resource.namespaced(),
         kind: resource.kind.to_string(),
         verbs: resource.operations.resource_verbs(),
     }
@@ -90,18 +90,18 @@ fn status_subresource_entry(resource: resource_registry::ResourceApiDescriptor) 
     ApiResource {
         name: format!("{}/status", resource.plural),
         singular_name: String::new(),
-        namespaced: resource.namespaced,
+        namespaced: resource.namespaced(),
         kind: resource.kind.to_string(),
         verbs: resource.operations.status_verbs(),
     }
 }
 
-fn expand_resources(resources: Vec<resource_registry::ResourceApiDescriptor>) -> Vec<ApiResource> {
+fn expand_resources(resources: &[resource_registry::ResourceApiDescriptor]) -> Vec<ApiResource> {
     let mut entries = Vec::new();
     for resource in resources {
-        entries.push(resource_entry(resource));
+        entries.push(resource_entry(*resource));
         if resource.operations.has_status_subresource() {
-            entries.push(status_subresource_entry(resource));
+            entries.push(status_subresource_entry(*resource));
         }
     }
     entries
@@ -133,7 +133,7 @@ pub(super) async fn handle_api_v1_resources() -> HttpResponse {
         kind: "APIResourceList",
         api_version: "v1",
         group_version: "v1".to_string(),
-        resources: expand_resources(resources),
+        resources: expand_resources(&resources),
     })
 }
 
@@ -206,22 +206,50 @@ pub(super) async fn handle_api_group_version_resources(
         kind: "APIResourceList",
         api_version: "v1",
         group_version: format!("{}/{}", path.group, path.version),
-        resources: expand_resources(resources),
+        resources: expand_resources(&resources),
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{App, test};
+    use actix_web::{App, test as actix_test};
     use serde_json::Value;
+
+    #[test]
+    fn discovery_entries_are_derived_from_resource_descriptors() {
+        let entries = expand_resources(resource_registry::all_resource_apis());
+
+        for resource in resource_registry::all_resource_apis() {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.name == resource.plural)
+                .expect("resource discovery entry should exist");
+            assert_eq!(entry.singular_name, resource.singular);
+            assert_eq!(entry.namespaced, resource.namespaced());
+            assert_eq!(entry.kind, resource.kind);
+            assert_eq!(entry.verbs, resource.operations.resource_verbs());
+
+            let status_entry = entries
+                .iter()
+                .find(|entry| entry.name == format!("{}/status", resource.plural));
+            if resource.operations.has_status_subresource() {
+                let status_entry = status_entry.expect("status discovery entry should exist");
+                assert_eq!(status_entry.namespaced, resource.namespaced());
+                assert_eq!(status_entry.kind, resource.kind);
+                assert_eq!(status_entry.verbs, resource.operations.status_verbs());
+            } else {
+                assert!(status_entry.is_none());
+            }
+        }
+    }
 
     #[actix_web::test]
     async fn core_discovery_includes_configmap_with_watch_verb() {
-        let app = test::init_service(App::new().service(handle_api_v1_resources)).await;
+        let app = actix_test::init_service(App::new().service(handle_api_v1_resources)).await;
 
-        let req = test::TestRequest::get().uri("/api/v1").to_request();
-        let resp: Value = test::call_and_read_body_json(&app, req).await;
+        let req = actix_test::TestRequest::get().uri("/api/v1").to_request();
+        let resp: Value = actix_test::call_and_read_body_json(&app, req).await;
         let resources = resp["resources"].as_array().unwrap();
         let configmaps = resources
             .iter()

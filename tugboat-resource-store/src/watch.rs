@@ -50,7 +50,6 @@ impl WatchMuxAggregator {
         }
     }
 
-    // resource_version is not used yet.
     pub(crate) async fn get(
         &self,
         key: &str,
@@ -73,9 +72,7 @@ impl WatchMuxAggregator {
         let key = key.to_string();
         let watch_mux = m.clone();
         let aggregator_mux = Arc::clone(&self.mux);
-        let start_revision = resource_version
-            .as_deref()
-            .and_then(|value| value.parse::<i64>().ok())
+        let start_revision = parse_resource_version(resource_version.as_deref())?
             .map(|revision| revision.saturating_add(1));
         // Create the receiver before spawning to avoid a race where the task
         // sees zero receivers and exits before the caller can subscribe.
@@ -129,6 +126,25 @@ impl WatchMuxAggregator {
         });
         Ok(receiver)
     }
+}
+
+fn parse_resource_version(resource_version: Option<&str>) -> Result<Option<i64>, crate::Error> {
+    let Some(value) = resource_version else {
+        return Ok(None);
+    };
+    let revision = value.parse::<i64>().map_err(|_| {
+        crate::Error::InvalidField(
+            "resourceVersion".to_string(),
+            "must be a valid integer".to_string(),
+        )
+    })?;
+    if revision < 0 {
+        return Err(crate::Error::InvalidField(
+            "resourceVersion".to_string(),
+            "must not be negative".to_string(),
+        ));
+    }
+    Ok(Some(revision))
 }
 
 async fn stop_watch_if_unused(
@@ -212,7 +228,7 @@ impl Default for WatchMux {
 
 #[cfg(test)]
 mod tests {
-    use super::{WatchMux, cleanup_watch};
+    use super::{WatchMux, cleanup_watch, parse_resource_version};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -249,5 +265,35 @@ mod tests {
         cleanup_watch(&mux_map, "/demo").await;
 
         assert!(!mux_map.lock().await.contains_key("/demo"));
+    }
+
+    #[test]
+    fn resource_version_none_starts_from_current_revision() {
+        assert_eq!(parse_resource_version(None).unwrap(), None);
+    }
+
+    #[test]
+    fn resource_version_parses_as_etcd_revision() {
+        assert_eq!(parse_resource_version(Some("42")).unwrap(), Some(42));
+    }
+
+    #[test]
+    fn resource_version_rejects_non_numeric_values() {
+        let err = parse_resource_version(Some("latest")).unwrap_err();
+
+        assert!(matches!(
+            err,
+            crate::Error::InvalidField(ref field, _) if field == "resourceVersion"
+        ));
+    }
+
+    #[test]
+    fn resource_version_rejects_negative_values() {
+        let err = parse_resource_version(Some("-1")).unwrap_err();
+
+        assert!(matches!(
+            err,
+            crate::Error::InvalidField(ref field, _) if field == "resourceVersion"
+        ));
     }
 }

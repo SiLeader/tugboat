@@ -24,6 +24,7 @@ use tokio_util::io::StreamReader;
 pub struct WatchParams {
     pub label_selector: Option<String>,
     pub field_selector: Option<String>,
+    pub resource_version: Option<String>,
 }
 
 impl WatchParams {
@@ -34,6 +35,11 @@ impl WatchParams {
 
     pub fn labels(mut self, label_selector: impl ToString) -> Self {
         self.label_selector = Some(label_selector.to_string());
+        self
+    }
+
+    pub fn resource_version(mut self, resource_version: impl ToString) -> Self {
+        self.resource_version = Some(resource_version.to_string());
         self
     }
 }
@@ -50,7 +56,7 @@ impl TugboatClient {
     pub(crate) async fn watch_impl<T: DeserializeOwned>(
         &self,
         path: String,
-        params: &WatchParams,
+        params: WatchParams,
     ) -> Result<impl Stream<Item = Result<WatchEvent<T>, Error>>, Error> {
         let mut url = self.build_url(&path);
         {
@@ -61,6 +67,9 @@ impl TugboatClient {
             }
             if let Some(f) = &params.field_selector {
                 pairs.append_pair("fieldSelector", f);
+            }
+            if let Some(rv) = &params.resource_version {
+                pairs.append_pair("resourceVersion", rv);
             }
         }
 

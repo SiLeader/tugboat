@@ -285,21 +285,3 @@ pub(super) fn register_shipclass(service: &mut ServiceConfig) {
         .service(shipclass::handle_shipclass_list)
         .service(shipclass::handle_shipclass_read);
 }
-
-#[allow(dead_code)]
-pub(super) fn register_v1_core(service: &mut ServiceConfig) {
-    service
-        .configure(register_clusternetworkclass)
-        .configure(register_configmap)
-        .configure(register_namespace)
-        .configure(register_node)
-        .configure(register_persistent_volume)
-        .configure(register_persistent_volume_claim)
-        .configure(register_networkclass)
-        .configure(register_runtimeclass)
-        .configure(register_secret)
-        .configure(register_service_account)
-        .configure(register_storage_class)
-        .configure(register_ship)
-        .configure(register_shipclass);
-}

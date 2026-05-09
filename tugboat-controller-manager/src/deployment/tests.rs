@@ -171,6 +171,7 @@ fn template_hash_is_stable_for_same_template() {
 
     assert_eq!(template_hash(template), template_hash(template));
     assert_eq!(template_hash(template).len(), 16);
+    assert_eq!(template_hash(template), "dbd3e8e16a27a77a");
 }
 
 #[test]

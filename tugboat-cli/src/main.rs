@@ -30,7 +30,7 @@ enum SubCommand {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -39,6 +39,7 @@ async fn main() {
     debug!("Command line arguments: {args:?}");
 
     match args.subcommand {
-        SubCommand::Build(build_args) => build::run_build(build_args).await,
+        SubCommand::Build(build_args) => build::run_build(build_args).await?,
     }
+    Ok(())
 }

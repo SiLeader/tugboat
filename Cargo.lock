@@ -3342,6 +3342,7 @@ dependencies = [
  "tugboat-cni-operator",
  "tugboat-csi-operator",
  "tugboat-resources",
+ "tugboat-runtime-common",
  "tugboat-vm-image",
  "tugboat-vm-runtime-interface",
 ]
@@ -3370,6 +3371,7 @@ dependencies = [
  "tracing-subscriber",
  "tugboat-resource-store",
  "tugboat-resources",
+ "tugboat-runtime-common",
  "tugboat-scheduler",
  "utoipa",
  "utoipa-actix-web",
@@ -3381,7 +3383,6 @@ name = "tugboat-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
- "regex",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3458,6 +3459,7 @@ dependencies = [
  "tugboat-client",
  "tugboat-csi-operator",
  "tugboat-resources",
+ "tugboat-runtime-common",
 ]
 
 [[package]]
@@ -3550,6 +3552,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "toml",
  "tracing",
  "tugboat-vm-runtime-interface",
 ]
@@ -3570,6 +3573,7 @@ dependencies = [
  "tracing-subscriber",
  "tugboat-client",
  "tugboat-resources",
+ "tugboat-runtime-common",
  "uuid",
 ]
 
@@ -3580,7 +3584,6 @@ dependencies = [
  "base64 0.22.1",
  "flate2",
  "oci-distribution",
- "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
