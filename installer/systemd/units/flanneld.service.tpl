@@ -20,8 +20,8 @@ Restart=on-failure
 RestartSec=5s
 
 # flanneld configures host networking devices and routes.
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH
 PrivateNetwork=false
 ProtectSystem=full
 

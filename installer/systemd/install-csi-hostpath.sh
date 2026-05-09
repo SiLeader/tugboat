@@ -162,6 +162,12 @@ install_directories() {
     install -d -m 0755 -o tugboat-csi-hostpath -g tugboat-csi-hostpath -- "${HOSTPATH_DATA_DIR}"
 }
 
+grant_csi_socket_access() {
+    if id -u tugboat-controller-manager >/dev/null 2>&1; then
+        usermod -aG tugboat-csi-hostpath tugboat-controller-manager
+    fi
+}
+
 install_hostpath_unit() {
     export HOSTPATH_NODE_ID HOSTPATH_DATA_DIR
     install_unit "${SCRIPT_DIR}/units/hostpath-provisioner.service.tpl" hostpath-provisioner.service
@@ -185,6 +191,7 @@ main() {
     esac
 
     install_directories
+    grant_csi_socket_access
     install_hostpath_unit
     enable_unit hostpath-provisioner.service
 }

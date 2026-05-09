@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 User=tugboat-csi-hostpath
 Group=tugboat-csi-hostpath
-UMask=0027
+UMask=0007
 ExecStartPre=+/usr/bin/install -d -m 0755 -o tugboat-csi-hostpath -g tugboat-csi-hostpath /var/run/csi
 ExecStartPre=+/usr/bin/install -d -m 0755 -o tugboat-csi-hostpath -g tugboat-csi-hostpath ${HOSTPATH_DATA_DIR}
 ExecStartPre=/usr/bin/rm -f /var/run/csi/csi.sock

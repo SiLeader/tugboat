@@ -39,6 +39,7 @@ bash installer/systemd/install-worker.sh \
     --use-prebuilt \
     --bin-dir '${TUGBOAT_TEST_PREBUILT_BIN_DIR}' \
     --apiserver-url http://control-plane:8080 \
+    --insecure \
     --node-name worker \
     --runtime qemu
 

@@ -589,14 +589,15 @@ install_etcd_from_upstream() {
     local extracted_dir
 
     dest_dir="$(mktemp -d -t tugboat-etcd.XXXXXXXXXX)"
-    trap 'rm -rf -- "${dest_dir}"' RETURN
+    (
+        trap 'rm -rf -- "${dest_dir}"' EXIT
+        fetch_tarball "${ETCD_URL}" "${ETCD_SHA256}" "${dest_dir}"
+        extracted_dir="${dest_dir}/etcd-${ETCD_VERSION}-linux-amd64"
 
-    fetch_tarball "${ETCD_URL}" "${ETCD_SHA256}" "${dest_dir}"
-    extracted_dir="${dest_dir}/etcd-${ETCD_VERSION}-linux-amd64"
-
-    install -m 0755 -- "${extracted_dir}/etcd" /usr/local/bin/etcd
-    install -m 0755 -- "${extracted_dir}/etcdctl" /usr/local/bin/etcdctl
-    install -m 0755 -- "${extracted_dir}/etcdutl" /usr/local/bin/etcdutl
+        install -m 0755 -- "${extracted_dir}/etcd" /usr/local/bin/etcd
+        install -m 0755 -- "${extracted_dir}/etcdctl" /usr/local/bin/etcdctl
+        install -m 0755 -- "${extracted_dir}/etcdutl" /usr/local/bin/etcdutl
+    )
 }
 
 install_etcd() {
