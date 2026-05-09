@@ -484,9 +484,72 @@ subjects:
     - [ ] OIDC integration for external identity providers
     - [ ] Aggregated ClusterRoles
     - [ ] Audit logging
-- [ ] Installer (systemd setup)
+- [x] Installer (systemd setup)
+    - [x] `install-control-plane.sh` — installs etcd, apiserver, scheduler, controller-manager as systemd units
+    - [x] `install-worker.sh` — installs agent and VM runtime (QEMU or Cloud Hypervisor) as systemd units
+    - [x] TLS / PKI auto-generation (`setup-pki.sh`, `setup-etcd-pki.sh`)
+    - [x] RBAC bootstrap for control-plane ServiceAccount tokens (`bootstrap-rbac.sh`)
+    - [x] Flannel CNI support (static subnet.env / vxlan / host-gw via `bootstrap-flannel.sh`)
+    - [x] CSI hostpath provisioner installer (`install-csi-hostpath.sh`)
+    - [x] `uninstall.sh` — stops and removes all Tugboat units, binaries, and configs
+    - [x] Docker-based isolated test environment with scenario scripts (`installer/systemd/test/`)
 - [ ] Snapshot
 - [ ] CRD
+
+## Installation
+
+The `installer/systemd/` directory contains shell scripts that install and configure
+Tugboat on a Debian/Ubuntu host using systemd.  Root access and a working
+`apt-get` are required.
+
+### Control plane
+
+```bash
+sudo installer/systemd/install-control-plane.sh \
+    --build \
+    --apiserver-host control-plane.example.com \
+    --apiserver-ip 192.168.0.1
+```
+
+This installs **etcd**, **tugboat-apiserver**, **tugboat-scheduler**, and
+**tugboat-controller-manager** as systemd services.  By default the API server
+listens on `0.0.0.0:8443` with TLS (auto-generated CA + server certificate).
+Pass `--insecure` to use plain HTTP on port 8080 instead.
+
+Use `--use-prebuilt --bin-dir <path>` in place of `--build` to supply
+pre-compiled binaries.
+
+### Worker
+
+```bash
+sudo installer/systemd/install-worker.sh \
+    --use-prebuilt --bin-dir /path/to/bins \
+    --apiserver-url https://192.168.0.1:8443 \
+    --ca-cert /etc/tugboat/pki/ca.crt \
+    --service-account-token /path/to/agent-token
+```
+
+This installs **tugboat-agent** and the selected VM runtime (`--runtime qemu`
+or `--runtime cloud-hypervisor`).  CNI plugins are installed automatically.
+Flannel mode is controlled by `--flannel-mode static|vxlan|host-gw` (default:
+`static`, which writes `/run/flannel/subnet.env` without running flanneld).
+
+### Uninstall
+
+```bash
+sudo installer/systemd/uninstall.sh --control-plane   # control-plane node
+sudo installer/systemd/uninstall.sh --worker          # worker node
+sudo installer/systemd/uninstall.sh --control-plane --worker --purge  # full cleanup
+```
+
+### Testing the installer
+
+The `installer/systemd/test/` directory provides a Docker-based isolation
+environment (Ubuntu 24.04 with systemd as PID 1).  Run all scenarios with:
+
+```bash
+installer/systemd/test/run-tests.sh
+```
 
 ## Contributing
 

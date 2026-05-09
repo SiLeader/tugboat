@@ -24,7 +24,7 @@ storage provisioning, and VM scheduling. It is written for engineers who are new
     - [6.8 PersistentVolumeClaim — Storage Provisioning](#68-persistentvolumeclaim--storage-provisioning)
     - [6.9 Ship — Scheduling and Runtime](#69-ship--scheduling-and-runtime)
 7. [Known Limitations of the Docker Compose Environment](#7-known-limitations-of-the-docker-compose-environment)
-8. [Quick Reference: All Verification Commands](#8-quick-reference-all-verification-commands)
+8. [Quick Reference: systemd + HTTP Verification](#8-quick-reference-systemd--http-verification)
 9. [Troubleshooting](#9-troubleshooting)
 
 ---
