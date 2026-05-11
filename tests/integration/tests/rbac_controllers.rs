@@ -104,6 +104,115 @@ async fn namespace_creation_generates_default_service_account() -> Result<(), Dy
     Ok(())
 }
 
+#[tokio::test]
+async fn aggregated_cluster_role_propagates_child_rules() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let _controller_manager = ctx.start_controller_manager().await?;
+    let client = ctx.http_client()?;
+
+    let parent_name = format!(
+        "agg-parent-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    );
+    let child_name = format!("{parent_name}-child");
+    let aggregate_label = format!("rbac.tugboat.cloud/{parent_name}");
+
+    request_json(
+        &client,
+        Method::POST,
+        &format!("{}/api/v1/clusterroles", ctx.base_url),
+        StatusCode::OK,
+        Some(json!({
+            "apiVersion": "authorization/v1",
+            "kind": "ClusterRole",
+            "metadata": { "name": parent_name },
+            "aggregationRule": {
+                "clusterRoleSelectors": [
+                    { "matchLabels": { aggregate_label.clone(): "true" } }
+                ]
+            }
+        })),
+    )
+    .await?;
+
+    request_json(
+        &client,
+        Method::POST,
+        &format!("{}/api/v1/clusterroles", ctx.base_url),
+        StatusCode::OK,
+        Some(json!({
+            "apiVersion": "authorization/v1",
+            "kind": "ClusterRole",
+            "metadata": {
+                "name": child_name,
+                "labels": { aggregate_label.clone(): "true" }
+            },
+            "rules": [
+                {
+                    "apiGroups": ["core"],
+                    "resources": ["ships"],
+                    "verbs": ["get", "list", "watch"]
+                }
+            ]
+        })),
+    )
+    .await?;
+
+    let parent = wait_for_json(
+        &client,
+        &format!("{}/api/v1/clusterroles/{parent_name}", ctx.base_url),
+        |body| {
+            body["rules"]
+                .as_array()
+                .map(|rules| {
+                    rules.iter().any(|rule| {
+                        rule["resources"]
+                            .as_array()
+                            .is_some_and(|values| values.iter().any(|v| v == "ships"))
+                    })
+                })
+                .unwrap_or(false)
+        },
+    )
+    .await?;
+    assert!(parent["aggregationRule"].is_object());
+
+    request_json_with_statuses(
+        &client,
+        Method::DELETE,
+        &format!("{}/api/v1/clusterroles/{child_name}", ctx.base_url),
+        &[StatusCode::OK, StatusCode::NO_CONTENT],
+        None,
+    )
+    .await?;
+
+    wait_for_json(
+        &client,
+        &format!("{}/api/v1/clusterroles/{parent_name}", ctx.base_url),
+        |body| {
+            body["rules"]
+                .as_array()
+                .map(|rules| {
+                    !rules.iter().any(|rule| {
+                        rule["resources"]
+                            .as_array()
+                            .is_some_and(|values| values.iter().any(|v| v == "ships"))
+                    })
+                })
+                .unwrap_or(true)
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
 async fn setup_or_skip() -> Result<Option<TestContext>, DynError> {
     let Some(ctx) = TestContext::setup().await? else {
         eprintln!(

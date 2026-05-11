@@ -24,4 +24,21 @@ message ClusterRole {
   tugboat.meta.v1.TypeMeta type_meta = 1;
   tugboat.meta.v1.ObjectMeta object_meta = 2;
   repeated PolicyRule rules = 3;
+  optional AggregationRule aggregation_rule = 4;
+}
+
+// AggregationRule describes how to aggregate rules from other ClusterRoles
+// whose labels match the provided selectors. Matching ClusterRoles are
+// resolved by the controller manager, which writes the union of their rules
+// into the parent ClusterRole's `rules` field.
+message AggregationRule {
+  repeated LabelSelector cluster_role_selectors = 1;
+}
+
+// LabelSelector matches resources by their labels. Currently only
+// `match_labels` (equality-based) is supported. A label selector with no
+// entries matches no resources (matching Kubernetes semantics for
+// aggregationRule selectors).
+message LabelSelector {
+  map<string, string> match_labels = 1;
 }
