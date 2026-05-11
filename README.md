@@ -417,8 +417,9 @@ subjects:
 - **ServiceAccount token projection** — automatic mounting of scoped tokens into Ships (similar to Kubernetes projected
   service account tokens)
 - **Aggregated ClusterRoles** — compose ClusterRoles by label selector so extensions can inject rules automatically
-- **OIDC integration** — validate tokens issued by external identity providers (e.g. Dex, Keycloak, cloud IAM) via
-  standard OIDC discovery
+- **OIDC integration** — `[[authentication.oidc]]` blocks register external identity providers (Dex, Keycloak, Auth0,
+  cloud IAM, …); ID tokens are verified against each provider's JWKS, with username/group claim prefixes to keep OIDC
+  subjects from colliding with local identities
 - **Audit logging** — structured audit records for every API request (who, what, when, response code) with configurable
   per-resource verbosity
 
@@ -485,7 +486,7 @@ subjects:
         - [x] Default ServiceAccount auto-created per namespace
         - [ ] Signed JWT tokens with audience/expiry
     - [ ] ServiceAccount token auto-projection into Ships
-    - [ ] OIDC integration for external identity providers
+    - [x] OIDC integration for external identity providers
     - [ ] Aggregated ClusterRoles
     - [ ] Audit logging
 - [x] Installer (systemd setup)

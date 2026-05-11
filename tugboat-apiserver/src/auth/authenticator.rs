@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::auth::middleware::ClientCertificateInfo;
+use crate::auth::oidc::{OidcAuthenticator, OidcVerifyError, ProviderMatch};
 use crate::auth::service_account_jwt::{BoundObjectReference, looks_like_jwt};
 use crate::auth::user_info::UserInfo;
 use crate::config::AuthenticationConfig;
@@ -22,13 +23,16 @@ use actix_web::HttpRequest;
 use actix_web::http::header::AUTHORIZATION;
 use actix_web::web::Data;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::prelude::BASE64_STANDARD;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
+use tracing::warn;
 use tugboat_resource_store::serializer::StaticSerializable;
 use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::coordination::v1::Lease;
@@ -98,7 +102,7 @@ impl DefaultAuthenticator {
         req: &HttpRequest,
     ) -> Result<Option<UserInfo>, Box<StatusResponse>> {
         if let Some(token) = bearer_token(req)? {
-            let user = self.authenticate_service_account_token(&token).await?;
+            let user = self.authenticate_bearer_token(&token).await?;
             return Ok(Some(user));
         }
         if let Some(cert) = req.conn_data::<ClientCertificateInfo>() {
@@ -108,19 +112,59 @@ impl DefaultAuthenticator {
         Ok(None)
     }
 
+    async fn authenticate_bearer_token(
+        &self,
+        token: &str,
+    ) -> Result<UserInfo, Box<StatusResponse>> {
+        // JWT dispatch is exclusive: a token with `iss` set must be verified by
+        // the matching issuer (own SA, or a configured OIDC provider) and must
+        // not fall back to the opaque-token path, otherwise an unrelated
+        // foreign JWT could be silently treated as a Secret-stored opaque token.
+        if looks_like_jwt(token)
+            && let Some(issuer) = peek_jwt_issuer(token)
+        {
+            if let Some(sa_issuer) = &self.operator.service_account_tokens
+                && sa_issuer_matches(sa_issuer, &issuer)
+            {
+                return self
+                    .authenticate_service_account_jwt(sa_issuer, token)
+                    .await;
+            }
+            if let Some(oidc) = &self.operator.oidc_authenticator {
+                match oidc.provider_for_token(token) {
+                    ProviderMatch::Matched(provider) => {
+                        return self.authenticate_oidc(oidc, provider, token).await;
+                    }
+                    ProviderMatch::UnknownIssuer(iss) => {
+                        warn!(
+                            issuer = %iss,
+                            "rejecting JWT bearer token from unregistered issuer"
+                        );
+                        return Err(Box::new(StatusResponse::unauthorized(
+                            "JWT issuer is not registered",
+                            None,
+                        )));
+                    }
+                    ProviderMatch::NotJwt => {}
+                }
+            } else {
+                warn!(
+                    issuer = %issuer,
+                    "rejecting JWT bearer token: no OIDC providers configured and issuer does not match the service-account issuer"
+                );
+                return Err(Box::new(StatusResponse::unauthorized(
+                    "JWT issuer is not registered",
+                    None,
+                )));
+            }
+        }
+        self.authenticate_service_account_token(token).await
+    }
+
     async fn authenticate_service_account_token(
         &self,
         token: &str,
     ) -> Result<UserInfo, Box<StatusResponse>> {
-        if looks_like_jwt(token)
-            && let Some(jwt_issuer) = &self.operator.service_account_tokens
-            && let Ok(user) = self
-                .authenticate_service_account_jwt(jwt_issuer, token)
-                .await
-        {
-            return Ok(user);
-        }
-
         let secret = self
             .find_service_account_token_secret(token)
             .await?
@@ -227,6 +271,48 @@ impl DefaultAuthenticator {
             current_uid,
             extra,
         ))
+    }
+
+    async fn authenticate_oidc(
+        &self,
+        oidc: &OidcAuthenticator,
+        provider: &crate::auth::oidc::OidcProvider,
+        token: &str,
+    ) -> Result<UserInfo, Box<StatusResponse>> {
+        let identity = oidc.verify(provider, token).await.map_err(|err| {
+            // Log discovery/JWKS errors so an operator can distinguish IdP
+            // outages from real client errors; the response stays a generic
+            // 401 so we never leak internal details to unauthenticated callers.
+            match &err {
+                OidcVerifyError::Discovery { issuer, source } => {
+                    warn!(
+                        issuer = %issuer,
+                        error = %source,
+                        "OIDC discovery failed during token verification"
+                    );
+                }
+                OidcVerifyError::Jwks { issuer, source } => {
+                    warn!(
+                        issuer = %issuer,
+                        error = %source,
+                        "OIDC JWKS fetch failed during token verification"
+                    );
+                }
+                _ => {}
+            }
+            Box::new(StatusResponse::unauthorized(format!("{err}"), None))
+        })?;
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "authentication.kubernetes.io/credential".to_string(),
+            vec!["OIDC".to_string()],
+        );
+        extra.insert(
+            "authentication.tugboat.cloud/oidc-issuer".to_string(),
+            vec![identity.issuer.clone()],
+        );
+        Ok(UserInfo::oidc(identity.username, identity.groups, extra))
     }
 
     async fn validate_bound_object_ref(
@@ -485,6 +571,25 @@ fn bearer_token(req: &HttpRequest) -> Result<Option<String>, Box<StatusResponse>
         )));
     }
     Ok(Some(token.to_string()))
+}
+
+fn peek_jwt_issuer(token: &str) -> Option<String> {
+    let mut parts = token.split('.');
+    let _header = parts.next()?;
+    let claims_b64 = parts.next()?;
+    let claims_bytes = URL_SAFE_NO_PAD.decode(claims_b64).ok()?;
+    let value: Value = serde_json::from_slice(&claims_bytes).ok()?;
+    value
+        .get("iss")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim_end_matches('/').to_string())
+}
+
+fn sa_issuer_matches(
+    issuer: &crate::auth::service_account_jwt::ServiceAccountTokenIssuer,
+    candidate: &str,
+) -> bool {
+    issuer.issuer().trim_end_matches('/') == candidate
 }
 
 fn authenticate_client_certificate(

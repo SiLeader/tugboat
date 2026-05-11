@@ -221,6 +221,10 @@ impl ServiceAccountTokenIssuer {
         }))
     }
 
+    pub(crate) fn issuer(&self) -> &str {
+        &self.issuer
+    }
+
     pub(crate) fn issue_token(
         &self,
         service_account: &ServiceAccount,

@@ -66,6 +66,29 @@ pub struct AuthenticationConfig {
     pub(crate) anonymous_enabled: bool,
     #[serde(default)]
     pub(crate) service_account: ServiceAccountTokenConfig,
+    #[serde(default)]
+    pub(crate) oidc: Vec<OidcProviderConfig>,
+}
+
+#[derive(Clone, serde::Deserialize)]
+pub(crate) struct OidcProviderConfig {
+    pub(crate) issuer_url: String,
+    pub(crate) client_id: String,
+    #[serde(default = "default_oidc_username_claim")]
+    pub(crate) username_claim: String,
+    #[serde(default)]
+    pub(crate) username_prefix: String,
+    #[serde(default = "default_oidc_groups_claim")]
+    pub(crate) groups_claim: String,
+    #[serde(default)]
+    pub(crate) groups_prefix: String,
+    #[serde(default)]
+    pub(crate) required_claims: HashMap<String, String>,
+    pub(crate) ca_file: Option<String>,
+    #[serde(default = "default_oidc_jwks_refresh_seconds")]
+    pub(crate) jwks_refresh_seconds: u64,
+    #[serde(default = "default_oidc_jwks_min_refresh_seconds")]
+    pub(crate) jwks_min_refresh_seconds: u64,
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -201,6 +224,22 @@ fn default_service_account_token_leeway_seconds() -> u64 {
     60
 }
 
+fn default_oidc_username_claim() -> String {
+    "sub".to_string()
+}
+
+fn default_oidc_groups_claim() -> String {
+    "groups".to_string()
+}
+
+fn default_oidc_jwks_refresh_seconds() -> u64 {
+    600
+}
+
+fn default_oidc_jwks_min_refresh_seconds() -> u64 {
+    30
+}
+
 fn default_audit_log_path() -> String {
     "-".to_string()
 }
@@ -234,6 +273,7 @@ impl Default for AuthenticationConfig {
         Self {
             anonymous_enabled: default_anonymous_enabled(),
             service_account: ServiceAccountTokenConfig::default(),
+            oidc: Vec::new(),
         }
     }
 }
@@ -262,7 +302,16 @@ impl crate::ApiServer {
                     reason,
                 )
             })?;
-        let operator = ApiOperator::new(store, service_account_tokens);
+        let oidc_authenticator = crate::auth::oidc::OidcAuthenticator::from_config(
+            &value.authentication.oidc,
+        )
+        .map_err(|reason| {
+            tugboat_resource_store::error::Error::InvalidField(
+                "authentication.oidc".to_string(),
+                reason,
+            )
+        })?;
+        let operator = ApiOperator::new(store, service_account_tokens, oidc_authenticator);
         Ok(Self::new(
             value.http.listen,
             operator,

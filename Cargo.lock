@@ -3393,6 +3393,7 @@ dependencies = [
  "openssl",
  "rand 0.10.1",
  "rand_xorshift",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "sha2 0.11.0",

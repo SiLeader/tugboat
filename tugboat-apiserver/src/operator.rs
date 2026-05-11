@@ -23,17 +23,20 @@ pub(crate) struct ApiOperator {
     pub(crate) name_generator: NameGenerator,
     pub(crate) service_account_tokens:
         Option<Arc<crate::auth::service_account_jwt::ServiceAccountTokenIssuer>>,
+    pub(crate) oidc_authenticator: Option<Arc<crate::auth::oidc::OidcAuthenticator>>,
 }
 
 impl ApiOperator {
     pub(crate) fn new(
         store: ResourceStore,
         service_account_tokens: Option<crate::auth::service_account_jwt::ServiceAccountTokenIssuer>,
+        oidc_authenticator: Option<crate::auth::oidc::OidcAuthenticator>,
     ) -> Self {
         Self {
             store,
             name_generator: NameGenerator::new(),
             service_account_tokens: service_account_tokens.map(Arc::new),
+            oidc_authenticator: oidc_authenticator.map(Arc::new),
         }
     }
 
