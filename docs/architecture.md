@@ -8,7 +8,7 @@ Tugboat is a Kubernetes-inspired VM orchestration system. The API server stores 
 | --- | --- |
 | `tugboat-resources` | Protobuf-generated API types, resource metadata descriptors, manifest traits, and validators. |
 | `tugboat-resource-store` | etcd-backed CRUD and watch storage, plus protobuf serialization. |
-| `tugboat-apiserver` | Actix Web REST API, discovery, status subresources, authn/authz, RBAC bootstrap, and route registration. |
+| `tugboat-apiserver` | Actix Web REST API, discovery, status subresources, authn (JWT, OIDC, Certificates), authz (RBAC), RBAC bootstrap, audit logging, and route registration. |
 | `tugboat-client` | HTTP client, watch stream handling, reflector support, and controller runtime modules. |
 | `tugboat-controller-manager` | Workload, storage, network status, namespace defaulting, and service account token controllers. |
 | `tugboat-scheduler` | Scheduling cycle and filter/score plugins for assigning `Ship`s to nodes. |
@@ -68,7 +68,7 @@ Controller-manager controllers share the `base.rs` controller trait and `error.r
 - `replicaset/status.rs`: observed state aggregation
 - `replicaset/template_update.rs`: template update and hotplug-aware decisions
 
-Controllers with external side effects remain explicit modules: `pvc_provisioner.rs`, `pv_cleanup.rs`, `network_class_status.rs`, `namespace_default_service_account.rs`, and `service_account_token_controller.rs`.
+Controllers with external side effects remain explicit modules: `pvc_provisioner.rs`, `pv_cleanup.rs`, `network_class_status.rs`, `namespace_default_service_account.rs`, `service_account_token_controller.rs`, and `aggregated_clusterrole.rs`.
 
 ## Agent Boundary
 

@@ -1,0 +1,16 @@
+apiVersion: authorization/v1
+kind: RoleBinding
+metadata:
+  name: oidc-admin-binding
+  namespace: default
+subjects:
+  - kind: User
+    name: oidc:alice@example.com
+    apiGroup: authorization/v1
+  - kind: Group
+    name: oidc:admins
+    apiGroup: authorization/v1
+roleRef:
+  kind: ClusterRole
+  name: admin
+  apiGroup: authorization/v1

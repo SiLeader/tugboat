@@ -1,0 +1,24 @@
+# Example: Aggregated ClusterRole
+# 1. Base ClusterRole (the "parent" that collects rules)
+apiVersion: authorization/v1
+kind: ClusterRole
+metadata:
+  name: monitor
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.tugboat.cloud/aggregate-to-monitor: "true"
+rules: [] # Controller will fill this
+
+---
+# 2. Extension ClusterRole (the "child" that provides rules)
+apiVersion: authorization/v1
+kind: ClusterRole
+metadata:
+  name: monitoring-extension
+  labels:
+    rbac.tugboat.cloud/aggregate-to-monitor: "true"
+rules:
+  - apiGroups: ["metrics.tugboat.cloud"]
+    resources: ["shipmetrics"]
+    verbs: ["get", "list", "watch"]

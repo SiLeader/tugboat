@@ -394,6 +394,53 @@ sudo installer/systemd/bootstrap-rbac.sh \
 | `--token-owner-group <group>` | `tugboat` | scheduler/controller-manager トークンを読み取れるグループ |
 | `--auth-token-path <path>` | *(自動検出)* | RBAC 有効時に使用する既存の Bearer トークン |
 
+### 5.5 高度な RBAC 設定
+
+署名済み JWT トークン、OIDC 統合、監査ログなどの高度な機能を有効にするには、`/etc/tugboat/apiserver/config.toml` を編集します。
+
+#### 署名済み JWT トークン
+
+Tugboat はインストール中に Service Account 署名鍵を自動的に生成します。JWT トークンを有効にするには、以下の設定を確認してください：
+
+```toml
+[authentication.service_account]
+issuer = "https://apiserver.tugboat.cloud"
+signing_key_file = "/etc/tugboat/pki/tugboat-apiserver-sa-signing.key"
+signing_algorithm = "RS256"
+```
+
+#### OIDC 統合
+
+各 ID プロバイダーに対して `[[authentication.oidc]]` ブロックを追加します：
+
+```toml
+[[authentication.oidc]]
+issuer_url = "https://dex.example.com"
+client_id = "tugboat"
+username_prefix = "oidc:"
+groups_prefix = "oidc:"
+```
+
+#### 監査ログ
+
+監査ログを有効にし、ポリシーを定義します：
+
+```toml
+[audit]
+enabled = true
+log_path = "/var/log/tugboat/audit.log"
+
+[[audit.rules]]
+level = "RequestResponse"
+verbs = ["create", "update", "patch", "delete"]
+
+[[audit.rules]]
+level = "Metadata"
+```
+
+変更後は API サーバーを再起動してください：
+`sudo systemctl restart tugboat-apiserver`
+
 ---
 
 ## 6. インストール後のファイル構成
