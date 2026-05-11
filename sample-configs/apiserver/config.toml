@@ -50,3 +50,43 @@ signing_algorithm = "RS256"
 default_token_ttl_seconds = 3600
 max_token_ttl_seconds = 86400
 leeway_seconds = 60
+
+[audit]
+# Structured Kubernetes-style audit logging. Disabled by default.
+enabled = false
+# "-" writes to stdout; any other value is a file path (rotated daily).
+log_path = "/var/log/tugboat/audit.log"
+max_size_mb = 100
+max_backups = 5
+max_age_days = 30
+# How many events can be buffered before excess events are dropped.
+channel_capacity = 1024
+# Bodies above the limit are truncated; set to 0 to skip body capture entirely.
+max_request_body_bytes = 262144
+max_response_body_bytes = 262144
+
+# Rules are evaluated top-to-bottom; the first match decides the level.
+# Levels: "None" (skip), "Metadata", "Request", "RequestResponse".
+
+# Never record leases — they churn every few seconds.
+[[audit.rules]]
+level = "None"
+[[audit.rules.resources]]
+group = "coordination"
+resources = ["leases"]
+
+# Secret bodies must never be written to audit; force metadata only.
+[[audit.rules]]
+level = "Metadata"
+[[audit.rules.resources]]
+group = "core"
+resources = ["secrets", "serviceaccounts/token"]
+
+# Mutating verbs get full request/response bodies for forensic value.
+[[audit.rules]]
+level = "RequestResponse"
+verbs = ["create", "update", "patch", "delete", "deletecollection"]
+
+# Everything else: metadata-only.
+[[audit.rules]]
+level = "Metadata"

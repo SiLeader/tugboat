@@ -25,6 +25,8 @@ pub struct ApiServerConfig {
     authentication: AuthenticationConfig,
     #[serde(default)]
     authorization: AuthorizationConfig,
+    #[serde(default)]
+    audit: AuditConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -123,6 +125,66 @@ pub enum AuthorizationMode {
     Rbac,
 }
 
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct AuditConfig {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_audit_log_path")]
+    pub(crate) log_path: String,
+    // Size-based rotation is not yet wired; the appender rotates daily.
+    #[allow(dead_code)]
+    #[serde(default = "default_audit_max_size_mb")]
+    pub(crate) max_size_mb: u64,
+    #[serde(default = "default_audit_max_backups")]
+    pub(crate) max_backups: usize,
+    // Reserved for future use; max_backups acts as a daily-file cap today.
+    #[allow(dead_code)]
+    #[serde(default = "default_audit_max_age_days")]
+    pub(crate) max_age_days: u64,
+    #[serde(default = "default_audit_channel_capacity")]
+    pub(crate) channel_capacity: usize,
+    #[serde(default = "default_audit_max_request_body_bytes")]
+    pub(crate) max_request_body_bytes: usize,
+    #[serde(default = "default_audit_max_response_body_bytes")]
+    pub(crate) max_response_body_bytes: usize,
+    #[serde(default, rename = "rules")]
+    pub(crate) rules: Vec<AuditRule>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct AuditRule {
+    pub(crate) level: AuditLevel,
+    #[serde(default)]
+    pub(crate) verbs: Vec<String>,
+    #[serde(default)]
+    pub(crate) users: Vec<String>,
+    #[serde(default)]
+    pub(crate) user_groups: Vec<String>,
+    #[serde(default)]
+    pub(crate) namespaces: Vec<String>,
+    #[serde(default)]
+    pub(crate) resources: Vec<AuditResourceSelector>,
+    #[serde(default)]
+    pub(crate) non_resource_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct AuditResourceSelector {
+    #[serde(default)]
+    pub(crate) group: String,
+    #[serde(default)]
+    pub(crate) resources: Vec<String>,
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum AuditLevel {
+    #[default]
+    None,
+    Metadata,
+    Request,
+    RequestResponse,
+}
+
 fn default_anonymous_enabled() -> bool {
     false
 }
@@ -137,6 +199,34 @@ fn default_service_account_token_max_ttl_seconds() -> u64 {
 
 fn default_service_account_token_leeway_seconds() -> u64 {
     60
+}
+
+fn default_audit_log_path() -> String {
+    "-".to_string()
+}
+
+fn default_audit_max_size_mb() -> u64 {
+    100
+}
+
+fn default_audit_max_backups() -> usize {
+    5
+}
+
+fn default_audit_max_age_days() -> u64 {
+    30
+}
+
+fn default_audit_channel_capacity() -> usize {
+    1024
+}
+
+fn default_audit_max_request_body_bytes() -> usize {
+    256 * 1024
+}
+
+fn default_audit_max_response_body_bytes() -> usize {
+    256 * 1024
 }
 
 impl Default for AuthenticationConfig {
@@ -179,6 +269,7 @@ impl crate::ApiServer {
             value.http.tls,
             value.authentication,
             value.authorization,
+            value.audit,
             value.http.allow_insecure_http,
         ))
     }
@@ -199,6 +290,7 @@ impl ApiServerConfig {
             },
             authentication: AuthenticationConfig::default(),
             authorization: AuthorizationConfig::default(),
+            audit: AuditConfig::default(),
         }
     }
 
@@ -278,7 +370,8 @@ mod tests {
             )
             .replace("${APISERVER_AUTHORIZATION_MODE}", "RBAC")
             .replace("${APISERVER_ANONYMOUS_ENABLED}", "false")
-            .replace("${APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG}", "");
+            .replace("${APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG}", "")
+            .replace("${APISERVER_AUDIT_CONFIG}", "");
 
         let config: ApiServerConfig = toml::from_str(&rendered).unwrap();
 
