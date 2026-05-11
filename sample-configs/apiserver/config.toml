@@ -39,3 +39,14 @@ mode = "RBAC"
 [authentication]
 # Anonymous requests are disabled by default.
 anonymous_enabled = false
+
+[authentication.service_account]
+# Enables POST /api/v1/namespaces/{namespace}/serviceaccounts/{name}/token
+# and JWT bearer-token authentication.
+issuer = "https://apiserver.tugboat.cloud"
+audiences = ["https://apiserver.tugboat.cloud"]
+signing_key_file = "/etc/tugboat/pki/tugboat-apiserver-sa-signing.key"
+signing_algorithm = "RS256"
+default_token_ttl_seconds = 3600
+max_token_ttl_seconds = 86400
+leeway_seconds = 60

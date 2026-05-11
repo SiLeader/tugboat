@@ -23,6 +23,7 @@ use utoipa::ToSchema;
 use utoipa_actix_web::service_config::ServiceConfig;
 
 mod discovery;
+mod openid;
 mod resource_handlers;
 pub(crate) mod resource_registry;
 mod selector;
@@ -41,7 +42,9 @@ pub fn register_openapi_endpoints(config: &mut actix_web::web::ServiceConfig) {
         .service(openapi_authorization_v1)
         .service(openapi_apps_v1)
         .service(openapi_core_v1)
-        .service(openapi_coordination_v1);
+        .service(openapi_coordination_v1)
+        .service(openid::jwks)
+        .service(openid::openid_configuration);
 }
 
 pub(super) fn register_endpoints(config: &mut ServiceConfig) {

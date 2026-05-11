@@ -128,23 +128,49 @@ set_default_sans() {
 }
 
 all_outputs_exist() {
+    core_outputs_exist && service_account_signing_outputs_exist
+}
+
+core_outputs_exist() {
     [[ -f "${PKI_DIR}/ca.crt" &&
         -f "${PKI_DIR}/ca.key" &&
         -f "${PKI_DIR}/apiserver.crt" &&
         -f "${PKI_DIR}/apiserver.key" ]]
 }
 
+service_account_signing_outputs_exist() {
+    [[ -f "${PKI_DIR}/tugboat-apiserver-sa-signing.key" &&
+        -f "${PKI_DIR}/tugboat-apiserver-sa-signing.pub" ]]
+}
+
 any_output_exists() {
     [[ -e "${PKI_DIR}/ca.crt" ||
         -e "${PKI_DIR}/ca.key" ||
         -e "${PKI_DIR}/apiserver.crt" ||
-        -e "${PKI_DIR}/apiserver.key" ]]
+        -e "${PKI_DIR}/apiserver.key" ||
+        -e "${PKI_DIR}/tugboat-apiserver-sa-signing.key" ||
+        -e "${PKI_DIR}/tugboat-apiserver-sa-signing.pub" ]]
+}
+
+any_service_account_signing_output_exists() {
+    [[ -e "${PKI_DIR}/tugboat-apiserver-sa-signing.key" ||
+        -e "${PKI_DIR}/tugboat-apiserver-sa-signing.pub" ]]
 }
 
 set_pki_permissions() {
     chmod 0755 -- "${PKI_DIR}"
-    chmod 0644 -- "${PKI_DIR}/ca.crt" "${PKI_DIR}/apiserver.crt"
-    chmod 0600 -- "${PKI_DIR}/ca.key" "${PKI_DIR}/apiserver.key"
+    chmod 0644 -- "${PKI_DIR}/ca.crt" "${PKI_DIR}/apiserver.crt" "${PKI_DIR}/tugboat-apiserver-sa-signing.pub"
+    chmod 0600 -- "${PKI_DIR}/ca.key" "${PKI_DIR}/apiserver.key" "${PKI_DIR}/tugboat-apiserver-sa-signing.key"
+}
+
+generate_service_account_signing_key() {
+    openssl genpkey -algorithm RSA \
+        -pkeyopt rsa_keygen_bits:2048 \
+        -out "${PKI_DIR}/tugboat-apiserver-sa-signing.key"
+    openssl pkey \
+        -in "${PKI_DIR}/tugboat-apiserver-sa-signing.key" \
+        -pubout \
+        -out "${PKI_DIR}/tugboat-apiserver-sa-signing.pub"
 }
 
 write_extfile() {
@@ -179,6 +205,20 @@ generate_pki() {
         if all_outputs_exist; then
             set_pki_permissions
             log_info "Existing Tugboat PKI found at ${PKI_DIR}; leaving it unchanged."
+            return 0
+        fi
+        if core_outputs_exist; then
+            if any_service_account_signing_output_exists; then
+                log_error "Partial ServiceAccount signing key exists in ${PKI_DIR}; use --force to regenerate."
+                return 1
+            fi
+            mkdir -p -- "${PKI_DIR}"
+            (
+                umask 077
+                generate_service_account_signing_key
+            )
+            set_pki_permissions
+            log_info "Generated Tugboat ServiceAccount signing key in ${PKI_DIR}."
             return 0
         fi
         if any_output_exists; then
@@ -218,6 +258,8 @@ generate_pki() {
             -sha256 \
             -extfile "${extfile}"
         rm -f -- "${PKI_DIR}/ca.srl"
+
+        generate_service_account_signing_key
     )
 
     set_pki_permissions

@@ -171,6 +171,7 @@ struct SetupOptions {
 struct GeneratedTlsAssets {
     server_cert_path: PathBuf,
     server_key_path: PathBuf,
+    service_account_signing_key_path: PathBuf,
     ca_cert_path: PathBuf,
     ca_cert_pem: Vec<u8>,
     masters_identity_pem: Option<Vec<u8>>,
@@ -677,6 +678,10 @@ fn write_apiserver_config(
                 tls_assets.server_key_path.display(),
             ));
         }
+        config.push_str(&format!(
+            "\n[authentication.service_account]\nissuer = \"https://127.0.0.1:{port}\"\naudiences = [\"https://127.0.0.1:{port}\"]\nsigning_key_file = \"{}\"\nsigning_algorithm = \"RS256\"\ndefault_token_ttl_seconds = 3600\nmax_token_ttl_seconds = 86400\nleeway_seconds = 60\n",
+            tls_assets.service_account_signing_key_path.display()
+        ));
     }
 
     let path = std::env::temp_dir().join(format!(
@@ -701,6 +706,11 @@ fn generate_tls_assets(tls_mode: TlsMode) -> Result<GeneratedTlsAssets, DynError
         &server_key.private_key_to_pem_pkcs8()?,
     )?;
     let ca_cert_path = write_temp_file("tugboat-it-ca-cert", &ca_cert_pem)?;
+    let service_account_signing_key = generate_private_key()?;
+    let service_account_signing_key_path = write_temp_file(
+        "tugboat-it-sa-signing-key",
+        &service_account_signing_key.private_key_to_pem_pkcs8()?,
+    )?;
 
     let (masters_identity_pem, extra_paths) = if matches!(tls_mode, TlsMode::Mtls) {
         let client_key = generate_private_key()?;
@@ -716,6 +726,7 @@ fn generate_tls_assets(tls_mode: TlsMode) -> Result<GeneratedTlsAssets, DynError
     let mut temp_paths = vec![
         server_cert_path.clone(),
         server_key_path.clone(),
+        service_account_signing_key_path.clone(),
         ca_cert_path.clone(),
     ];
     temp_paths.extend(extra_paths);
@@ -723,6 +734,7 @@ fn generate_tls_assets(tls_mode: TlsMode) -> Result<GeneratedTlsAssets, DynError
     Ok(GeneratedTlsAssets {
         server_cert_path,
         server_key_path,
+        service_account_signing_key_path,
         ca_cert_path,
         ca_cert_pem,
         masters_identity_pem,

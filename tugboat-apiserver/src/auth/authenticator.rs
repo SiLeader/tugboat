@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::auth::middleware::ClientCertificateInfo;
+use crate::auth::service_account_jwt::{BoundObjectReference, looks_like_jwt};
 use crate::auth::user_info::UserInfo;
 use crate::config::AuthenticationConfig;
 use crate::data::StatusResponse;
@@ -28,8 +29,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
+use tugboat_resource_store::serializer::StaticSerializable;
+use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
+use tugboat_resources::manifests::coordination::v1::Lease;
+use tugboat_resources::manifests::core::v1::{
+    ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
+    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
+};
+use tugboat_resources::{ObjectMetaResource, StaticResource};
 use tugboat_resources::{SERVICE_ACCOUNT_NAME_ANNOTATION, SERVICE_ACCOUNT_TOKEN_SECRET_TYPE};
 
 /// How long the token→secret mapping cache is considered fresh. After this
@@ -105,6 +112,15 @@ impl DefaultAuthenticator {
         &self,
         token: &str,
     ) -> Result<UserInfo, Box<StatusResponse>> {
+        if looks_like_jwt(token)
+            && let Some(jwt_issuer) = &self.operator.service_account_tokens
+            && let Ok(user) = self
+                .authenticate_service_account_jwt(jwt_issuer, token)
+                .await
+        {
+            return Ok(user);
+        }
+
         let secret = self
             .find_service_account_token_secret(token)
             .await?
@@ -162,6 +178,206 @@ impl DefaultAuthenticator {
                 .and_then(|meta| meta.uid.clone()),
             extra,
         ))
+    }
+
+    async fn authenticate_service_account_jwt(
+        &self,
+        jwt_issuer: &crate::auth::service_account_jwt::ServiceAccountTokenIssuer,
+        token: &str,
+    ) -> Result<UserInfo, Box<StatusResponse>> {
+        let verified = jwt_issuer
+            .verify_token(token)
+            .map_err(|_| Box::new(StatusResponse::unauthorized("Invalid bearer token", None)))?;
+        let service_account = self
+            .operator
+            .store
+            .get::<ServiceAccount>(Some(verified.namespace.clone()), &verified.name)
+            .await?
+            .map(|resource| resource.apply_revision())
+            .ok_or_else(|| {
+                Box::new(StatusResponse::unauthorized(
+                    "Service account for bearer token was not found",
+                    None,
+                ))
+            })?;
+        let current_uid = service_account
+            .object_meta()
+            .as_ref()
+            .and_then(|meta| meta.uid.clone());
+        if verified.uid.is_some() && verified.uid != current_uid {
+            return Err(Box::new(StatusResponse::unauthorized(
+                "Service account token UID does not match current service account",
+                None,
+            )));
+        }
+        if let Some(bound_object_ref) = &verified.bound_object_ref {
+            self.validate_bound_object_ref(&verified.namespace, bound_object_ref)
+                .await?;
+        }
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "authentication.kubernetes.io/credential".to_string(),
+            vec!["Bearer/JWT".to_string()],
+        );
+
+        Ok(UserInfo::service_account(
+            &verified.namespace,
+            &verified.name,
+            current_uid,
+            extra,
+        ))
+    }
+
+    async fn validate_bound_object_ref(
+        &self,
+        service_account_namespace: &str,
+        reference: &BoundObjectReference,
+    ) -> Result<(), Box<StatusResponse>> {
+        match (reference.api_version.as_str(), reference.kind.as_str()) {
+            ("v1", "ClusterNetworkClass") => {
+                self.validate_typed_bound_object::<ClusterNetworkClass>(None, reference)
+                    .await
+            }
+            ("v1", "ConfigMap") => {
+                self.validate_typed_bound_object::<ConfigMap>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "Namespace") => {
+                self.validate_typed_bound_object::<Namespace>(None, reference)
+                    .await
+            }
+            ("v1", "NetworkClass") => {
+                self.validate_typed_bound_object::<NetworkClass>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "Node") => {
+                self.validate_typed_bound_object::<Node>(None, reference)
+                    .await
+            }
+            ("v1", "PersistentVolume") => {
+                self.validate_typed_bound_object::<PersistentVolume>(None, reference)
+                    .await
+            }
+            ("v1", "PersistentVolumeClaim") => {
+                self.validate_typed_bound_object::<PersistentVolumeClaim>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "RuntimeClass") => {
+                self.validate_typed_bound_object::<RuntimeClass>(None, reference)
+                    .await
+            }
+            ("v1", "Secret") => {
+                self.validate_typed_bound_object::<Secret>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "ServiceAccount") => {
+                self.validate_typed_bound_object::<ServiceAccount>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "Ship") => {
+                self.validate_typed_bound_object::<Ship>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "ShipClass") => {
+                self.validate_typed_bound_object::<ShipClass>(None, reference)
+                    .await
+            }
+            ("v1", "StorageClass") => {
+                self.validate_typed_bound_object::<StorageClass>(None, reference)
+                    .await
+            }
+            ("apps/v1", "Deployment") => {
+                self.validate_typed_bound_object::<Deployment>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("apps/v1", "Fleet") => {
+                self.validate_typed_bound_object::<Fleet>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("apps/v1", "ReplicaSet") => {
+                self.validate_typed_bound_object::<ReplicaSet>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("coordination/v1", "Lease") => {
+                self.validate_typed_bound_object::<Lease>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            _ => Err(Box::new(StatusResponse::unauthorized(
+                "Service account token bound object kind is not supported",
+                None,
+            ))),
+        }
+    }
+
+    async fn validate_typed_bound_object<T>(
+        &self,
+        namespace: Option<String>,
+        reference: &BoundObjectReference,
+    ) -> Result<(), Box<StatusResponse>>
+    where
+        T: StaticSerializable + StaticResource + ObjectMetaResource,
+    {
+        let expected_namespace = if T::is_cluster_scoped() {
+            None
+        } else {
+            namespace
+        };
+        let Some(object) = self
+            .operator
+            .store
+            .get::<T>(expected_namespace, &reference.name)
+            .await?
+            .map(|resource| resource.apply_revision())
+        else {
+            return Err(Box::new(StatusResponse::unauthorized(
+                "Service account token bound object was not found",
+                None,
+            )));
+        };
+        if let Some(expected_uid) = &reference.uid {
+            let actual_uid = object
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.uid.as_ref());
+            if actual_uid != Some(expected_uid) {
+                return Err(Box::new(StatusResponse::unauthorized(
+                    "Service account token bound object UID does not match current object",
+                    None,
+                )));
+            }
+        }
+        Ok(())
     }
 
     async fn find_service_account_token_secret(

@@ -480,9 +480,10 @@ configure_tls() {
     APISERVER_TLS_CONFIG="allow_insecure_http = true"
     APISERVER_CLIENT_TLS_CONFIG=""
     APISERVER_SCHEME="http"
+    APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG=""
 
     if [[ "${SECURE}" -ne 1 ]]; then
-        export APISERVER_TLS_CONFIG APISERVER_CLIENT_TLS_CONFIG APISERVER_SCHEME
+        export APISERVER_TLS_CONFIG APISERVER_CLIENT_TLS_CONFIG APISERVER_SCHEME APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG
         return 0
     fi
 
@@ -513,8 +514,10 @@ configure_tls() {
     fi
 
     "${INSTALLER_DIR}/setup-pki.sh" "${setup_args[@]}"
-    chown tugboat-apiserver:tugboat-apiserver -- "${PKI_DIR}/apiserver.key"
-    chmod 0600 -- "${PKI_DIR}/apiserver.key"
+    chown tugboat-apiserver:tugboat-apiserver -- \
+        "${PKI_DIR}/apiserver.key" \
+        "${PKI_DIR}/tugboat-apiserver-sa-signing.key"
+    chmod 0600 -- "${PKI_DIR}/apiserver.key" "${PKI_DIR}/tugboat-apiserver-sa-signing.key"
 
     APISERVER_TLS_CONFIG="$(
         printf '[http.tls]\ncert_file = "%s/apiserver.crt"\nkey_file = "%s/apiserver.key"' \
@@ -525,12 +528,19 @@ configure_tls() {
         printf '[apiserver.tls]\nca_cert_path = "%s/ca.crt"' \
             "${PKI_DIR}"
     )"
-    export APISERVER_TLS_CONFIG APISERVER_CLIENT_TLS_CONFIG APISERVER_SCHEME
+    APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG="$(
+        printf '\n[authentication.service_account]\nissuer = "%s"\naudiences = ["%s"]\nsigning_key_file = "%s/tugboat-apiserver-sa-signing.key"\nsigning_algorithm = "RS256"\ndefault_token_ttl_seconds = 3600\nmax_token_ttl_seconds = 86400\nleeway_seconds = 60' \
+            "$(apiserver_client_url "${APISERVER_LISTEN}" "${APISERVER_SCHEME}")" \
+            "$(apiserver_client_url "${APISERVER_LISTEN}" "${APISERVER_SCHEME}")" \
+            "${PKI_DIR}"
+    )"
+    export APISERVER_TLS_CONFIG APISERVER_CLIENT_TLS_CONFIG APISERVER_SCHEME APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG
 }
 
 set_bootstrap_auth_config() {
     APISERVER_AUTHORIZATION_MODE="AlwaysAllow"
     APISERVER_ANONYMOUS_ENABLED="true"
+    : "${APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG:=}"
     SCHEDULER_APISERVER_AUTH_CONFIG="$(
         printf '[apiserver.auth]\ntype = "anonymous"'
     )"
@@ -541,7 +551,8 @@ set_bootstrap_auth_config() {
         APISERVER_AUTHORIZATION_MODE \
         APISERVER_ANONYMOUS_ENABLED \
         SCHEDULER_APISERVER_AUTH_CONFIG \
-        CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG
+        CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG \
+        APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG
 }
 
 set_final_auth_config() {
@@ -565,7 +576,8 @@ set_final_auth_config() {
         APISERVER_AUTHORIZATION_MODE \
         APISERVER_ANONYMOUS_ENABLED \
         SCHEDULER_APISERVER_AUTH_CONFIG \
-        CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG
+        CONTROLLER_MANAGER_APISERVER_AUTH_CONFIG \
+        APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG
 }
 
 install_etcd_from_package() {

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::operator::ApiOperator;
+use std::collections::HashMap;
 use tugboat_resource_store::{EtcdTlsConfig, ResourceStore};
 use tugboat_runtime_common::config::{ConfigLoadError, load_component_toml_config};
 
@@ -61,6 +62,51 @@ pub struct TlsConfig {
 pub struct AuthenticationConfig {
     #[serde(default = "default_anonymous_enabled")]
     pub(crate) anonymous_enabled: bool,
+    #[serde(default)]
+    pub(crate) service_account: ServiceAccountTokenConfig,
+}
+
+#[derive(Clone, serde::Deserialize)]
+pub(crate) struct ServiceAccountTokenConfig {
+    pub(crate) issuer: Option<String>,
+    #[serde(default)]
+    pub(crate) audiences: Vec<String>,
+    pub(crate) signing_key_file: Option<String>,
+    pub(crate) signing_key_id: Option<String>,
+    #[serde(default)]
+    pub(crate) signing_algorithm: ServiceAccountSigningAlgorithm,
+    #[serde(default = "default_service_account_token_ttl_seconds")]
+    pub(crate) default_token_ttl_seconds: u64,
+    #[serde(default = "default_service_account_token_max_ttl_seconds")]
+    pub(crate) max_token_ttl_seconds: u64,
+    #[serde(default = "default_service_account_token_leeway_seconds")]
+    pub(crate) leeway_seconds: u64,
+    #[serde(default)]
+    pub(crate) additional_verification_keys: HashMap<String, String>,
+}
+
+impl Default for ServiceAccountTokenConfig {
+    fn default() -> Self {
+        Self {
+            issuer: None,
+            audiences: Vec::new(),
+            signing_key_file: None,
+            signing_key_id: None,
+            signing_algorithm: ServiceAccountSigningAlgorithm::default(),
+            default_token_ttl_seconds: default_service_account_token_ttl_seconds(),
+            max_token_ttl_seconds: default_service_account_token_max_ttl_seconds(),
+            leeway_seconds: default_service_account_token_leeway_seconds(),
+            additional_verification_keys: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, serde::Deserialize)]
+pub(crate) enum ServiceAccountSigningAlgorithm {
+    #[default]
+    RS256,
+    #[serde(rename = "EdDSA", alias = "eddsa")]
+    EdDsa,
 }
 
 #[derive(Clone, Default, serde::Deserialize)]
@@ -81,10 +127,23 @@ fn default_anonymous_enabled() -> bool {
     false
 }
 
+fn default_service_account_token_ttl_seconds() -> u64 {
+    3600
+}
+
+fn default_service_account_token_max_ttl_seconds() -> u64 {
+    86400
+}
+
+fn default_service_account_token_leeway_seconds() -> u64 {
+    60
+}
+
 impl Default for AuthenticationConfig {
     fn default() -> Self {
         Self {
             anonymous_enabled: default_anonymous_enabled(),
+            service_account: ServiceAccountTokenConfig::default(),
         }
     }
 }
@@ -103,7 +162,17 @@ impl crate::ApiServer {
                 "TLS configuration is missing and allow_insecure_etcd is false. Refusing to connect to etcd in insecure mode.".to_string(),
             ));
         };
-        let operator = ApiOperator::new(store);
+        let service_account_tokens =
+            crate::auth::service_account_jwt::ServiceAccountTokenIssuer::from_config(
+                &value.authentication.service_account,
+            )
+            .map_err(|reason| {
+                tugboat_resource_store::error::Error::InvalidField(
+                    "authentication.service_account".to_string(),
+                    reason,
+                )
+            })?;
+        let operator = ApiOperator::new(store, service_account_tokens);
         Ok(Self::new(
             value.http.listen,
             operator,
@@ -208,7 +277,8 @@ mod tests {
                 "[etcd.tls]\nca_cert_path = \"/etc/tugboat/pki/etcd/ca.crt\"\ncert_path = \"/etc/tugboat/pki/etcd/client.crt\"\nkey_path = \"/etc/tugboat/pki/etcd/client.key\"",
             )
             .replace("${APISERVER_AUTHORIZATION_MODE}", "RBAC")
-            .replace("${APISERVER_ANONYMOUS_ENABLED}", "false");
+            .replace("${APISERVER_ANONYMOUS_ENABLED}", "false")
+            .replace("${APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG}", "");
 
         let config: ApiServerConfig = toml::from_str(&rendered).unwrap();
 

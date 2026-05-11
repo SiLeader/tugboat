@@ -234,13 +234,22 @@ fn forbidden<B>(
 }
 
 fn should_bypass_authentication(path: &str) -> bool {
-    path == "/healthz"
+    matches!(
+        path,
+        "/healthz" | "/openid/v1/jwks" | "/.well-known/openid-configuration"
+    )
 }
 
 fn should_bypass(path: &str) -> bool {
     matches!(
         path,
-        "/healthz" | "/apis" | "/api" | "/api/v1" | "/openapi.json"
+        "/healthz"
+            | "/apis"
+            | "/api"
+            | "/api/v1"
+            | "/openapi.json"
+            | "/openid/v1/jwks"
+            | "/.well-known/openid-configuration"
     ) || path == "/openapi/v3"
         || path.starts_with("/openapi/v3/")
 }

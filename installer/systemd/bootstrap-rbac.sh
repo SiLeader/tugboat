@@ -10,6 +10,7 @@ CA_CERT=""
 TOKEN_OUTPUT_ROOT="/var/run/secrets/tugboat.cloud/serviceaccount"
 TOKEN_OWNER_GROUP="tugboat"
 AUTH_TOKEN_PATH=""
+USE_TOKEN_REQUEST=0
 
 usage() {
     cat <<'USAGE'
@@ -24,6 +25,8 @@ Options:
                               Default: tugboat.
   --auth-token-path <path>    Existing bearer token used when RBAC is already enabled.
                               Defaults to the controller-manager token if it exists.
+  --use-token-request         Write signed JWTs from the ServiceAccount token subresource
+                              instead of legacy service-account-token Secrets.
 USAGE
 }
 
@@ -90,6 +93,10 @@ parse_args() {
                 AUTH_TOKEN_PATH="${1#--auth-token-path=}"
                 shift
                 ;;
+            --use-token-request)
+                USE_TOKEN_REQUEST=1
+                shift
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -118,6 +125,7 @@ require_python3() {
 apply_rbac_resources() {
     local ca_arg=()
     local auth_arg=()
+    local token_request_arg=()
 
     if [[ -n "${CA_CERT}" ]]; then
         ca_arg=(--ca-cert "${CA_CERT}")
@@ -127,8 +135,11 @@ apply_rbac_resources() {
     elif [[ -f "${TOKEN_OUTPUT_ROOT}/controller-manager/token" ]]; then
         auth_arg=(--auth-token-path "${TOKEN_OUTPUT_ROOT}/controller-manager/token")
     fi
+    if [[ "${USE_TOKEN_REQUEST}" -eq 1 ]]; then
+        token_request_arg=(--use-token-request)
+    fi
 
-    python3 - "${APISERVER_URL}" "${ca_arg[@]}" "${auth_arg[@]}" <<'PY'
+    python3 - "${APISERVER_URL}" "${ca_arg[@]}" "${auth_arg[@]}" "${token_request_arg[@]}" <<'PY'
 import argparse
 import base64
 import json
@@ -147,6 +158,7 @@ def parse_args():
     parser.add_argument("apiserver_url")
     parser.add_argument("--ca-cert", default=None)
     parser.add_argument("--auth-token-path", default=None)
+    parser.add_argument("--use-token-request", action="store_true")
     return parser.parse_args()
 
 
@@ -283,6 +295,7 @@ def cluster_roles():
         "system-controller-manager": [
             rule(["core"], ["namespaces", "nodes", "shipclasses", "runtimeclasses", "storageclasses"], read),
             rule(["core"], ["serviceaccounts", "secrets", "persistentvolumeclaims", "persistentvolumes"], write),
+            rule(["core"], ["serviceaccounts/token"], ["create"]),
             rule(["core"], ["persistentvolumeclaims/status", "persistentvolumes/status"], status),
             rule(["core"], ["networkclasses", "clusternetworkclasses"], ["get", "list", "watch", "update", "patch"]),
             rule(["core"], ["networkclasses/status", "clusternetworkclasses/status"], status),
@@ -313,6 +326,17 @@ def cluster_roles():
 
 
 def wait_for_token(service_account):
+    if ARGS.use_token_request:
+        response = request(
+            "POST",
+            f"/api/v1/namespaces/{SYSTEM_NAMESPACE}/serviceaccounts/{service_account}/token",
+            {
+                "audiences": [BASE_URL],
+                "expirationSeconds": 3600,
+            },
+        )
+        return response["token"]
+
     for _ in range(60):
         service_account_obj = request(
             "GET",
