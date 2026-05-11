@@ -119,7 +119,9 @@ fn materialized_volume_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileE
         .filter(|v| {
             matches!(
                 v.source,
-                NormalizedVolumeSource::ConfigMap { .. } | NormalizedVolumeSource::Secret { .. }
+                NormalizedVolumeSource::ConfigMap { .. }
+                    | NormalizedVolumeSource::Secret { .. }
+                    | NormalizedVolumeSource::Projected { .. }
             )
         })
         .collect();
@@ -146,6 +148,8 @@ mod tests {
             volume_claim_ref: vec![],
             volumes: vec![],
             target_node_name: None,
+            service_account_name: None,
+            automount_service_account_token: None,
         }
     }
 

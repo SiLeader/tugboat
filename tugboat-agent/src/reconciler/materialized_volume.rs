@@ -1,13 +1,18 @@
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::volume::{
-    MaterializedVolumeInfo, MaterializedVolumeSourceKind, materialized_volume_names_for_resource,
+    MaterializedVolumeInfo, MaterializedVolumeSourceKind, ProjectedServiceAccountTokenInfo,
+    materialized_volume_names_for_resource,
 };
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::{debug, error};
+use tugboat_client::ServiceAccountTokenRequest;
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Ship;
 
@@ -125,6 +130,88 @@ impl ShipReconciler {
     fn materialized_volume_dir(&self, ship_id: &str, volume_name: &str) -> PathBuf {
         self.materialized_ship_dir(ship_id).join(volume_name)
     }
+
+    pub(crate) fn start_service_account_token_refresh(
+        &self,
+        ship_id: &str,
+        namespace: &str,
+        volume: &MaterializedVolumeInfo,
+    ) {
+        for token in &volume.service_account_tokens {
+            self.spawn_service_account_token_refresh(
+                ship_id.to_string(),
+                namespace.to_string(),
+                volume.name.clone(),
+                token.clone(),
+            );
+        }
+    }
+
+    fn spawn_service_account_token_refresh(
+        &self,
+        ship_id: String,
+        namespace: String,
+        volume_name: String,
+        token: ProjectedServiceAccountTokenInfo,
+    ) {
+        let client = self.client.clone();
+        let cancellation_token = self.cancellation_token.clone();
+        let file_path = self
+            .materialized_volume_dir(&ship_id, &volume_name)
+            .join(&token.path);
+        tokio::spawn(async move {
+            let ttl = token.expiration_seconds.unwrap_or(3600).max(1);
+            loop {
+                let delay = refresh_delay(ttl);
+                tokio::select! {
+                    _ = sleep(delay) => {}
+                    _ = cancellation_token.cancelled() => break,
+                }
+
+                if !file_path.exists() {
+                    debug!(
+                        "Stopping ServiceAccount token refresh for removed projected file '{}'",
+                        file_path.display()
+                    );
+                    break;
+                }
+
+                match client
+                    .create_service_account_token(
+                        &namespace,
+                        &token.service_account_name,
+                        ServiceAccountTokenRequest {
+                            audiences: token.audience.clone().into_iter().collect(),
+                            expiration_seconds: token.expiration_seconds,
+                        },
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        if let Err(err) =
+                            write_file_atomically(&file_path, response.token.as_bytes(), 0o600)
+                        {
+                            error!(
+                                "Failed to refresh projected ServiceAccount token at '{}': {err}",
+                                file_path.display()
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        error!(
+                            "Failed to refresh projected ServiceAccount token for '{}/{}': {err}",
+                            namespace, token.service_account_name
+                        );
+                    }
+                }
+            }
+        });
+    }
+}
+
+fn refresh_delay(ttl_seconds: u64) -> Duration {
+    let leeway = (ttl_seconds / 5).max(1);
+    Duration::from_secs(ttl_seconds.saturating_sub(leeway).max(1))
 }
 
 fn create_dir_with_mode(path: &Path, mode: u32) -> io::Result<()> {

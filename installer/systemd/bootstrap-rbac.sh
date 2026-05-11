@@ -321,6 +321,7 @@ def cluster_roles():
             ], read),
             rule(["core"], ["ships"], ["get", "list", "watch", "patch", "update"]),
             rule(["core"], ["ships/status"], status),
+            rule(["core"], ["serviceaccounts/token"], ["create"]),
         ],
     }
 

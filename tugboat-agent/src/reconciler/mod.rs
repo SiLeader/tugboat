@@ -52,6 +52,7 @@ pub(crate) struct ShipReconciler {
     cni: CniWrapper,
     csi: CsiWrapper,
     volume_data_dir: PathBuf,
+    apiserver_ca_cert_path: Option<PathBuf>,
     cancellation_token: CancellationToken,
 }
 
@@ -64,6 +65,7 @@ impl ShipReconciler {
         csi: TugboatCsiOperator,
         csi_drivers: CsiDrivers,
         csi_publish_dir: String,
+        apiserver_ca_cert_path: Option<String>,
     ) -> Self {
         Self {
             node_name,
@@ -74,6 +76,7 @@ impl ShipReconciler {
             cni: CniWrapper::new(cni),
             csi: CsiWrapper::new(csi, csi_drivers, csi_publish_dir.clone()),
             volume_data_dir: PathBuf::from(csi_publish_dir),
+            apiserver_ca_cert_path: apiserver_ca_cert_path.map(PathBuf::from),
             cancellation_token: CancellationToken::new(),
         }
     }

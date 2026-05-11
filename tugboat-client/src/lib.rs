@@ -18,6 +18,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use tugboat_resources::StaticResource;
+use tugboat_resources::manifests::meta::v1::Time;
 use url::Url;
 
 mod api;
@@ -31,6 +32,22 @@ pub use api::*;
 pub use error::*;
 pub use response::ListResponse;
 pub use watch::*;
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceAccountTokenRequest {
+    #[serde(default)]
+    pub audiences: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expiration_seconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceAccountTokenResponse {
+    pub token: String,
+    pub expiration_timestamp: Time,
+}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -249,6 +266,22 @@ impl TugboatClient {
     ) -> Result<Option<T>, Error> {
         let res = self.client.delete(self.build_url(path)).send().await?;
         Self::parse_response_opt(res).await
+    }
+
+    pub async fn create_service_account_token(
+        &self,
+        namespace: &str,
+        name: &str,
+        request: ServiceAccountTokenRequest,
+    ) -> Result<ServiceAccountTokenResponse, Error> {
+        let path = format!("/api/v1/namespaces/{namespace}/serviceaccounts/{name}/token");
+        let res = self
+            .client
+            .post(self.build_url(&path))
+            .json(&request)
+            .send()
+            .await?;
+        Self::parse_response(res).await
     }
 
     pub(crate) async fn create_cluster_scoped<T: StaticResource + Serialize + DeserializeOwned>(

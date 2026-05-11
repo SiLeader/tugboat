@@ -1,5 +1,9 @@
 use tugboat_resources::manifests::apps::v1::ShipTemplateSpec;
-use tugboat_resources::manifests::core::v1::RuntimeClass;
+use tugboat_resources::manifests::core::v1::{RuntimeClass, ShipSpec, ShipVolume};
+
+const DEFAULT_SERVICE_ACCOUNT_NAME: &str = "default";
+const SERVICE_ACCOUNT_TOKEN_VOLUME_NAME: &str = "serviceaccount-token";
+const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH: &str = "token";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TemplateChangeKind {
@@ -205,8 +209,39 @@ fn has_other_changes(
     new.network_class_ref.clear();
     old.volume_claim_ref.clear();
     new.volume_claim_ref.clear();
+    normalize_service_account_defaults(&mut old);
+    normalize_service_account_defaults(&mut new);
 
     old != new
+}
+
+fn normalize_service_account_defaults(spec: &mut ShipSpec) {
+    if spec.service_account_name.as_deref() == Some(DEFAULT_SERVICE_ACCOUNT_NAME) {
+        spec.service_account_name = None;
+    }
+    if spec.automount_service_account_token == Some(true) {
+        spec.automount_service_account_token = None;
+    }
+    spec.volumes
+        .retain(|volume| !is_default_service_account_token_volume(volume));
+}
+
+fn is_default_service_account_token_volume(volume: &ShipVolume) -> bool {
+    if volume.name != SERVICE_ACCOUNT_TOKEN_VOLUME_NAME
+        || volume.persistent_volume_claim.is_some()
+        || volume.config_map.is_some()
+        || volume.secret.is_some()
+    {
+        return false;
+    }
+    let Some(projected) = volume.projected.as_ref() else {
+        return false;
+    };
+    projected.sources.len() == 1
+        && projected.sources[0]
+            .service_account_token
+            .as_ref()
+            .is_some_and(|token| token.path == DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH)
 }
 
 fn supports_generic_hotplug(runtime_class: &RuntimeClass) -> bool {

@@ -219,7 +219,8 @@ mod tests {
         ReplicaSet, ReplicaSetSpec, ReplicaSetStatus, ShipTemplateSpec,
     };
     use tugboat_resources::manifests::core::v1::{
-        Ship, ShipCondition, ShipMigrationStatus, ShipSpec, ShipStatus,
+        ProjectedVolumeSource, ServiceAccountTokenProjection, Ship, ShipCondition,
+        ShipMigrationStatus, ShipSpec, ShipStatus, ShipVolume, VolumeProjection,
     };
     use tugboat_resources::manifests::meta::v1::{ObjectMeta, OwnerReference};
     use tugboat_resources::{ObjectMetaResource, Resource};
@@ -575,6 +576,30 @@ mod tests {
         let template_spec = base_ship_spec();
         let mut ship_spec = template_spec.clone();
         ship_spec.target_node_name = Some("node-b".to_string());
+
+        assert!(!needs_spec_update(&template_spec, &ship_spec));
+    }
+
+    #[test]
+    fn admission_defaulted_service_account_projection_does_not_require_update() {
+        let template_spec = base_ship_spec();
+        let mut ship_spec = template_spec.clone();
+        ship_spec.service_account_name = Some("default".to_string());
+        ship_spec.volumes.push(ShipVolume {
+            name: "serviceaccount-token".to_string(),
+            projected: Some(ProjectedVolumeSource {
+                sources: vec![VolumeProjection {
+                    service_account_token: Some(ServiceAccountTokenProjection {
+                        expiration_seconds: Some(3600),
+                        path: "token".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                default_mode: Some(0o644),
+            }),
+            ..Default::default()
+        });
 
         assert!(!needs_spec_update(&template_spec, &ship_spec));
     }

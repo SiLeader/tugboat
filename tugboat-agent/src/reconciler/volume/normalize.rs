@@ -16,7 +16,8 @@ use crate::reconciler::error::ReconcileError;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use tugboat_resources::manifests::core::v1::{
-    ConfigMapVolumeSource, KeyToPath, PersistentVolumeClaimVolumeSource, SecretVolumeSource,
+    ConfigMapProjection, ConfigMapVolumeSource, KeyToPath, PersistentVolumeClaimVolumeSource,
+    ProjectedVolumeSource, SecretProjection, SecretVolumeSource, ServiceAccountTokenProjection,
     ShipSpec, ShipVolume,
 };
 
@@ -45,12 +46,35 @@ pub(crate) enum NormalizedVolumeSource {
         default_mode: u32,
         optional: bool,
     },
+    Projected {
+        sources: Vec<NormalizedVolumeProjection>,
+        default_mode: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct NormalizedKeyToPath {
     pub key: String,
     pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) enum NormalizedVolumeProjection {
+    ServiceAccountToken {
+        audience: Option<String>,
+        expiration_seconds: Option<u64>,
+        path: String,
+    },
+    ConfigMap {
+        name: String,
+        items: Vec<NormalizedKeyToPath>,
+        optional: bool,
+    },
+    Secret {
+        name: String,
+        items: Vec<NormalizedKeyToPath>,
+        optional: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,12 +152,14 @@ pub(crate) fn normalize_ship_volume(
 
     let source_count = usize::from(volume.persistent_volume_claim.is_some())
         + usize::from(volume.config_map.is_some())
-        + usize::from(volume.secret.is_some());
+        + usize::from(volume.secret.is_some())
+        + usize::from(volume.projected.is_some());
     if source_count != 1 {
         return Err(ReconcileError::InvalidShipVolume {
             volume: volume.name.clone(),
-            reason: "exactly one of persistentVolumeClaim, configMap, or secret must be set"
-                .to_string(),
+            reason:
+                "exactly one of persistentVolumeClaim, configMap, secret, or projected must be set"
+                    .to_string(),
         });
     }
 
@@ -143,6 +169,8 @@ pub(crate) fn normalize_ship_volume(
         normalize_config_map_source(&volume.name, source)?
     } else if let Some(source) = volume.secret.as_ref() {
         normalize_secret_source(&volume.name, source)?
+    } else if let Some(source) = volume.projected.as_ref() {
+        normalize_projected_source(&volume.name, source)?
     } else {
         unreachable!("volume source_count was validated above")
     };
@@ -202,6 +230,128 @@ fn normalize_secret_source(
         default_mode: normalize_default_mode(volume_name, source.default_mode)?,
         optional: source.optional.unwrap_or(false),
     })
+}
+
+fn normalize_projected_source(
+    volume_name: &str,
+    source: &ProjectedVolumeSource,
+) -> Result<NormalizedVolumeSource, ReconcileError> {
+    if source.sources.is_empty() {
+        return Err(ReconcileError::InvalidShipVolume {
+            volume: volume_name.to_string(),
+            reason: "projected.sources must not be empty".to_string(),
+        });
+    }
+
+    let mut seen_paths = HashSet::new();
+    let mut sources = Vec::with_capacity(source.sources.len());
+    for projection in &source.sources {
+        let source_count = usize::from(projection.service_account_token.is_some())
+            + usize::from(projection.config_map.is_some())
+            + usize::from(projection.secret.is_some());
+        if source_count != 1 {
+            return Err(ReconcileError::InvalidShipVolume {
+                volume: volume_name.to_string(),
+                reason: "each projected source must set exactly one of serviceAccountToken, configMap, or secret".to_string(),
+            });
+        }
+
+        let normalized =
+            if let Some(service_account_token) = projection.service_account_token.as_ref() {
+                normalize_service_account_token_projection(volume_name, service_account_token)?
+            } else if let Some(config_map) = projection.config_map.as_ref() {
+                normalize_config_map_projection(volume_name, config_map)?
+            } else if let Some(secret) = projection.secret.as_ref() {
+                normalize_secret_projection(volume_name, secret)?
+            } else {
+                unreachable!("projection source_count was validated above")
+            };
+
+        for path in projected_paths(&normalized) {
+            if !seen_paths.insert(path.clone()) {
+                return Err(ReconcileError::DuplicateVolumeItemPath {
+                    volume: volume_name.to_string(),
+                    path,
+                });
+            }
+        }
+        sources.push(normalized);
+    }
+
+    Ok(NormalizedVolumeSource::Projected {
+        sources,
+        default_mode: normalize_default_mode(volume_name, source.default_mode)?,
+    })
+}
+
+fn normalize_service_account_token_projection(
+    volume_name: &str,
+    projection: &ServiceAccountTokenProjection,
+) -> Result<NormalizedVolumeProjection, ReconcileError> {
+    validate_relative_target_path(volume_name, &projection.path)?;
+    let expiration_seconds = projection
+        .expiration_seconds
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| ReconcileError::InvalidShipVolume {
+            volume: volume_name.to_string(),
+            reason: "serviceAccountToken.expirationSeconds must be a positive integer".to_string(),
+        })?;
+    if matches!(expiration_seconds, Some(0)) {
+        return Err(ReconcileError::InvalidShipVolume {
+            volume: volume_name.to_string(),
+            reason: "serviceAccountToken.expirationSeconds must be greater than zero".to_string(),
+        });
+    }
+    Ok(NormalizedVolumeProjection::ServiceAccountToken {
+        audience: projection.audience.clone(),
+        expiration_seconds,
+        path: projection.path.clone(),
+    })
+}
+
+fn normalize_config_map_projection(
+    volume_name: &str,
+    projection: &ConfigMapProjection,
+) -> Result<NormalizedVolumeProjection, ReconcileError> {
+    if projection.name.is_empty() {
+        return Err(ReconcileError::InvalidShipVolume {
+            volume: volume_name.to_string(),
+            reason: "projected.configMap.name must not be empty".to_string(),
+        });
+    }
+    Ok(NormalizedVolumeProjection::ConfigMap {
+        name: projection.name.clone(),
+        items: normalize_items(volume_name, &projection.items)?,
+        optional: projection.optional.unwrap_or(false),
+    })
+}
+
+fn normalize_secret_projection(
+    volume_name: &str,
+    projection: &SecretProjection,
+) -> Result<NormalizedVolumeProjection, ReconcileError> {
+    if projection.name.is_empty() {
+        return Err(ReconcileError::InvalidShipVolume {
+            volume: volume_name.to_string(),
+            reason: "projected.secret.name must not be empty".to_string(),
+        });
+    }
+    Ok(NormalizedVolumeProjection::Secret {
+        name: projection.name.clone(),
+        items: normalize_items(volume_name, &projection.items)?,
+        optional: projection.optional.unwrap_or(false),
+    })
+}
+
+fn projected_paths(projection: &NormalizedVolumeProjection) -> Vec<String> {
+    match projection {
+        NormalizedVolumeProjection::ServiceAccountToken { path, .. } => vec![path.clone()],
+        NormalizedVolumeProjection::ConfigMap { items, .. }
+        | NormalizedVolumeProjection::Secret { items, .. } => {
+            items.iter().map(|item| item.path.clone()).collect()
+        }
+    }
 }
 
 fn normalize_items(

@@ -618,6 +618,8 @@ mod tests {
             volumes: vec![],
             target_node_name: None,
             runtime_class: None,
+            service_account_name: None,
+            automount_service_account_token: None,
         }
     }
 
