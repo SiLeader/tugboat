@@ -234,27 +234,34 @@ where
 
     pub(crate) fn apply_replacement(self, replacement: &T) -> Result<T, Box<StatusResponse>> {
         let current_value = serde_json::to_value(self.current).map_err(|e| Box::new(e.into()))?;
-        let mut current_obj = to_object(current_value, "current resource")?;
+        let current_obj = to_object(current_value, "current resource")?;
         let current_generation_fields = generation_tracked_fields(&current_obj);
 
         let replacement_value =
             serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
-        let replacement_obj = to_object(replacement_value, "replacement resource")?;
+        let mut replacement_obj = to_object(replacement_value, "replacement resource")?;
 
         let patch_metadata = replacement_obj.get("metadata").cloned();
 
-        for (key, value) in replacement_obj {
-            if key == "metadata" || key == "apiVersion" || key == "kind" {
-                continue;
-            }
-            if self.options.preserve_status && key == "status" {
-                continue;
-            }
-            current_obj.insert(key, value);
+        // Restore fields that must be preserved from current
+        if let Some(v) = current_obj.get("apiVersion") {
+            replacement_obj.insert("apiVersion".to_string(), v.clone());
+        }
+        if let Some(v) = current_obj.get("kind") {
+            replacement_obj.insert("kind".to_string(), v.clone());
         }
 
-        let content_changed = current_generation_fields != generation_tracked_fields(&current_obj);
-        let mut updated: T = serde_json::from_value(serde_json::Value::Object(current_obj))
+        if self.options.preserve_status {
+            if let Some(status) = current_obj.get("status") {
+                replacement_obj.insert("status".to_string(), status.clone());
+            } else {
+                replacement_obj.remove("status");
+            }
+        }
+
+        let content_changed =
+            current_generation_fields != generation_tracked_fields(&replacement_obj);
+        let mut updated: T = serde_json::from_value(serde_json::Value::Object(replacement_obj))
             .map_err(|e| Box::new(e.into()))?;
 
         self.enforce_metadata(&mut updated, patch_metadata.as_ref(), content_changed);
