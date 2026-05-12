@@ -91,7 +91,9 @@ impl ShipReconciler {
         }
 
         if self.runtime_operator.is_present(ship_id).await? {
-            let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
+            let volumes = self
+                .get_related_volumes(&namespace, name, ship_id, ship_spec)
+                .await?;
             let planned_published_volumes = self
                 .plan_desired_published_volumes(ship_id, &volumes)
                 .await?;
@@ -120,7 +122,9 @@ impl ShipReconciler {
             .await?;
         debug!("{} network classes loaded", network_classes.len());
         debug!("Getting volume claims for ship");
-        let volumes = self.get_related_volumes(&namespace, ship_spec).await?;
+        let volumes = self
+            .get_related_volumes(&namespace, name, ship_id, ship_spec)
+            .await?;
         debug!("{} volumes loaded", volumes.len());
         let persisted_volumes = self.csi.load_published_volumes(ship_id).await?;
 

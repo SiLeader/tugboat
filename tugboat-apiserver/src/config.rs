@@ -89,6 +89,10 @@ pub(crate) struct OidcProviderConfig {
     pub(crate) jwks_refresh_seconds: u64,
     #[serde(default = "default_oidc_jwks_min_refresh_seconds")]
     pub(crate) jwks_min_refresh_seconds: u64,
+    /// Allow plaintext HTTP connections to this OIDC provider. **Insecure** —
+    /// use only for local development with an HTTP-only IdP. Defaults to false.
+    #[serde(default)]
+    pub(crate) allow_insecure_http: bool,
 }
 
 #[derive(Clone, serde::Deserialize)]

@@ -367,7 +367,7 @@ fn algorithm_str(algorithm: SupportedAlgorithm) -> &'static str {
 fn build_http_client(config: &OidcProviderConfig) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(DISCOVERY_TIMEOUT_SECONDS))
-        .https_only(false);
+        .https_only(!config.allow_insecure_http);
     if let Some(ca_path) = &config.ca_file {
         let bytes = std::fs::read(ca_path)
             .map_err(|err| format!("failed to read ca_file '{ca_path}': {err}"))?;
@@ -681,6 +681,7 @@ mod tests {
             ca_file: None,
             jwks_refresh_seconds: 600,
             jwks_min_refresh_seconds: 30,
+            allow_insecure_http: false,
         })
         .expect("provider")
     }
@@ -922,6 +923,7 @@ mod tests {
                 ca_file: None,
                 jwks_refresh_seconds: 600,
                 jwks_min_refresh_seconds: 30,
+                allow_insecure_http: false,
             },
             OidcProviderConfig {
                 issuer_url: "https://idp.example.com/".to_string(),
@@ -934,6 +936,7 @@ mod tests {
                 ca_file: None,
                 jwks_refresh_seconds: 600,
                 jwks_min_refresh_seconds: 30,
+                allow_insecure_http: false,
             },
         ];
         let err = match OidcAuthenticator::from_config(&configs) {

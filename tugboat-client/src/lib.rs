@@ -40,6 +40,18 @@ pub struct ServiceAccountTokenRequest {
     pub audiences: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expiration_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bound_object_ref: Option<BoundObjectReference>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundObjectReference {
+    pub kind: String,
+    pub api_version: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

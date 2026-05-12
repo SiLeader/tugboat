@@ -25,7 +25,7 @@ pub(crate) use normalize::{
     normalized_ship_volumes,
 };
 use std::collections::{HashMap, HashSet};
-use tugboat_client::{Api, ServiceAccountTokenRequest};
+use tugboat_client::{Api, BoundObjectReference, ServiceAccountTokenRequest};
 use tugboat_resources::manifests::core::v1::{
     ConfigMap, CsiPersistentVolumeSource, PersistentVolume, PersistentVolumeClaim,
     PersistentVolumeClaimReference, PersistentVolumeClaimSpec, PersistentVolumeSpec,
@@ -62,6 +62,8 @@ pub(crate) struct ProjectedServiceAccountTokenInfo {
     pub audience: Option<String>,
     pub expiration_seconds: Option<u64>,
     pub path: String,
+    pub ship_name: String,
+    pub ship_uid: String,
 }
 
 impl VolumeInfo {
@@ -149,6 +151,8 @@ impl ShipReconciler {
     pub(crate) async fn get_related_volumes(
         &self,
         namespace: &str,
+        ship_name: &str,
+        ship_uid: &str,
         ship_spec: &ShipSpec,
     ) -> Result<Vec<VolumeInfo>, ReconcileError> {
         let claim_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
@@ -217,6 +221,8 @@ impl ShipReconciler {
                                 .service_account_name
                                 .as_deref()
                                 .unwrap_or("default"),
+                            ship_name,
+                            ship_uid,
                             volume.name,
                             sources,
                             default_mode,
@@ -391,10 +397,13 @@ impl ShipReconciler {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn load_projected_volume(
         &self,
         namespace: &str,
         service_account_name: &str,
+        ship_name: &str,
+        ship_uid: &str,
         volume_name: String,
         sources: Vec<NormalizedVolumeProjection>,
         default_mode: u32,
@@ -418,6 +427,12 @@ impl ShipReconciler {
                             ServiceAccountTokenRequest {
                                 audiences: audience.clone().into_iter().collect(),
                                 expiration_seconds,
+                                bound_object_ref: Some(BoundObjectReference {
+                                    kind: "Ship".to_string(),
+                                    api_version: "v1".to_string(),
+                                    name: ship_name.to_string(),
+                                    uid: Some(ship_uid.to_string()),
+                                }),
                             },
                         )
                         .await?;
@@ -426,6 +441,8 @@ impl ShipReconciler {
                         audience,
                         expiration_seconds,
                         path: path.clone(),
+                        ship_name: ship_name.to_string(),
+                        ship_uid: ship_uid.to_string(),
                     });
                     vec![MaterializedFile {
                         path,

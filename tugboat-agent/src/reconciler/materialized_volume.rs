@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
-use tugboat_client::ServiceAccountTokenRequest;
+use tugboat_client::{BoundObjectReference, ServiceAccountTokenRequest};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Ship;
 
@@ -183,6 +183,12 @@ impl ShipReconciler {
                         ServiceAccountTokenRequest {
                             audiences: token.audience.clone().into_iter().collect(),
                             expiration_seconds: token.expiration_seconds,
+                            bound_object_ref: Some(BoundObjectReference {
+                                kind: "Ship".to_string(),
+                                api_version: "v1".to_string(),
+                                name: token.ship_name.clone(),
+                                uid: Some(token.ship_uid.clone()),
+                            }),
                         },
                     )
                     .await
