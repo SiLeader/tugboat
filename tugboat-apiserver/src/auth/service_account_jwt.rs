@@ -202,9 +202,11 @@ impl ServiceAccountTokenIssuer {
             let public_key = parse_public_key_pem(&pem).map_err(|err| {
                 format!("failed to parse additional_verification_keys.{kid}: {err}")
             })?;
+            let algorithm = detect_algorithm(&public_key)
+                .map_err(|err| format!("additional_verification_keys.{kid}: {err}"))?;
             verification_keys.insert(
                 kid.clone(),
-                VerificationKey::new(kid.clone(), signing_algorithm, public_key)?,
+                VerificationKey::new(kid.clone(), algorithm, public_key)?,
             );
         }
 
@@ -312,19 +314,22 @@ impl ServiceAccountTokenIssuer {
     }
 
     pub(crate) fn openid_configuration(&self) -> OpenIdConfiguration {
-        let mut algorithms = self
+        let mut algorithms: Vec<&'static str> = self
             .verification_keys
             .values()
-            .map(|key| key.algorithm.as_str().to_string())
-            .collect::<Vec<_>>();
-        algorithms.sort();
+            .map(|key| key.algorithm.as_str())
+            .collect();
+        algorithms.sort_unstable();
         algorithms.dedup();
         OpenIdConfiguration {
             issuer: self.issuer.clone(),
             jwks_uri: format!("{}/openid/v1/jwks", self.issuer.trim_end_matches('/')),
             response_types_supported: vec!["id_token".to_string()],
             subject_types_supported: vec!["public".to_string()],
-            id_token_signing_alg_values_supported: algorithms,
+            id_token_signing_alg_values_supported: algorithms
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
         }
     }
 
@@ -525,6 +530,16 @@ fn ensure_key_matches_algorithm(
     }
 }
 
+fn detect_algorithm(key: &PKey<Public>) -> Result<JwtAlgorithm, String> {
+    match key.id() {
+        Id::RSA => Ok(JwtAlgorithm::RS256),
+        Id::ED25519 => Ok(JwtAlgorithm::EdDSA),
+        other => Err(format!(
+            "unsupported public key type {other:?}; expected RSA or Ed25519"
+        )),
+    }
+}
+
 fn ensure_public_key_matches_algorithm(
     key: &PKey<Public>,
     algorithm: JwtAlgorithm,
@@ -664,6 +679,59 @@ mod tests {
             .expect_err("wrong audience should fail");
 
         assert!(err.contains("audience"));
+    }
+
+    #[test]
+    fn additional_verification_key_uses_its_own_algorithm() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // Primary signing key is RS256.
+        let signing_key = PKey::from_rsa(Rsa::generate(2048).expect("rsa")).expect("pkey");
+        let signing_path = dir.path().join("sa.key");
+        fs::write(
+            &signing_path,
+            signing_key.private_key_to_pem_pkcs8().expect("pem"),
+        )
+        .expect("write signing key");
+        // Rotation candidate is Ed25519 — must be tagged EdDSA, not the
+        // primary algorithm.
+        let rotation_key = PKey::generate_ed25519().expect("ed25519");
+        let rotation_path = dir.path().join("rotation.key");
+        fs::write(
+            &rotation_path,
+            rotation_key
+                .public_key_to_pem()
+                .expect("rotation public pem"),
+        )
+        .expect("write rotation key");
+
+        let issuer = ServiceAccountTokenIssuer::from_config(&ServiceAccountTokenConfig {
+            issuer: Some("https://issuer.example".to_string()),
+            audiences: vec!["https://issuer.example".to_string()],
+            signing_key_file: Some(signing_path.to_string_lossy().into_owned()),
+            signing_key_id: Some("primary".to_string()),
+            additional_verification_keys: HashMap::from([(
+                "rotation".to_string(),
+                rotation_path.to_string_lossy().into_owned(),
+            )]),
+            ..Default::default()
+        })
+        .expect("config")
+        .expect("issuer");
+
+        let rotation_alg = issuer
+            .verification_keys
+            .get("rotation")
+            .expect("rotation key registered")
+            .algorithm;
+        let primary_alg = issuer
+            .verification_keys
+            .get("primary")
+            .expect("primary key registered")
+            .algorithm;
+        assert_eq!(primary_alg, JwtAlgorithm::RS256);
+        // The rotation key is Ed25519 — it must be tagged EdDSA, not the
+        // primary signing algorithm.
+        assert_eq!(rotation_alg, JwtAlgorithm::EdDSA);
     }
 
     fn service_account(namespace: &str, name: &str, uid: &str) -> ServiceAccount {

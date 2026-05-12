@@ -248,8 +248,15 @@ fn default_audit_log_path() -> String {
     "-".to_string()
 }
 
+// Exposed so the audit writer can detect operator-supplied non-default values
+// for fields it does not yet honor (max_size_mb, max_age_days) and emit a
+// targeted warning at startup. Keep these in sync with the `default_audit_*`
+// helpers below.
+pub(crate) const AUDIT_DEFAULT_MAX_SIZE_MB: u64 = 100;
+pub(crate) const AUDIT_DEFAULT_MAX_AGE_DAYS: u64 = 30;
+
 fn default_audit_max_size_mb() -> u64 {
-    100
+    AUDIT_DEFAULT_MAX_SIZE_MB
 }
 
 fn default_audit_max_backups() -> usize {
@@ -257,7 +264,7 @@ fn default_audit_max_backups() -> usize {
 }
 
 fn default_audit_max_age_days() -> u64 {
-    30
+    AUDIT_DEFAULT_MAX_AGE_DAYS
 }
 
 fn default_audit_channel_capacity() -> usize {

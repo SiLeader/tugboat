@@ -55,6 +55,10 @@ impl Reconciler<ClusterRole> for AggregatedClusterRoleReconciler {
 impl AggregatedClusterRoleReconciler {
     async fn reconcile_all(&self) -> Result<Action, ControllerError> {
         let api: Api<ClusterRole> = Api::all(self.client.clone());
+        // TODO: this lists every ClusterRole on every event. With many roles
+        // and a busy watch stream this is O(n) per event. Once label selectors
+        // land on list, scope this to parents (aggregation_rule set) and
+        // children matching any configured selector.
         let cluster_roles = api.list().await?;
 
         let parents: Vec<&ClusterRole> = cluster_roles

@@ -338,7 +338,8 @@ impl JwksEntry {
     fn clone_for_use(&self) -> Self {
         Self {
             algorithm: self.algorithm,
-            // PKey is cheap to clone; it wraps an Arc internally.
+            // PKey::clone only bumps OpenSSL's internal EVP_PKEY refcount, so
+            // this is cheap and does not duplicate the key material.
             key: self.key.clone(),
         }
     }

@@ -14,7 +14,9 @@
 
 use crate::auth::authorization::AuthorizationDecision;
 use crate::auth::user_info::UserInfo;
-use crate::config::{AuditConfig, AuditLevel, AuditRule};
+use crate::config::{
+    AUDIT_DEFAULT_MAX_AGE_DAYS, AUDIT_DEFAULT_MAX_SIZE_MB, AuditConfig, AuditLevel, AuditRule,
+};
 use crate::endpoints::resource_registry;
 use actix_web::Error;
 use actix_web::body::{BodySize, EitherBody, MessageBody};
@@ -258,6 +260,7 @@ pub(crate) fn start_audit_writer(config: &AuditConfig) -> Option<AuditSink> {
     if !config.enabled {
         return None;
     }
+    warn_on_unsupported_audit_fields(config);
     let writer = match AuditWriter::open(config) {
         Ok(writer) => writer,
         Err(err) => {
@@ -292,6 +295,26 @@ pub(crate) fn start_audit_writer(config: &AuditConfig) -> Option<AuditSink> {
         max_request_body_bytes: config.max_request_body_bytes,
         max_response_body_bytes: config.max_response_body_bytes,
     })
+}
+
+/// `max_size_mb` and `max_age_days` are reserved for future use — the daily
+/// rolling file appender does not honor them yet. Warn the operator when they
+/// set non-default values so silent misconfiguration is caught at startup.
+fn warn_on_unsupported_audit_fields(config: &AuditConfig) {
+    if config.max_size_mb != AUDIT_DEFAULT_MAX_SIZE_MB {
+        warn!(
+            target: "tugboat::audit",
+            max_size_mb = config.max_size_mb,
+            "audit.max_size_mb is set but size-based rotation is not implemented yet; the value is ignored"
+        );
+    }
+    if config.max_age_days != AUDIT_DEFAULT_MAX_AGE_DAYS {
+        warn!(
+            target: "tugboat::audit",
+            max_age_days = config.max_age_days,
+            "audit.max_age_days is set but age-based retention is not implemented yet; the value is ignored"
+        );
+    }
 }
 
 enum AuditWriter {
@@ -341,6 +364,32 @@ impl AuditWriter {
             }
         }
         Ok(())
+    }
+}
+
+/// Strips the port from a `realip_remote_addr()` value while preserving IPv6
+/// addresses. Handles `10.0.0.1:43210`, `[::1]:43210`, and bare addresses
+/// without a port (`10.0.0.1`, `::1`).
+pub(crate) fn parse_remote_ip(addr: &str) -> String {
+    if let Ok(socket) = addr.parse::<std::net::SocketAddr>() {
+        return socket.ip().to_string();
+    }
+    if let Ok(ip) = addr.parse::<std::net::IpAddr>() {
+        return ip.to_string();
+    }
+    // Bracketed IPv6 with non-numeric trailer or other unusual shape.
+    if let Some(rest) = addr.strip_prefix('[')
+        && let Some(end) = rest.find(']')
+    {
+        return rest[..end].to_string();
+    }
+    // Last-colon split is only safe when the left side has no colons
+    // (i.e. cannot be an IPv6 address).
+    match addr.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') && port.chars().all(|c| c.is_ascii_digit()) => {
+            host.to_string()
+        }
+        _ => addr.to_string(),
     }
 }
 
@@ -595,7 +644,7 @@ where
             let source_ips = req
                 .connection_info()
                 .realip_remote_addr()
-                .map(|addr| addr.split(':').next().unwrap_or(addr).to_string())
+                .map(parse_remote_ip)
                 .map(|ip| vec![ip])
                 .unwrap_or_default();
             let request_uri = match req.uri().query() {
@@ -1061,6 +1110,17 @@ mod tests {
         assert_eq!(select("/openapi/v3"), AuditLevel::Metadata);
         assert_eq!(select("/openapi/v3/api"), AuditLevel::Metadata);
         assert_eq!(select("/other"), AuditLevel::None);
+    }
+
+    #[test]
+    fn parse_remote_ip_handles_ipv4_ipv6_and_bare_addresses() {
+        assert_eq!(parse_remote_ip("10.0.0.5:43210"), "10.0.0.5");
+        assert_eq!(parse_remote_ip("[::1]:43210"), "::1");
+        assert_eq!(parse_remote_ip("[2001:db8::1]:443"), "2001:db8::1");
+        // Bare IPs (no port) should be returned untouched, not truncated.
+        assert_eq!(parse_remote_ip("10.0.0.5"), "10.0.0.5");
+        assert_eq!(parse_remote_ip("::1"), "::1");
+        assert_eq!(parse_remote_ip("2001:db8::1"), "2001:db8::1");
     }
 
     #[test]
