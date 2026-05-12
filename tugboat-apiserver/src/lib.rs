@@ -82,7 +82,6 @@ impl ApiServer {
         let audit_sink = start_audit_writer(&self.audit);
         let server = HttpServer::new(move || {
             App::new()
-                .wrap(Logger::default().exclude("/healthz"))
                 .wrap(AuthorizationMiddleware::new(
                     data.clone(),
                     authorization.clone(),
@@ -95,6 +94,7 @@ impl ApiServer {
                     data.clone(),
                     authentication.clone(),
                 ))
+                .wrap(Logger::default().exclude("/healthz"))
                 .app_data(data.clone())
                 .app_data(json_config())
                 .service(health_check)
@@ -180,7 +180,6 @@ async fn run_with_bound_listener(
     let audit_sink = start_audit_writer(&audit);
     let server = HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default().exclude("/healthz"))
             .wrap(AuthorizationMiddleware::new(
                 data.clone(),
                 authorization.clone(),
@@ -193,6 +192,7 @@ async fn run_with_bound_listener(
                 data.clone(),
                 authentication.clone(),
             ))
+            .wrap(Logger::default().exclude("/healthz"))
             .app_data(data.clone())
             .app_data(json_config())
             .service(health_check)
