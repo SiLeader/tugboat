@@ -31,7 +31,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::warn;
 use tugboat_resource_store::serializer::StaticSerializable;
 use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
@@ -86,6 +86,8 @@ pub(crate) struct DefaultAuthenticator {
     anonymous_enabled: bool,
     /// Shared cache across all cloned instances of this authenticator.
     token_cache: Arc<RwLock<TokenCacheState>>,
+    /// Shared lock to ensure only one thread rebuilds the token cache at a time.
+    token_refresh_lock: Arc<Mutex<()>>,
 }
 
 impl DefaultAuthenticator {
@@ -94,6 +96,7 @@ impl DefaultAuthenticator {
             operator,
             anonymous_enabled: config.anonymous_enabled,
             token_cache: Arc::new(RwLock::new(TokenCacheState::default())),
+            token_refresh_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -499,6 +502,28 @@ impl DefaultAuthenticator {
             // newly created service-account tokens are picked up immediately.
         }
 
+        let _lock = self.token_refresh_lock.lock().await;
+
+        // Re-check cache after acquiring lock
+        {
+            let cache = self.token_cache.read().await;
+            if !cache.is_stale()
+                && let Some((namespace, name)) = cache.map.get(&encoded)
+            {
+                if let Some(data) = self
+                    .operator
+                    .store
+                    .get::<Secret>(Some(namespace.clone()), name)
+                    .await?
+                {
+                    let secret = data.apply_revision();
+                    if secret_contains_token(&secret, token) {
+                        return Ok(Some(secret));
+                    }
+                }
+            }
+        }
+
         // --- Slow path: full scan ---
         // Rebuild the cache from all secrets currently in etcd and locate the
         // matching secret while we have the data in hand.
@@ -519,7 +544,7 @@ impl DefaultAuthenticator {
             };
             if let Some(stored_encoded) = secret.data.get(TOKEN_DATA_KEY) {
                 new_map.insert(stored_encoded.clone(), (ns.to_string(), name.to_string()));
-                if stored_encoded == &encoded && found.is_none() {
+                if secret_contains_token(&secret, token) && found.is_none() {
                     found = Some(secret);
                 }
             }

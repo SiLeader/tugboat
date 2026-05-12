@@ -33,7 +33,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::warn;
 
 const JWT_LEEWAY_SECONDS: u64 = 60;
@@ -107,6 +107,7 @@ pub(crate) struct OidcProvider {
     required_claims: HashMap<String, String>,
     http_client: reqwest::Client,
     cache: RwLock<JwksCacheState>,
+    refresh_lock: Mutex<()>,
     refresh_interval: Duration,
     min_refresh_interval: Duration,
 }
@@ -188,6 +189,7 @@ impl OidcProvider {
             required_claims: config.required_claims.clone(),
             http_client,
             cache: RwLock::new(JwksCacheState::default()),
+            refresh_lock: Mutex::new(()),
             refresh_interval: Duration::from_secs(config.jwks_refresh_seconds),
             min_refresh_interval: Duration::from_secs(config.jwks_min_refresh_seconds),
         })
@@ -234,8 +236,8 @@ impl OidcProvider {
                 // the unverified header but is safe to log.
                 warn!(
                     issuer = %self.issuer_url,
-                    kid = %kid,
-                    alg = %alg,
+                    kid = ?kid,
+                    alg = ?alg,
                     "OIDC token references unknown kid after JWKS refresh"
                 );
                 Err(OidcVerifyError::UnknownKid(kid.to_string()))
@@ -244,6 +246,8 @@ impl OidcProvider {
     }
 
     async fn refresh_jwks(&self) -> Result<(), OidcVerifyError> {
+        let _lock = self.refresh_lock.lock().await;
+
         // Rate-limit: skip if a recent refresh already happened.
         {
             let cache = self.cache.read().await;
