@@ -57,6 +57,7 @@ pub(crate) struct ShipReconciler {
 }
 
 impl ShipReconciler {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         node_name: String,
         client: TugboatClient,

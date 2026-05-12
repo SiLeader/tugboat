@@ -166,7 +166,10 @@ async fn aggregated_cluster_role_propagates_child_rules() -> Result<(), DynError
 
     let parent = wait_for_json(
         &client,
-        &format!("{}/apis/authorization/v1/clusterroles/{parent_name}", ctx.base_url),
+        &format!(
+            "{}/apis/authorization/v1/clusterroles/{parent_name}",
+            ctx.base_url
+        ),
         |body| {
             body["rules"]
                 .as_array()
@@ -186,7 +189,10 @@ async fn aggregated_cluster_role_propagates_child_rules() -> Result<(), DynError
     request_json_with_statuses(
         &client,
         Method::DELETE,
-        &format!("{}/apis/authorization/v1/clusterroles/{child_name}", ctx.base_url),
+        &format!(
+            "{}/apis/authorization/v1/clusterroles/{child_name}",
+            ctx.base_url
+        ),
         &[StatusCode::OK, StatusCode::NO_CONTENT],
         None,
     )
@@ -194,7 +200,10 @@ async fn aggregated_cluster_role_propagates_child_rules() -> Result<(), DynError
 
     wait_for_json(
         &client,
-        &format!("{}/apis/authorization/v1/clusterroles/{parent_name}", ctx.base_url),
+        &format!(
+            "{}/apis/authorization/v1/clusterroles/{parent_name}",
+            ctx.base_url
+        ),
         |body| {
             body["rules"]
                 .as_array()

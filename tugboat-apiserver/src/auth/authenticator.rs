@@ -509,17 +509,15 @@ impl DefaultAuthenticator {
             let cache = self.token_cache.read().await;
             if !cache.is_stale()
                 && let Some((namespace, name)) = cache.map.get(&encoded)
-            {
-                if let Some(data) = self
+                && let Some(data) = self
                     .operator
                     .store
                     .get::<Secret>(Some(namespace.clone()), name)
                     .await?
-                {
-                    let secret = data.apply_revision();
-                    if secret_contains_token(&secret, token) {
-                        return Ok(Some(secret));
-                    }
+            {
+                let secret = data.apply_revision();
+                if secret_contains_token(&secret, token) {
+                    return Ok(Some(secret));
                 }
             }
         }
