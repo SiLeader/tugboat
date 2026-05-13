@@ -128,12 +128,27 @@ impl AuditPolicy {
 
     /// Returns the first matching rule's level. With no rules, audit defaults to None.
     pub(crate) fn select_level(&self, request: &PolicyInput<'_>) -> AuditLevel {
-        for rule in &self.rules {
-            if rule_matches(rule, request) {
-                return rule.level;
-            }
-        }
-        AuditLevel::None
+        let level = self
+            .rules
+            .iter()
+            .find(|rule| rule_matches(rule, request))
+            .map(|rule| rule.level)
+            .unwrap_or(AuditLevel::None);
+        clamp_sensitive_level(request.resource, level)
+    }
+}
+
+/// Hard fail-safe: Secret bodies must never reach the audit log even if an
+/// operator's policy says `Request`/`RequestResponse`. Clamps the level to
+/// `Metadata` (or `None`, whichever is lower) for the `secrets` resource and
+/// any of its subresources.
+fn clamp_sensitive_level(resource: &str, level: AuditLevel) -> AuditLevel {
+    if strip_subresource(resource) != "secrets" {
+        return level;
+    }
+    match level {
+        AuditLevel::Request | AuditLevel::RequestResponse => AuditLevel::Metadata,
+        other => other,
     }
 }
 
@@ -1061,6 +1076,44 @@ mod tests {
         );
         assert_eq!(
             policy.select_level(&input("get", &u, "core", "ships", Some("default"))),
+            AuditLevel::None
+        );
+    }
+
+    #[test]
+    fn secret_bodies_are_clamped_to_metadata_regardless_of_policy() {
+        let policy = AuditPolicy::from_rules(vec![AuditRule {
+            level: AuditLevel::RequestResponse,
+            ..Default::default()
+        }]);
+        let u = user();
+        // Plain secrets resource is clamped down from RequestResponse.
+        assert_eq!(
+            policy.select_level(&input("create", &u, "core", "secrets", Some("default"))),
+            AuditLevel::Metadata
+        );
+        // Subresources of secrets (none in tugboat today, but defensive) are
+        // also clamped via the base-resource check.
+        assert_eq!(
+            policy.select_level(&input("get", &u, "core", "secrets/data", Some("default"))),
+            AuditLevel::Metadata
+        );
+        // Non-secret resources are untouched.
+        assert_eq!(
+            policy.select_level(&input("create", &u, "core", "ships", Some("default"))),
+            AuditLevel::RequestResponse
+        );
+    }
+
+    #[test]
+    fn secret_none_level_stays_none_when_clamped() {
+        let policy = AuditPolicy::from_rules(vec![AuditRule {
+            level: AuditLevel::None,
+            ..Default::default()
+        }]);
+        let u = user();
+        assert_eq!(
+            policy.select_level(&input("create", &u, "core", "secrets", Some("default"))),
             AuditLevel::None
         );
     }

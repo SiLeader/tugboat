@@ -165,6 +165,10 @@ pub(crate) enum OidcVerifyError {
 }
 
 impl OidcProvider {
+    pub(crate) fn issuer_url(&self) -> &str {
+        &self.issuer_url
+    }
+
     fn from_config(config: &OidcProviderConfig) -> Result<Self, String> {
         if config.issuer_url.is_empty() {
             return Err("issuer_url must not be empty".to_string());

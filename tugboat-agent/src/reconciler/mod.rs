@@ -28,7 +28,9 @@ use crate::csi::{CsiDrivers, CsiWrapper};
 use crate::reconciler::reconcile::AppendStatus;
 use crate::runtime::RuntimeOperator;
 use runner::ReconcilerRunner;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::select;
 use tokio::signal::unix::SignalKind;
@@ -42,6 +44,37 @@ use tugboat_csi_operator::TugboatCsiOperator;
 
 use tugboat_resources::manifests::core::v1::{Ship, ShipClass};
 
+/// Key identifying a single projected ServiceAccount token refresh task. We
+/// dedupe on (ship_id, volume_name, path) because a Ship can be re-reconciled
+/// (add → restart → add) multiple times for the same projected file, and each
+/// call to `start_service_account_token_refresh` would otherwise spawn a fresh
+/// task that races the existing one for atomic-rename writes.
+pub(crate) type TokenRefreshKey = (String, String, PathBuf);
+
+#[derive(Clone, Default)]
+pub(crate) struct TokenRefreshRegistry {
+    tasks: Arc<Mutex<HashMap<TokenRefreshKey, CancellationToken>>>,
+}
+
+impl TokenRefreshRegistry {
+    /// Inserts a fresh `CancellationToken` for `key`, cancelling any previous
+    /// task registered under the same key. Returns the new token the caller
+    /// should hand to the spawned task.
+    pub(crate) fn replace(&self, key: TokenRefreshKey) -> CancellationToken {
+        let new_token = CancellationToken::new();
+        let mut tasks = self.tasks.lock().expect("token refresh registry poisoned");
+        if let Some(previous) = tasks.insert(key, new_token.clone()) {
+            previous.cancel();
+        }
+        new_token
+    }
+
+    pub(crate) fn forget(&self, key: &TokenRefreshKey) {
+        let mut tasks = self.tasks.lock().expect("token refresh registry poisoned");
+        tasks.remove(key);
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ShipReconciler {
     node_name: String,
@@ -54,6 +87,7 @@ pub(crate) struct ShipReconciler {
     volume_data_dir: PathBuf,
     apiserver_ca_cert_path: Option<PathBuf>,
     cancellation_token: CancellationToken,
+    pub(crate) token_refreshes: TokenRefreshRegistry,
 }
 
 impl ShipReconciler {
@@ -79,6 +113,7 @@ impl ShipReconciler {
             volume_data_dir: PathBuf::from(csi_publish_dir),
             apiserver_ca_cert_path: apiserver_ca_cert_path.map(PathBuf::from),
             cancellation_token: CancellationToken::new(),
+            token_refreshes: TokenRefreshRegistry::default(),
         }
     }
 

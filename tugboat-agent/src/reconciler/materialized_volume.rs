@@ -11,6 +11,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use tugboat_client::{BoundObjectReference, ServiceAccountTokenRequest};
 use tugboat_resources::ObjectMetaResource;
@@ -155,17 +156,33 @@ impl ShipReconciler {
         token: ProjectedServiceAccountTokenInfo,
     ) {
         let client = self.client.clone();
-        let cancellation_token = self.cancellation_token.clone();
+        let global_cancellation = self.cancellation_token.clone();
         let file_path = self
             .materialized_volume_dir(&ship_id, &volume_name)
             .join(&token.path);
+
+        // Replace any previous refresh task for the same (ship, volume, path).
+        // Without this, repeat reconciles of the same Ship spawn multiple
+        // tasks that race each other on the projected file's atomic rename
+        // and can leave a stale token as the last writer.
+        let key = (ship_id.clone(), volume_name.clone(), file_path.clone());
+        let task_cancellation = self.token_refreshes.replace(key.clone());
+        let registry = self.token_refreshes.clone();
+
         tokio::spawn(async move {
             let ttl = token.expiration_seconds.unwrap_or(3600).max(1);
             loop {
                 let delay = refresh_delay(ttl);
                 tokio::select! {
                     _ = sleep(delay) => {}
-                    _ = cancellation_token.cancelled() => break,
+                    _ = global_cancellation.cancelled() => break,
+                    _ = task_cancellation.cancelled() => {
+                        debug!(
+                            "Cancelling stale ServiceAccount token refresh for '{}'",
+                            file_path.display()
+                        );
+                        return;
+                    }
                 }
 
                 if !file_path.exists() {
@@ -176,43 +193,66 @@ impl ShipReconciler {
                     break;
                 }
 
-                match client
-                    .create_service_account_token(
-                        &namespace,
-                        &token.service_account_name,
-                        ServiceAccountTokenRequest {
-                            audiences: token.audience.clone().into_iter().collect(),
-                            expiration_seconds: token.expiration_seconds,
-                            bound_object_ref: Some(BoundObjectReference {
-                                kind: "Ship".to_string(),
-                                api_version: "v1".to_string(),
-                                name: token.ship_name.clone(),
-                                uid: Some(token.ship_uid.clone()),
-                            }),
-                        },
-                    )
-                    .await
+                if let Err(err) =
+                    refresh_once(&client, &namespace, &token, &file_path, &task_cancellation).await
                 {
-                    Ok(response) => {
-                        if let Err(err) =
-                            write_file_atomically(&file_path, response.token.as_bytes(), 0o600)
-                        {
-                            error!(
-                                "Failed to refresh projected ServiceAccount token at '{}': {err}",
-                                file_path.display()
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        error!(
-                            "Failed to refresh projected ServiceAccount token for '{}/{}': {err}",
-                            namespace, token.service_account_name
-                        );
-                    }
+                    error!("{err}");
                 }
             }
+
+            // Only forget the registry entry if *we* are still the registered
+            // task. A racing replacement may have already overwritten us; in
+            // that case the new task owns the slot and must keep it.
+            if task_cancellation.is_cancelled() {
+                return;
+            }
+            registry.forget(&key);
         });
     }
+}
+
+async fn refresh_once(
+    client: &tugboat_client::TugboatClient,
+    namespace: &str,
+    token: &ProjectedServiceAccountTokenInfo,
+    file_path: &Path,
+    task_cancellation: &CancellationToken,
+) -> Result<(), String> {
+    let response = client
+        .create_service_account_token(
+            namespace,
+            &token.service_account_name,
+            ServiceAccountTokenRequest {
+                audiences: token.audience.clone().into_iter().collect(),
+                expiration_seconds: token.expiration_seconds,
+                bound_object_ref: Some(BoundObjectReference {
+                    kind: "Ship".to_string(),
+                    api_version: "v1".to_string(),
+                    name: token.ship_name.clone(),
+                    uid: Some(token.ship_uid.clone()),
+                }),
+            },
+        )
+        .await
+        .map_err(|err| {
+            format!(
+                "Failed to refresh projected ServiceAccount token for '{}/{}': {err}",
+                namespace, token.service_account_name
+            )
+        })?;
+
+    // A racing replacement may have run while we were waiting on the apiserver.
+    // Drop the write so the newer task owns the file.
+    if task_cancellation.is_cancelled() {
+        return Ok(());
+    }
+
+    write_file_atomically(file_path, response.token.as_bytes(), 0o600).map_err(|err| {
+        format!(
+            "Failed to write projected ServiceAccount token at '{}': {err}",
+            file_path.display()
+        )
+    })
 }
 
 fn refresh_delay(ttl_seconds: u64) -> Duration {

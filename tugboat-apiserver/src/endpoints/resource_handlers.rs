@@ -259,27 +259,15 @@ where
             }
         }
 
-        // Preserve annotations from the current resource that are absent in the replacement.
-        // RFC 7396 patch handles annotation deletion explicitly via null; for full replacement
-        // (PUT), annotations not present in the submitted manifest should not be silently removed.
-        if let Some(serde_json::Value::Object(current_meta)) = current_obj.get("metadata")
-            && let Some(serde_json::Value::Object(current_ann)) =
-                current_meta.get("annotations")
-            && !current_ann.is_empty()
-        {
-            let repl_meta = replacement_obj
-                .entry("metadata".to_string())
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-            if let serde_json::Value::Object(meta_map) = repl_meta {
-                let annotations = meta_map
-                    .entry("annotations".to_string())
-                    .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-                if let serde_json::Value::Object(ann_map) = annotations {
-                    for (key, value) in current_ann {
-                        ann_map.entry(key.clone()).or_insert_with(|| value.clone());
-                    }
-                }
-            }
+        // Preserve annotations and labels from the current resource that are absent in the
+        // replacement. RFC 7396 patch handles deletion explicitly via null; for full replacement
+        // (PUT), these metadata maps not present in the submitted manifest should not be
+        // silently removed. Controllers and admission writers routinely attach labels (e.g.
+        // `pod-template-hash`, aggregation labels) and annotations that operator-supplied PUTs
+        // must not clobber.
+        if let Some(serde_json::Value::Object(current_meta)) = current_obj.get("metadata") {
+            preserve_metadata_map(&mut replacement_obj, current_meta, "annotations");
+            preserve_metadata_map(&mut replacement_obj, current_meta, "labels");
         }
 
         let content_changed =
@@ -546,6 +534,39 @@ where
         replaced
     };
     Ok(ModifyResponse::Updated(replaced))
+}
+
+/// Merge entries from `current_meta.<field>` into `replacement.metadata.<field>` for keys not
+/// already present in the replacement. Used by PUT to keep controller-managed labels and
+/// annotations alive across operator-supplied replacements.
+fn preserve_metadata_map(
+    replacement: &mut serde_json::Map<String, serde_json::Value>,
+    current_meta: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) {
+    let Some(serde_json::Value::Object(current_field)) = current_meta.get(field) else {
+        return;
+    };
+    if current_field.is_empty() {
+        return;
+    }
+    let repl_meta = replacement
+        .entry("metadata".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let serde_json::Value::Object(meta_map) = repl_meta else {
+        return;
+    };
+    let preserved = meta_map
+        .entry(field.to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let serde_json::Value::Object(target_map) = preserved else {
+        return;
+    };
+    for (key, value) in current_field {
+        target_map
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
 }
 
 fn to_object(

@@ -5,7 +5,7 @@ use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::authorization::v1::{
-    AggregationRule, ClusterRole, LabelSelector, PolicyRule,
+    AggregationRule, ClusterRole, LabelSelector, LabelSelectorRequirement, PolicyRule,
 };
 
 #[derive(Clone)]
@@ -148,14 +148,45 @@ fn selectors_match(selectors: &[LabelSelector], labels: &HashMap<String, String>
         .any(|selector| selector_matches(selector, labels))
 }
 
+/// A selector with no `match_labels` *and* no `match_expressions` matches
+/// nothing — see proto comment on [`LabelSelector`]. Otherwise all entries are
+/// ANDed: every match_label and every match_expression must be satisfied.
 fn selector_matches(selector: &LabelSelector, labels: &HashMap<String, String>) -> bool {
-    if selector.match_labels.is_empty() {
+    if selector.match_labels.is_empty() && selector.match_expressions.is_empty() {
+        return false;
+    }
+    let labels_ok = selector
+        .match_labels
+        .iter()
+        .all(|(key, value)| labels.get(key).is_some_and(|label| label == value));
+    if !labels_ok {
         return false;
     }
     selector
-        .match_labels
+        .match_expressions
         .iter()
-        .all(|(key, value)| labels.get(key).is_some_and(|label| label == value))
+        .all(|requirement| requirement_matches(requirement, labels))
+}
+
+fn requirement_matches(
+    requirement: &LabelSelectorRequirement,
+    labels: &HashMap<String, String>,
+) -> bool {
+    match requirement.operator.as_str() {
+        "In" => labels
+            .get(&requirement.key)
+            .is_some_and(|value| requirement.values.iter().any(|expected| expected == value)),
+        "NotIn" => match labels.get(&requirement.key) {
+            None => true,
+            Some(value) => !requirement.values.iter().any(|expected| expected == value),
+        },
+        "Exists" => labels.contains_key(&requirement.key),
+        "DoesNotExist" => !labels.contains_key(&requirement.key),
+        // Reject malformed requirements (unknown operator, In/NotIn with empty
+        // values list). A misconfigured selector must not silently match every
+        // ClusterRole.
+        _ => false,
+    }
 }
 
 fn normalize_rule(rule: &PolicyRule) -> PolicyRule {
@@ -209,12 +240,12 @@ fn rules_equivalent(current: &[PolicyRule], desired: &[PolicyRule]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_rules, normalize_rule, rules_equivalent, selector_matches, selectors_match,
-        sorted_unique,
+        aggregate_rules, normalize_rule, requirement_matches, rules_equivalent, selector_matches,
+        selectors_match, sorted_unique,
     };
     use std::collections::HashMap;
     use tugboat_resources::manifests::authorization::v1::{
-        AggregationRule, ClusterRole, LabelSelector, PolicyRule,
+        AggregationRule, ClusterRole, LabelSelector, LabelSelectorRequirement, PolicyRule,
     };
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
@@ -252,6 +283,15 @@ mod tests {
                 .iter()
                 .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
                 .collect(),
+            match_expressions: Vec::new(),
+        }
+    }
+
+    fn requirement(key: &str, op: &str, values: &[&str]) -> LabelSelectorRequirement {
+        LabelSelectorRequirement {
+            key: key.to_string(),
+            operator: op.to_string(),
+            values: values.iter().map(|v| (*v).to_string()).collect(),
         }
     }
 
@@ -263,8 +303,99 @@ mod tests {
         )]);
         let empty_selector = LabelSelector {
             match_labels: HashMap::new(),
+            match_expressions: Vec::new(),
         };
         assert!(!selector_matches(&empty_selector, &labels));
+    }
+
+    #[test]
+    fn match_expressions_in_operator_requires_value_in_list() {
+        let labels = HashMap::from([("tier".to_string(), "view".to_string())]);
+        assert!(requirement_matches(
+            &requirement("tier", "In", &["view", "edit"]),
+            &labels
+        ));
+        assert!(!requirement_matches(
+            &requirement("tier", "In", &["admin"]),
+            &labels
+        ));
+    }
+
+    #[test]
+    fn match_expressions_notin_operator_excludes_value() {
+        let labels = HashMap::from([("tier".to_string(), "view".to_string())]);
+        assert!(!requirement_matches(
+            &requirement("tier", "NotIn", &["view"]),
+            &labels
+        ));
+        assert!(requirement_matches(
+            &requirement("tier", "NotIn", &["edit"]),
+            &labels
+        ));
+        // Key missing → NotIn passes (matches Kubernetes semantics).
+        assert!(requirement_matches(
+            &requirement("absent", "NotIn", &["x"]),
+            &labels
+        ));
+    }
+
+    #[test]
+    fn match_expressions_exists_and_does_not_exist() {
+        let labels = HashMap::from([("tier".to_string(), "view".to_string())]);
+        assert!(requirement_matches(
+            &requirement("tier", "Exists", &[]),
+            &labels
+        ));
+        assert!(!requirement_matches(
+            &requirement("absent", "Exists", &[]),
+            &labels
+        ));
+        assert!(requirement_matches(
+            &requirement("absent", "DoesNotExist", &[]),
+            &labels
+        ));
+        assert!(!requirement_matches(
+            &requirement("tier", "DoesNotExist", &[]),
+            &labels
+        ));
+    }
+
+    #[test]
+    fn unknown_operator_does_not_silently_match() {
+        let labels = HashMap::from([("tier".to_string(), "view".to_string())]);
+        assert!(!requirement_matches(
+            &requirement("tier", "GreaterThan", &["a"]),
+            &labels
+        ));
+    }
+
+    #[test]
+    fn selector_combines_match_labels_and_match_expressions() {
+        let labels = HashMap::from([
+            ("tier".to_string(), "view".to_string()),
+            ("team".to_string(), "platform".to_string()),
+        ]);
+        let selector = LabelSelector {
+            match_labels: HashMap::from([("tier".to_string(), "view".to_string())]),
+            match_expressions: vec![requirement("team", "In", &["platform", "infra"])],
+        };
+        assert!(selector_matches(&selector, &labels));
+
+        let selector_team_mismatch = LabelSelector {
+            match_labels: HashMap::from([("tier".to_string(), "view".to_string())]),
+            match_expressions: vec![requirement("team", "In", &["infra"])],
+        };
+        assert!(!selector_matches(&selector_team_mismatch, &labels));
+    }
+
+    #[test]
+    fn selector_with_only_match_expressions_works() {
+        let labels = HashMap::from([("tier".to_string(), "view".to_string())]);
+        let selector = LabelSelector {
+            match_labels: HashMap::new(),
+            match_expressions: vec![requirement("tier", "Exists", &[])],
+        };
+        assert!(selector_matches(&selector, &labels));
     }
 
     #[test]

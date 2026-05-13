@@ -165,6 +165,7 @@ fn aggregated_cluster_role(
                     aggregate_label.to_string(),
                     LABEL_TRUE.to_string(),
                 )]),
+                match_expressions: Vec::new(),
             }],
         }),
     }

@@ -516,7 +516,7 @@ fn default_service_account_token_volume() -> ShipVolume {
                 }),
                 ..Default::default()
             }],
-            default_mode: Some(0o644),
+            default_mode: Some(0o600),
         }),
         ..Default::default()
     }

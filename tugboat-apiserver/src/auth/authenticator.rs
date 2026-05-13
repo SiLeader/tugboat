@@ -283,9 +283,10 @@ impl DefaultAuthenticator {
         token: &str,
     ) -> Result<UserInfo, Box<StatusResponse>> {
         let identity = oidc.verify(provider, token).await.map_err(|err| {
-            // Log discovery/JWKS errors so an operator can distinguish IdP
-            // outages from real client errors; the response stays a generic
-            // 401 so we never leak internal details to unauthenticated callers.
+            // Log every verification failure so operators can diagnose IdP
+            // outages vs. real client errors. The response stays a single
+            // generic 401 string so we never leak internal details (issuer
+            // URL, kid, JWKS fetch errors, etc.) to unauthenticated callers.
             match &err {
                 OidcVerifyError::Discovery { issuer, source } => {
                     warn!(
@@ -301,9 +302,15 @@ impl DefaultAuthenticator {
                         "OIDC JWKS fetch failed during token verification"
                     );
                 }
-                _ => {}
+                other => {
+                    warn!(
+                        issuer = %provider.issuer_url(),
+                        error = %other,
+                        "OIDC token verification failed"
+                    );
+                }
             }
-            Box::new(StatusResponse::unauthorized(format!("{err}"), None))
+            Box::new(StatusResponse::unauthorized("Invalid bearer token", None))
         })?;
 
         let mut extra = HashMap::new();
