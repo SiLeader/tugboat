@@ -259,6 +259,29 @@ where
             }
         }
 
+        // Preserve annotations from the current resource that are absent in the replacement.
+        // RFC 7396 patch handles annotation deletion explicitly via null; for full replacement
+        // (PUT), annotations not present in the submitted manifest should not be silently removed.
+        if let Some(serde_json::Value::Object(current_meta)) = current_obj.get("metadata")
+            && let Some(serde_json::Value::Object(current_ann)) =
+                current_meta.get("annotations")
+            && !current_ann.is_empty()
+        {
+            let repl_meta = replacement_obj
+                .entry("metadata".to_string())
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            if let serde_json::Value::Object(meta_map) = repl_meta {
+                let annotations = meta_map
+                    .entry("annotations".to_string())
+                    .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+                if let serde_json::Value::Object(ann_map) = annotations {
+                    for (key, value) in current_ann {
+                        ann_map.entry(key.clone()).or_insert_with(|| value.clone());
+                    }
+                }
+            }
+        }
+
         let content_changed =
             current_generation_fields != generation_tracked_fields(&replacement_obj);
         let mut updated: T = serde_json::from_value(serde_json::Value::Object(replacement_obj))
