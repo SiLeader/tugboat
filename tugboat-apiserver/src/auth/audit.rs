@@ -797,25 +797,28 @@ async fn drain_payload(req: &mut ServiceRequest, limit: usize) -> Result<(Vec<u8
     use futures_util::Stream;
 
     let mut payload = req.take_payload();
-    let mut buf: Vec<u8> = Vec::new();
+    let mut replay: Vec<u8> = Vec::new();
+    let mut captured: Vec<u8> = Vec::new();
     let mut truncated = false;
     while let Some(chunk) = payload.next().await {
         let chunk = chunk.map_err(actix_web::error::ErrorInternalServerError)?;
-        if buf.len() >= limit {
+        if captured.len() >= limit {
             truncated = true;
+            replay.extend_from_slice(&chunk);
             continue;
         }
-        let take = limit.saturating_sub(buf.len()).min(chunk.len());
-        buf.extend_from_slice(&chunk[..take]);
+        let take = limit.saturating_sub(captured.len()).min(chunk.len());
+        captured.extend_from_slice(&chunk[..take]);
         if take < chunk.len() {
             truncated = true;
         }
+        replay.extend_from_slice(&chunk);
     }
-    let stored = Bytes::copy_from_slice(&buf);
+    let stored = Bytes::from(replay);
     let stream = futures_util::stream::once(async move { Ok::<Bytes, PayloadError>(stored) });
     let boxed: Pin<Box<dyn Stream<Item = Result<Bytes, PayloadError>>>> = Box::pin(stream);
     req.set_payload(Payload::from(boxed));
-    Ok((buf, truncated))
+    Ok((captured, truncated))
 }
 
 fn body_to_value(bytes: Vec<u8>) -> serde_json::Value {
@@ -1402,5 +1405,61 @@ mod tests {
         assert_eq!(request_object["name"], "alpha");
         let response_object = event.response_object.expect("response body captured");
         assert_eq!(response_object["name"], "alpha");
+    }
+
+    #[actix_web::test]
+    async fn middleware_replays_full_request_body_when_audit_capture_is_truncated() {
+        use actix_web::{App, HttpResponse, test, web};
+        use bytes::Bytes;
+
+        let policy = Arc::new(AuditPolicy::from_rules(vec![AuditRule {
+            level: AuditLevel::Request,
+            ..Default::default()
+        }]));
+        let (sender, mut receiver) = mpsc::channel::<AuditEvent>(8);
+        let sink = AuditSink {
+            sender,
+            dropped: Arc::new(AtomicU64::new(0)),
+            max_request_body_bytes: 8,
+            max_response_body_bytes: 0,
+        };
+
+        async fn echo(body: Bytes) -> HttpResponse {
+            HttpResponse::Ok().body(body)
+        }
+
+        let app = test::init_service(
+            App::new()
+                .wrap(AuditMiddleware::new(policy.clone(), Some(sink.clone())))
+                .route(
+                    "/api/v1/namespaces/default/configmaps",
+                    web::post().to(echo),
+                ),
+        )
+        .await;
+        let payload = r#"{"name":"alpha","payload":"0123456789"}"#;
+        let req = test::TestRequest::post()
+            .uri("/api/v1/namespaces/default/configmaps")
+            .set_payload(payload)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+        let body = test::read_body(resp).await;
+        assert_eq!(body, Bytes::from_static(payload.as_bytes()));
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+            .await
+            .expect("audit event should be produced")
+            .expect("channel must yield an event");
+        assert_eq!(
+            event
+                .annotations
+                .get("audit.tugboat.cloud/request-body-truncated"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            event.request_object,
+            Some(serde_json::Value::String(r#"{"name":"#.to_string()))
+        );
     }
 }

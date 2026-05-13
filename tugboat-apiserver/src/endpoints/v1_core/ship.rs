@@ -438,7 +438,10 @@ async fn apply_ship_service_account_defaults(
         ensure_service_account_exists(operator, namespace, &service_account_name).await?;
     }
 
-    if spec.automount_service_account_token.unwrap_or(true) {
+    if should_project_service_account_token(
+        operator.service_account_tokens.is_some(),
+        spec.automount_service_account_token,
+    ) {
         ensure_default_service_account_token_volume(spec)?;
     } else {
         remove_default_service_account_token_volume(spec);
@@ -471,6 +474,13 @@ async fn ensure_service_account_exists(
             })),
         )))
     }
+}
+
+fn should_project_service_account_token(
+    token_issuer_enabled: bool,
+    automount_service_account_token: Option<bool>,
+) -> bool {
+    token_issuer_enabled && automount_service_account_token.unwrap_or(true)
 }
 
 fn ensure_default_service_account_token_volume(
@@ -608,7 +618,8 @@ fn ship_has_active_migration(ship: &Ship) -> bool {
 mod tests {
     use super::{
         CONDITION_VM_MIGRATION_ABORTED, MIGRATION_ABORT_MESSAGE, PHASE_FAILED,
-        abort_ship_migration, ship_has_active_migration, validate_ship_target_node_name_update,
+        abort_ship_migration, ship_has_active_migration, should_project_service_account_token,
+        validate_ship_target_node_name_update,
     };
     use actix_web::ResponseError;
     use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
@@ -752,6 +763,15 @@ mod tests {
             .expect_err("empty target node name should fail");
 
         assert_eq!(err.status_code().as_u16(), 400);
+    }
+
+    #[test]
+    fn service_account_token_projection_requires_enabled_token_issuer() {
+        assert!(should_project_service_account_token(true, None));
+        assert!(should_project_service_account_token(true, Some(true)));
+        assert!(!should_project_service_account_token(true, Some(false)));
+        assert!(!should_project_service_account_token(false, None));
+        assert!(!should_project_service_account_token(false, Some(true)));
     }
 
     #[test]

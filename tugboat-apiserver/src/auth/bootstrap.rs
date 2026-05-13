@@ -52,27 +52,9 @@ pub(crate) async fn bootstrap_default_rbac(store: &ResourceStore) -> Result<(), 
         store.put_if_not_exists(child).await?;
     }
 
-    store
-        .put_if_not_exists(aggregated_cluster_role(
-            ADMIN_ROLE,
-            AGGREGATE_TO_ADMIN_LABEL,
-            admin_rules(),
-        ))
-        .await?;
-    store
-        .put_if_not_exists(aggregated_cluster_role(
-            EDIT_ROLE,
-            AGGREGATE_TO_EDIT_LABEL,
-            edit_rules(),
-        ))
-        .await?;
-    store
-        .put_if_not_exists(aggregated_cluster_role(
-            VIEW_ROLE,
-            AGGREGATE_TO_VIEW_LABEL,
-            view_rules(),
-        ))
-        .await?;
+    for role in builtin_aggregated_cluster_roles() {
+        ensure_aggregated_cluster_role(store, role).await?;
+    }
 
     store
         .put_if_not_exists(cluster_role_binding(
@@ -88,6 +70,49 @@ pub(crate) async fn bootstrap_default_rbac(store: &ResourceStore) -> Result<(), 
         .await?;
 
     Ok(())
+}
+
+async fn ensure_aggregated_cluster_role(
+    store: &ResourceStore,
+    desired: ClusterRole,
+) -> Result<(), Error> {
+    let name = desired
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.name.as_deref())
+        .ok_or_else(|| Error::FieldMissing("metadata.name".to_string()))?
+        .to_string();
+    if store.put_if_not_exists(desired.clone()).await?.is_some() {
+        return Ok(());
+    }
+
+    let Some(existing) = store.get::<ClusterRole>(None, &name).await? else {
+        return Ok(());
+    };
+    let mut existing = existing.apply_revision();
+    if apply_missing_aggregation_rule(&mut existing, desired.aggregation_rule) {
+        store.put(existing).await?;
+    }
+    Ok(())
+}
+
+fn apply_missing_aggregation_rule(
+    role: &mut ClusterRole,
+    aggregation_rule: Option<AggregationRule>,
+) -> bool {
+    if role.aggregation_rule.is_some() {
+        return false;
+    }
+    role.aggregation_rule = aggregation_rule;
+    role.aggregation_rule.is_some()
+}
+
+fn builtin_aggregated_cluster_roles() -> Vec<ClusterRole> {
+    vec![
+        aggregated_cluster_role(ADMIN_ROLE, AGGREGATE_TO_ADMIN_LABEL, admin_rules()),
+        aggregated_cluster_role(EDIT_ROLE, AGGREGATE_TO_EDIT_LABEL, edit_rules()),
+        aggregated_cluster_role(VIEW_ROLE, AGGREGATE_TO_VIEW_LABEL, view_rules()),
+    ]
 }
 
 fn builtin_aggregate_children() -> Vec<ClusterRole> {
@@ -222,8 +247,9 @@ mod tests {
     use super::{
         ADMIN_AGGREGATE_CHILD, AGGREGATE_TO_ADMIN_LABEL, AGGREGATE_TO_EDIT_LABEL,
         AGGREGATE_TO_VIEW_LABEL, EDIT_AGGREGATE_CHILD, LABEL_TRUE, VIEW_AGGREGATE_CHILD,
-        admin_rules, aggregate_child, aggregated_cluster_role, builtin_aggregate_children,
-        cluster_role, cluster_role_binding, edit_rules, policy_rule, view_rules,
+        admin_rules, aggregate_child, aggregated_cluster_role, apply_missing_aggregation_rule,
+        builtin_aggregate_children, cluster_role, cluster_role_binding, edit_rules, policy_rule,
+        view_rules,
     };
     use tugboat_resources::ObjectMetaResource;
 
@@ -288,6 +314,33 @@ mod tests {
             labels.get(AGGREGATE_TO_VIEW_LABEL),
             Some(&LABEL_TRUE.to_string())
         );
+    }
+
+    #[test]
+    fn missing_aggregation_rule_is_added_without_replacing_rules() {
+        let mut role = cluster_role("view", vec![policy_rule(&["core"], &["ships"], &["get"])]);
+        let desired = aggregated_cluster_role("view", AGGREGATE_TO_VIEW_LABEL, view_rules());
+
+        assert!(apply_missing_aggregation_rule(
+            &mut role,
+            desired.aggregation_rule
+        ));
+        assert!(role.aggregation_rule.is_some());
+        assert_eq!(role.rules.len(), 1);
+        assert_eq!(role.rules[0].resources, vec!["ships".to_string()]);
+    }
+
+    #[test]
+    fn existing_aggregation_rule_is_preserved() {
+        let mut role = aggregated_cluster_role("view", AGGREGATE_TO_VIEW_LABEL, view_rules());
+        let original = role.aggregation_rule.clone();
+        let replacement = aggregated_cluster_role("view", AGGREGATE_TO_ADMIN_LABEL, admin_rules());
+
+        assert!(!apply_missing_aggregation_rule(
+            &mut role,
+            replacement.aggregation_rule
+        ));
+        assert_eq!(role.aggregation_rule, original);
     }
 
     #[test]

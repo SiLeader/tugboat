@@ -462,10 +462,7 @@ fn sign(key: &PKey<Private>, algorithm: JwtAlgorithm, data: &[u8]) -> Result<Vec
             let mut signer = Signer::new_without_digest(key)
                 .map_err(|err| format!("failed to initialize EdDSA signer: {err}"))?;
             signer
-                .update(data)
-                .map_err(|err| format!("failed to feed EdDSA signer: {err}"))?;
-            signer
-                .sign_to_vec()
+                .sign_oneshot_to_vec(data)
                 .map_err(|err| format!("failed to sign JWT: {err}"))
         }
     }
@@ -492,10 +489,7 @@ fn verify_signature(
             let mut verifier = Verifier::new_without_digest(key)
                 .map_err(|err| format!("failed to initialize EdDSA verifier: {err}"))?;
             verifier
-                .update(data)
-                .map_err(|err| format!("failed to feed EdDSA verifier: {err}"))?;
-            verifier
-                .verify(signature)
+                .verify_oneshot(signature, data)
                 .map_err(|err| format!("failed to verify JWT: {err}"))?
         }
     };
@@ -625,6 +619,41 @@ mod tests {
             audiences: vec!["https://issuer.example".to_string()],
             signing_key_file: Some(key_path.to_string_lossy().into_owned()),
             signing_key_id: Some("current".to_string()),
+            ..Default::default()
+        })
+        .expect("config")
+        .expect("issuer");
+        let service_account = service_account("default", "builder", "sa-uid");
+
+        let response = issuer
+            .issue_token(
+                &service_account,
+                ServiceAccountTokenRequest {
+                    audiences: Vec::new(),
+                    expiration_seconds: Some(600),
+                    bound_object_ref: None,
+                },
+            )
+            .expect("token");
+        let verified = issuer.verify_token(&response.token).expect("verified");
+
+        assert_eq!(verified.namespace, "default");
+        assert_eq!(verified.name, "builder");
+        assert_eq!(verified.uid.as_deref(), Some("sa-uid"));
+    }
+
+    #[test]
+    fn signs_and_verifies_eddsa_service_account_token() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = PKey::generate_ed25519().expect("ed25519");
+        let key_path = dir.path().join("sa.key");
+        fs::write(&key_path, key.private_key_to_pem_pkcs8().expect("pem")).expect("write key");
+        let issuer = ServiceAccountTokenIssuer::from_config(&ServiceAccountTokenConfig {
+            issuer: Some("https://issuer.example".to_string()),
+            audiences: vec!["https://issuer.example".to_string()],
+            signing_key_file: Some(key_path.to_string_lossy().into_owned()),
+            signing_key_id: Some("current".to_string()),
+            signing_algorithm: ServiceAccountSigningAlgorithm::EdDsa,
             ..Default::default()
         })
         .expect("config")

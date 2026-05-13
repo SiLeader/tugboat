@@ -547,10 +547,7 @@ fn verify_signature(
                 OidcVerifyError::Claim(format!("failed to initialize EdDSA verifier: {err}"))
             })?;
             verifier
-                .update(data)
-                .map_err(|err| OidcVerifyError::Claim(format!("EdDSA update failed: {err}")))?;
-            verifier
-                .verify(signature)
+                .verify_oneshot(signature, data)
                 .map_err(|err| OidcVerifyError::Claim(format!("EdDSA verify failed: {err}")))?
         }
     };
@@ -710,6 +707,19 @@ mod tests {
         )
     }
 
+    fn eddsa_keypair_with_jwk() -> (PKey<openssl::pkey::Private>, JwksEntry) {
+        let private = PKey::generate_ed25519().expect("ed25519");
+        let public_pem = private.public_key_to_pem().expect("public pem");
+        let public = PKey::public_key_from_pem(&public_pem).expect("public");
+        (
+            private,
+            JwksEntry {
+                algorithm: SupportedAlgorithm::EdDSA,
+                key: public,
+            },
+        )
+    }
+
     fn encode_token(private: &PKey<openssl::pkey::Private>, kid: &str, claims: Value) -> String {
         let header = json!({"alg": "RS256", "kid": kid, "typ": "JWT"});
         let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
@@ -718,6 +728,22 @@ mod tests {
         let mut signer = Signer::new(MessageDigest::sha256(), private).expect("signer");
         signer.update(signing_input.as_bytes()).expect("update");
         let signature = signer.sign_to_vec().expect("sign");
+        format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature))
+    }
+
+    fn encode_eddsa_token(
+        private: &PKey<openssl::pkey::Private>,
+        kid: &str,
+        claims: Value,
+    ) -> String {
+        let header = json!({"alg": "EdDSA", "kid": kid, "typ": "JWT"});
+        let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
+        let claims_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        let signing_input = format!("{header_b64}.{claims_b64}");
+        let mut signer = Signer::new_without_digest(private).expect("signer");
+        let signature = signer
+            .sign_oneshot_to_vec(signing_input.as_bytes())
+            .expect("sign");
         format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature))
     }
 
@@ -750,6 +776,35 @@ mod tests {
         assert_eq!(identity.issuer, "https://idp.example.com");
         assert_eq!(identity.username, "oidc:alice@example.com");
         assert_eq!(identity.groups, vec!["oidc:devs", "oidc:ops"]);
+    }
+
+    #[tokio::test]
+    async fn verifies_well_formed_eddsa_id_token() {
+        let provider = make_provider("https://idp.example.com", "tugboat");
+        let (private, entry) = eddsa_keypair_with_jwk();
+        let mut keys = HashMap::new();
+        keys.insert("kid-1".to_string(), entry);
+        provider
+            .seed_keys_for_test("https://idp.example.com/jwks", keys)
+            .await;
+
+        let now = unix_timestamp();
+        let token = encode_eddsa_token(
+            &private,
+            "kid-1",
+            json!({
+                "iss": "https://idp.example.com",
+                "aud": "tugboat",
+                "exp": now + 600,
+                "iat": now,
+                "nbf": now,
+                "email": "alice@example.com",
+            }),
+        );
+
+        let identity = provider.verify_token(&token).await.expect("verify");
+        assert_eq!(identity.issuer, "https://idp.example.com");
+        assert_eq!(identity.username, "oidc:alice@example.com");
     }
 
     #[tokio::test]
