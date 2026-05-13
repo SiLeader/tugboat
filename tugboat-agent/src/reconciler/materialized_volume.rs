@@ -9,13 +9,14 @@ use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use tugboat_client::{BoundObjectReference, ServiceAccountTokenRequest};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Ship;
+use tugboat_resources::manifests::meta::v1::Time;
 
 impl ShipReconciler {
     pub(crate) fn materialize_volume(
@@ -170,9 +171,9 @@ impl ShipReconciler {
         let registry = self.token_refreshes.clone();
 
         tokio::spawn(async move {
-            let ttl = token.expiration_seconds.unwrap_or(3600).max(1);
+            let mut token = token;
+            let mut delay = refresh_delay_until(&token.expiration_timestamp);
             loop {
-                let delay = refresh_delay(ttl);
                 tokio::select! {
                     _ = sleep(delay) => {}
                     _ = global_cancellation.cancelled() => break,
@@ -193,10 +194,17 @@ impl ShipReconciler {
                     break;
                 }
 
-                if let Err(err) =
-                    refresh_once(&client, &namespace, &token, &file_path, &task_cancellation).await
+                match refresh_once(&client, &namespace, &token, &file_path, &task_cancellation)
+                    .await
                 {
-                    error!("{err}");
+                    Ok(expiration_timestamp) => {
+                        token.expiration_timestamp = expiration_timestamp;
+                        delay = refresh_delay_until(&token.expiration_timestamp);
+                    }
+                    Err(err) => {
+                        error!("{err}");
+                        delay = Duration::from_secs(60);
+                    }
                 }
             }
 
@@ -217,7 +225,7 @@ async fn refresh_once(
     token: &ProjectedServiceAccountTokenInfo,
     file_path: &Path,
     task_cancellation: &CancellationToken,
-) -> Result<(), String> {
+) -> Result<Time, String> {
     let response = client
         .create_service_account_token(
             namespace,
@@ -244,7 +252,7 @@ async fn refresh_once(
     // A racing replacement may have run while we were waiting on the apiserver.
     // Drop the write so the newer task owns the file.
     if task_cancellation.is_cancelled() {
-        return Ok(());
+        return Ok(response.expiration_timestamp);
     }
 
     write_file_atomically(file_path, response.token.as_bytes(), 0o600).map_err(|err| {
@@ -252,12 +260,29 @@ async fn refresh_once(
             "Failed to write projected ServiceAccount token at '{}': {err}",
             file_path.display()
         )
-    })
+    })?;
+    Ok(response.expiration_timestamp)
 }
 
 fn refresh_delay(ttl_seconds: u64) -> Duration {
     let leeway = (ttl_seconds / 5).max(1);
     Duration::from_secs(ttl_seconds.saturating_sub(leeway).max(1))
+}
+
+fn refresh_delay_until(expiration_timestamp: &Time) -> Duration {
+    refresh_delay_until_unix(expiration_timestamp.seconds, unix_timestamp())
+}
+
+fn refresh_delay_until_unix(expiration_seconds: i64, now_seconds: i64) -> Duration {
+    let remaining = expiration_seconds.saturating_sub(now_seconds);
+    refresh_delay(u64::try_from(remaining).unwrap_or(0).max(1))
+}
+
+fn unix_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
 fn create_dir_with_mode(path: &Path, mode: u32) -> io::Result<()> {
@@ -318,10 +343,13 @@ fn materialized_io_error(volume: &str, path: &Path, reason: String) -> Reconcile
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_directory_contents, create_dir_with_mode, write_file_atomically};
+    use super::{
+        clear_directory_contents, create_dir_with_mode, refresh_delay_until_unix,
+        write_file_atomically,
+    };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn creates_directory_with_requested_mode() {
@@ -390,5 +418,21 @@ mod tests {
                 .is_none()
         );
         fs::remove_dir_all(root).expect("temporary directory should be removed");
+    }
+
+    #[test]
+    fn refresh_delay_uses_actual_expiration_timestamp() {
+        assert_eq!(
+            refresh_delay_until_unix(10_000 + 3_600, 10_000),
+            Duration::from_secs(2_880)
+        );
+        assert_eq!(
+            refresh_delay_until_unix(10_000 + 1, 10_000),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            refresh_delay_until_unix(9_999, 10_000),
+            Duration::from_secs(1)
+        );
     }
 }

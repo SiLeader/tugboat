@@ -20,7 +20,7 @@ use crate::reconciler::error::{InvalidSecretVolumeDataError, ReconcileError};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 pub(crate) use normalize::{
-    MaterializedFile, MaterializedVolumeSourceKind, NormalizedKeyToPath,
+    MaterializedFile, MaterializedVolumeSourceKind, NormalizedKeyToPath, NormalizedVolume,
     NormalizedVolumeProjection, NormalizedVolumeSource, build_materialized_files,
     normalized_ship_volumes,
 };
@@ -61,6 +61,7 @@ pub(crate) struct ProjectedServiceAccountTokenInfo {
     pub service_account_name: String,
     pub audience: Option<String>,
     pub expiration_seconds: Option<u64>,
+    pub expiration_timestamp: tugboat_resources::manifests::meta::v1::Time,
     pub path: String,
     pub ship_name: String,
     pub ship_uid: String,
@@ -436,10 +437,12 @@ impl ShipReconciler {
                             },
                         )
                         .await?;
+                    let expiration_timestamp = response.expiration_timestamp.clone();
                     service_account_tokens.push(ProjectedServiceAccountTokenInfo {
                         service_account_name: service_account_name.to_string(),
                         audience,
                         expiration_seconds,
+                        expiration_timestamp,
                         path: path.clone(),
                         ship_name: ship_name.to_string(),
                         ship_uid: ship_uid.to_string(),

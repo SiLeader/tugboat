@@ -293,6 +293,7 @@ impl ShipReconciler {
                 );
                 return Err(err);
             }
+            self.start_service_account_token_refresh(ship_id, namespace, volume);
         }
         Ok(())
     }

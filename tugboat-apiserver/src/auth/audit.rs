@@ -200,7 +200,7 @@ fn rule_matches(rule: &AuditRule, request: &PolicyInput<'_>) -> bool {
     if !rule.resources.is_empty() {
         let request_resource = strip_subresource(request.resource);
         let matched = rule.resources.iter().any(|selector| {
-            (selector.group.is_empty() || selector.group == request.api_group)
+            api_group_matches(&selector.group, request.api_group)
                 && (selector.resources.is_empty()
                     || selector
                         .resources
@@ -212,6 +212,12 @@ fn rule_matches(rule: &AuditRule, request: &PolicyInput<'_>) -> bool {
         }
     }
     true
+}
+
+fn api_group_matches(selector_group: &str, request_group: &str) -> bool {
+    selector_group.is_empty()
+        || selector_group == request_group
+        || (selector_group == "core" && request_group.is_empty())
 }
 
 fn strip_subresource(resource: &str) -> &str {
@@ -1137,6 +1143,60 @@ mod tests {
                 "create",
                 &u,
                 "core",
+                "serviceaccounts/token",
+                Some("default"),
+            )),
+            AuditLevel::Metadata
+        );
+    }
+
+    #[test]
+    fn core_resource_selector_matches_empty_core_api_group() {
+        let policy = AuditPolicy::from_rules(vec![
+            AuditRule {
+                level: AuditLevel::Metadata,
+                resources: vec![AuditResourceSelector {
+                    group: "core".to_string(),
+                    resources: vec!["configmaps".to_string()],
+                }],
+                ..Default::default()
+            },
+            AuditRule {
+                level: AuditLevel::RequestResponse,
+                verbs: vec!["create".to_string()],
+                ..Default::default()
+            },
+        ]);
+        let u = user();
+        assert_eq!(
+            policy.select_level(&input("create", &u, "", "configmaps", Some("default"))),
+            AuditLevel::Metadata
+        );
+    }
+
+    #[test]
+    fn service_account_token_rule_matches_empty_core_api_group_before_body_logging_rule() {
+        let policy = AuditPolicy::from_rules(vec![
+            AuditRule {
+                level: AuditLevel::Metadata,
+                resources: vec![AuditResourceSelector {
+                    group: "core".to_string(),
+                    resources: vec!["secrets".to_string(), "serviceaccounts/token".to_string()],
+                }],
+                ..Default::default()
+            },
+            AuditRule {
+                level: AuditLevel::RequestResponse,
+                verbs: vec!["create".to_string()],
+                ..Default::default()
+            },
+        ]);
+        let u = user();
+        assert_eq!(
+            policy.select_level(&input(
+                "create",
+                &u,
+                "",
                 "serviceaccounts/token",
                 Some("default"),
             )),
