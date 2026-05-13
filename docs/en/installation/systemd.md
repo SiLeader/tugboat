@@ -398,6 +398,53 @@ Options:
 | `--token-owner-group <group>` | `tugboat` | Group that may read scheduler/controller-manager token files |
 | `--auth-token-path <path>` | *(auto-detected)* | Existing bearer token to use when RBAC is already enabled |
 
+### 5.5 Advanced RBAC Configuration
+
+To enable advanced features like Signed JWT tokens, OIDC integration, and Audit Logging, edit `/etc/tugboat/apiserver/config.toml`.
+
+#### Signed JWT Tokens
+
+Tugboat automatically generates a Service Account signing key during installation. To enable JWT tokens, ensure the following is configured:
+
+```toml
+[authentication.service_account]
+issuer = "https://apiserver.tugboat.cloud"
+signing_key_file = "/etc/tugboat/pki/tugboat-apiserver-sa-signing.key"
+signing_algorithm = "RS256"
+```
+
+#### OIDC Integration
+
+Add an `[[authentication.oidc]]` block for each identity provider:
+
+```toml
+[[authentication.oidc]]
+issuer_url = "https://dex.example.com"
+client_id = "tugboat"
+username_prefix = "oidc:"
+groups_prefix = "oidc:"
+```
+
+#### Audit Logging
+
+Enable audit logging and define your policy:
+
+```toml
+[audit]
+enabled = true
+log_path = "/var/log/tugboat/audit.log"
+
+[[audit.rules]]
+level = "RequestResponse"
+verbs = ["create", "update", "patch", "delete"]
+
+[[audit.rules]]
+level = "Metadata"
+```
+
+Restart the API server after changes:
+`sudo systemctl restart tugboat-apiserver`
+
 ---
 
 ## 6. Installed File Layout

@@ -39,3 +39,74 @@ mode = "RBAC"
 [authentication]
 # Anonymous requests are disabled by default.
 anonymous_enabled = false
+
+[authentication.service_account]
+# Enables POST /api/v1/namespaces/{namespace}/serviceaccounts/{name}/token
+# and JWT bearer-token authentication.
+issuer = "https://apiserver.tugboat.cloud"
+audiences = ["https://apiserver.tugboat.cloud"]
+signing_key_file = "/etc/tugboat/pki/tugboat-apiserver-sa-signing.key"
+signing_algorithm = "RS256"
+default_token_ttl_seconds = 3600
+max_token_ttl_seconds = 86400
+leeway_seconds = 60
+
+# External OIDC identity providers. Add one [[authentication.oidc]] block per
+# IdP (Dex, Keycloak, Auth0, cloud IAM …). When unset, OIDC is disabled.
+#
+# Strongly recommended: set a non-empty username_prefix so OIDC subjects can
+# never collide with local identities. Tokens from issuers not listed here are
+# rejected — they do not fall back to opaque-token authentication.
+#
+# [[authentication.oidc]]
+# issuer_url = "https://dex.example.com"
+# client_id = "tugboat"           # must appear in the token's `aud` claim
+# username_claim = "email"
+# username_prefix = "oidc:"
+# groups_claim = "groups"
+# groups_prefix = "oidc:"
+# required_claims = { hd = "example.com" }
+# ca_file = "/etc/tugboat/oidc/dex-ca.crt"   # trust a private CA, if needed
+# jwks_refresh_seconds = 600                 # background refresh interval
+# jwks_min_refresh_seconds = 30              # rate limit for unknown-kid refresh
+# allow_insecure_http = false                # DANGER: allow HTTP (not HTTPS) to the IdP — dev only
+
+[audit]
+# Structured Kubernetes-style audit logging. Disabled by default.
+enabled = false
+# "-" writes to stdout; any other value is a file path (rotated daily).
+log_path = "/var/log/tugboat/audit.log"
+max_size_mb = 100
+max_backups = 5
+max_age_days = 30
+# How many events can be buffered before excess events are dropped.
+channel_capacity = 1024
+# Bodies above the limit are truncated; set to 0 to skip body capture entirely.
+max_request_body_bytes = 262144
+max_response_body_bytes = 262144
+
+# Rules are evaluated top-to-bottom; the first match decides the level.
+# Levels: "None" (skip), "Metadata", "Request", "RequestResponse".
+
+# Never record leases — they churn every few seconds.
+[[audit.rules]]
+level = "None"
+[[audit.rules.resources]]
+group = "coordination"
+resources = ["leases"]
+
+# Secret bodies must never be written to audit; force metadata only.
+[[audit.rules]]
+level = "Metadata"
+[[audit.rules.resources]]
+group = "core"
+resources = ["secrets", "serviceaccounts/token"]
+
+# Mutating verbs get full request/response bodies for forensic value.
+[[audit.rules]]
+level = "RequestResponse"
+verbs = ["create", "update", "patch", "delete", "deletecollection"]
+
+# Everything else: metadata-only.
+[[audit.rules]]
+level = "Metadata"

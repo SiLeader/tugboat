@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::auth::audit::RecordedAuthorizationDecision;
 use crate::auth::authenticator::{Authenticator, DefaultAuthenticator};
 use crate::auth::authorization::{AuthorizationDecision, AuthorizationRequest};
 use crate::auth::rbac_authorizer::RbacAuthorizer;
@@ -206,7 +207,11 @@ where
                 return Ok(res.map_into_left_body());
             };
 
-            match RbacAuthorizer::authorize_with_store(&operator.store, &authz_request).await {
+            let decision =
+                RbacAuthorizer::authorize_with_store(&operator.store, &authz_request).await;
+            req.extensions_mut()
+                .insert(RecordedAuthorizationDecision(decision.clone()));
+            match decision {
                 AuthorizationDecision::Allowed => {
                     let res = service.call(req).await?;
                     Ok(res.map_into_left_body())
@@ -234,13 +239,22 @@ fn forbidden<B>(
 }
 
 fn should_bypass_authentication(path: &str) -> bool {
-    path == "/healthz"
+    matches!(
+        path,
+        "/healthz" | "/openid/v1/jwks" | "/.well-known/openid-configuration"
+    )
 }
 
 fn should_bypass(path: &str) -> bool {
     matches!(
         path,
-        "/healthz" | "/apis" | "/api" | "/api/v1" | "/openapi.json"
+        "/healthz"
+            | "/apis"
+            | "/api"
+            | "/api/v1"
+            | "/openapi.json"
+            | "/openid/v1/jwks"
+            | "/.well-known/openid-configuration"
     ) || path == "/openapi/v3"
         || path.starts_with("/openapi/v3/")
 }

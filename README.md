@@ -300,6 +300,13 @@ For a manual multi-node validation flow:
 Tugboat provides a RBAC system.
 Access control is enforced in the apiserver for every request.
 
+Detailed documentation:
+- [RBAC Overview](./docs/rbac.md)
+- [Service Account Tokens & Projection](./docs/service-account-tokens.md)
+- [OIDC Integration](./docs/oidc.md)
+- [Aggregated ClusterRoles](./docs/aggregated-clusterroles.md)
+- [Audit Logging](./docs/audit-logging.md)
+
 ### Resources
 
 | Resource             | API Group          | Scope      | Description                                                   |
@@ -408,19 +415,62 @@ roleRef:
 subjects:
   - kind: Group
     name: ops-team
+
+  #### Aggregated ClusterRole
+
+  Extends the `view` role with custom resource permissions.
+
+  ```yaml
+  apiVersion: authorization/v1
+  kind: ClusterRole
+  metadata:
+  name: my-extension-view
+  labels:
+  rbac.tugboat.cloud/aggregate-to-view: "true"
+  rules:
+  - apiGroups: ["my.example.com"]
+  resources: ["myresources"]
+  verbs: ["get", "list", "watch"]
+  ```
+
+  #### OIDC RoleBinding
+
+  ```yaml
+  apiVersion: authorization/v1
+  kind: RoleBinding
+  metadata:
+  name: oidc-developers-binding
+  namespace: default
+  subjects:
+  - kind: Group
+  name: oidc:developers
+  apiGroup: authorization/v1
+  roleRef:
+  kind: ClusterRole
+  name: view
+  apiGroup: authorization/v1
+  ```
+
+  #### Ship with projected token
+
+  ```yaml
+  apiVersion: core/v1
+  kind: Ship
+  metadata:
+  name: my-ship
+  spec:
+  serviceAccountName: my-sa
+  automountServiceAccountToken: true
+  ```
+
 ```
 
 ### Planned enhancements
 
-- **Signed JWT tokens** — current tokens are opaque random strings stored in Secrets; planned upgrade to signed JWTs
-  with audience and expiry
-- **ServiceAccount token projection** — automatic mounting of scoped tokens into Ships (similar to Kubernetes projected
-  service account tokens)
-- **Aggregated ClusterRoles** — compose ClusterRoles by label selector so extensions can inject rules automatically
-- **OIDC integration** — validate tokens issued by external identity providers (e.g. Dex, Keycloak, cloud IAM) via
-  standard OIDC discovery
-- **Audit logging** — structured audit records for every API request (who, what, when, response code) with configurable
-  per-resource verbosity
+- **Topology-aware scheduling and snapshot-style workflows** — optimize Ship placement based on data locality and support
+  incremental backup/restore of stateful workloads
+- **CRD (Custom Resource Definition)** — allow users to define their own resource types without modifying Tugboat core
+- **High availability design** — apiserver horizontal scaling and scheduler lease-based leader election
 
 ## Roadmap
 
@@ -474,20 +524,20 @@ subjects:
     - [x] `spec.runtimeClass` field on Ship
     - [x] Scheduler `RuntimeClassFit` plugin (live migration capability check)
     - [x] Hotplug operations gated by RuntimeClass flags
-- [ ] RBAC / ServiceAccount
+- [x] RBAC / ServiceAccount
     - [x] `ServiceAccount` resource definition and API (`core/v1`)
     - [x] `Role` / `ClusterRole` resource definition and API (`authorization/v1`)
     - [x] `RoleBinding` / `ClusterRoleBinding` resource definition and API (`authorization/v1`)
     - [x] RBAC authorization enforcement in apiserver
     - [x] Built-in roles (`cluster-admin`, `admin`, `edit`, `view`)
-    - [ ] ServiceAccount token generation and validation
+    - [x] ServiceAccount token generation and validation
         - [x] Opaque bearer token issued via Secret of type `service-account-token`
         - [x] Default ServiceAccount auto-created per namespace
-        - [ ] Signed JWT tokens with audience/expiry
-    - [ ] ServiceAccount token auto-projection into Ships
-    - [ ] OIDC integration for external identity providers
-    - [ ] Aggregated ClusterRoles
-    - [ ] Audit logging
+        - [x] Signed JWT tokens with audience/expiry
+    - [x] ServiceAccount token auto-projection into Ships
+    - [x] OIDC integration for external identity providers
+    - [x] Aggregated ClusterRoles
+    - [x] Audit logging
 - [x] Installer (systemd setup)
     - [x] `install-control-plane.sh` — installs etcd, apiserver, scheduler, controller-manager as systemd units
     - [x] `install-worker.sh` — installs agent and VM runtime (QEMU or Cloud Hypervisor) as systemd units

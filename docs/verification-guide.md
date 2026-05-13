@@ -831,3 +831,57 @@ The agent will wait for the PVC to be bound before attempting to start the VM.
 docker compose logs --no-log-prefix apiserver scheduler controller-manager agent \
   | grep -E 'ERROR|WARN' | grep -v 'losetup'
 ```
+
+## RBAC Verification Scenarios
+
+### 1. TokenRequest and Expiry
+
+Verify that you can request a signed JWT token and that it expires correctly.
+
+```bash
+# Request a token with 10s expiry
+TOKEN_JSON=$(curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"spec": {"audiences": ["https://apiserver.tugboat.cloud"], "expirationSeconds": 10}}' \
+  https://apiserver.tugboat.cloud/v1/namespaces/default/serviceaccounts/default/token)
+TOKEN=$(echo $TOKEN_JSON | jq -r .status.token)
+
+# Use it immediately (should work)
+curl -H "Authorization: Bearer $TOKEN" https://apiserver.tugboat.cloud/v1/namespaces/default/ships
+
+# Wait 15s and try again (should return 401)
+sleep 15
+curl -i -H "Authorization: Bearer $TOKEN" https://apiserver.tugboat.cloud/v1/namespaces/default/ships
+```
+
+### 2. Projected Token in Ship
+
+Verify that a Ship can use its own Service Account token.
+
+```bash
+# Apply a Ship with default ServiceAccount
+# Wait for Ship to start
+# Exec into the Ship (or check agent logs)
+# The token should be at /var/run/secrets/tugboat.cloud/serviceaccount/token
+```
+
+### 3. Aggregated ClusterRoles
+
+Verify that rules from a child ClusterRole are propagated to the parent.
+
+```bash
+# 1. Create a parent ClusterRole with aggregationRule
+# 2. Check rules (should be empty)
+# 3. Create a child ClusterRole with matching labels
+# 4. Check parent rules again (should now contain rules from child)
+```
+
+### 4. Audit Logging
+
+Verify that requests are recorded in the audit log.
+
+```bash
+# 1. Ensure audit is enabled in apiserver config
+# 2. Perform some API actions (e.g., list ships, create a namespace)
+# 3. Check /var/log/tugboat/audit.log
+tail -f /var/log/tugboat/audit.log | jq .
+```

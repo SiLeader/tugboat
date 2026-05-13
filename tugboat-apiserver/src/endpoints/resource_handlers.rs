@@ -234,27 +234,45 @@ where
 
     pub(crate) fn apply_replacement(self, replacement: &T) -> Result<T, Box<StatusResponse>> {
         let current_value = serde_json::to_value(self.current).map_err(|e| Box::new(e.into()))?;
-        let mut current_obj = to_object(current_value, "current resource")?;
+        let current_obj = to_object(current_value, "current resource")?;
         let current_generation_fields = generation_tracked_fields(&current_obj);
 
         let replacement_value =
             serde_json::to_value(replacement).map_err(|e| Box::new(e.into()))?;
-        let replacement_obj = to_object(replacement_value, "replacement resource")?;
+        let mut replacement_obj = to_object(replacement_value, "replacement resource")?;
 
         let patch_metadata = replacement_obj.get("metadata").cloned();
 
-        for (key, value) in replacement_obj {
-            if key == "metadata" || key == "apiVersion" || key == "kind" {
-                continue;
-            }
-            if self.options.preserve_status && key == "status" {
-                continue;
-            }
-            current_obj.insert(key, value);
+        // Restore fields that must be preserved from current
+        if let Some(v) = current_obj.get("apiVersion") {
+            replacement_obj.insert("apiVersion".to_string(), v.clone());
+        }
+        if let Some(v) = current_obj.get("kind") {
+            replacement_obj.insert("kind".to_string(), v.clone());
         }
 
-        let content_changed = current_generation_fields != generation_tracked_fields(&current_obj);
-        let mut updated: T = serde_json::from_value(serde_json::Value::Object(current_obj))
+        if self.options.preserve_status {
+            if let Some(status) = current_obj.get("status") {
+                replacement_obj.insert("status".to_string(), status.clone());
+            } else {
+                replacement_obj.remove("status");
+            }
+        }
+
+        // Preserve annotations and labels from the current resource that are absent in the
+        // replacement. RFC 7396 patch handles deletion explicitly via null; for full replacement
+        // (PUT), these metadata maps not present in the submitted manifest should not be
+        // silently removed. Controllers and admission writers routinely attach labels (e.g.
+        // `pod-template-hash`, aggregation labels) and annotations that operator-supplied PUTs
+        // must not clobber.
+        if let Some(serde_json::Value::Object(current_meta)) = current_obj.get("metadata") {
+            preserve_metadata_map(&mut replacement_obj, current_meta, "annotations");
+            preserve_metadata_map(&mut replacement_obj, current_meta, "labels");
+        }
+
+        let content_changed =
+            current_generation_fields != generation_tracked_fields(&replacement_obj);
+        let mut updated: T = serde_json::from_value(serde_json::Value::Object(replacement_obj))
             .map_err(|e| Box::new(e.into()))?;
 
         self.enforce_metadata(&mut updated, patch_metadata.as_ref(), content_changed);
@@ -516,6 +534,39 @@ where
         replaced
     };
     Ok(ModifyResponse::Updated(replaced))
+}
+
+/// Merge entries from `current_meta.<field>` into `replacement.metadata.<field>` for keys not
+/// already present in the replacement. Used by PUT to keep controller-managed labels and
+/// annotations alive across operator-supplied replacements.
+fn preserve_metadata_map(
+    replacement: &mut serde_json::Map<String, serde_json::Value>,
+    current_meta: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) {
+    let Some(serde_json::Value::Object(current_field)) = current_meta.get(field) else {
+        return;
+    };
+    if current_field.is_empty() {
+        return;
+    }
+    let repl_meta = replacement
+        .entry("metadata".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let serde_json::Value::Object(meta_map) = repl_meta else {
+        return;
+    };
+    let preserved = meta_map
+        .entry(field.to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let serde_json::Value::Object(target_map) = preserved else {
+        return;
+    };
+    for (key, value) in current_field {
+        target_map
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
 }
 
 fn to_object(

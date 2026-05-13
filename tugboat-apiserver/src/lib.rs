@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::auth::audit::{AuditMiddleware, AuditPolicy, start_audit_writer};
 use crate::auth::middleware::{
     AuthenticationMiddleware, AuthorizationMiddleware, ClientCertificateInfo,
 };
-use crate::config::{AuthenticationConfig, AuthorizationConfig, TlsConfig};
+use crate::config::{AuditConfig, AuthenticationConfig, AuthorizationConfig, TlsConfig};
 use crate::data::StatusResponse;
 use crate::operator::ApiOperator;
 use actix_web::error::InternalError;
@@ -26,6 +27,7 @@ use openssl::ssl::{SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod, SslV
 use openssl::x509::X509;
 use std::any::Any;
 use std::net::TcpListener;
+use std::sync::Arc;
 use tracing::warn;
 use utoipa_actix_web::AppExt;
 
@@ -42,6 +44,7 @@ pub struct ApiServer {
     tls: Option<TlsConfig>,
     authentication: AuthenticationConfig,
     authorization: AuthorizationConfig,
+    audit: AuditConfig,
     allow_insecure_http: bool,
 }
 
@@ -52,6 +55,7 @@ impl ApiServer {
         tls: Option<TlsConfig>,
         authentication: AuthenticationConfig,
         authorization: AuthorizationConfig,
+        audit: AuditConfig,
         allow_insecure_http: bool,
     ) -> Self {
         Self {
@@ -60,6 +64,7 @@ impl ApiServer {
             tls,
             authentication,
             authorization,
+            audit,
             allow_insecure_http,
         }
     }
@@ -73,17 +78,23 @@ impl ApiServer {
         let data = Data::new(self.operator);
         let authentication = self.authentication.clone();
         let authorization = self.authorization.clone();
+        let audit_policy = Arc::new(AuditPolicy::from_rules(self.audit.rules.clone()));
+        let audit_sink = start_audit_writer(&self.audit);
         let server = HttpServer::new(move || {
             App::new()
-                .wrap(Logger::default().exclude("/healthz"))
                 .wrap(AuthorizationMiddleware::new(
                     data.clone(),
                     authorization.clone(),
+                ))
+                .wrap(AuditMiddleware::new(
+                    audit_policy.clone(),
+                    audit_sink.clone(),
                 ))
                 .wrap(AuthenticationMiddleware::new(
                     data.clone(),
                     authentication.clone(),
                 ))
+                .wrap(Logger::default().exclude("/healthz"))
                 .app_data(data.clone())
                 .app_data(json_config())
                 .service(health_check)
@@ -114,6 +125,7 @@ impl ApiServer {
             tls,
             authentication,
             authorization,
+            audit,
             allow_insecure_http,
             ..
         } = self;
@@ -121,6 +133,7 @@ impl ApiServer {
             operator,
             authentication,
             authorization,
+            audit,
             listener,
             tls,
             allow_insecure_http,
@@ -133,12 +146,14 @@ impl ApiServer {
             operator,
             authentication,
             authorization,
+            audit,
             ..
         } = self;
         run_with_bound_listener(
             operator,
             authentication,
             authorization,
+            audit,
             listener,
             Some(tls),
             false,
@@ -151,6 +166,7 @@ async fn run_with_bound_listener(
     operator: ApiOperator,
     authentication: AuthenticationConfig,
     authorization: AuthorizationConfig,
+    audit: AuditConfig,
     listener: TcpListener,
     tls: Option<TlsConfig>,
     allow_insecure_http: bool,
@@ -160,17 +176,23 @@ async fn run_with_bound_listener(
         return;
     }
     let data = Data::new(operator);
+    let audit_policy = Arc::new(AuditPolicy::from_rules(audit.rules.clone()));
+    let audit_sink = start_audit_writer(&audit);
     let server = HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default().exclude("/healthz"))
             .wrap(AuthorizationMiddleware::new(
                 data.clone(),
                 authorization.clone(),
+            ))
+            .wrap(AuditMiddleware::new(
+                audit_policy.clone(),
+                audit_sink.clone(),
             ))
             .wrap(AuthenticationMiddleware::new(
                 data.clone(),
                 authentication.clone(),
             ))
+            .wrap(Logger::default().exclude("/healthz"))
             .app_data(data.clone())
             .app_data(json_config())
             .service(health_check)

@@ -9,6 +9,7 @@ PKI_DIR="/etc/tugboat/pki"
 FORCE=0
 APISERVER_HOSTS=()
 APISERVER_IPS=()
+SA_SIGNING_ALGORITHM="rsa"
 
 usage() {
     cat <<'USAGE'
@@ -18,6 +19,9 @@ Options:
   --pki-dir <path>             PKI output directory. Default: /etc/tugboat/pki.
   --apiserver-host <name>      DNS SAN for the apiserver certificate. May be repeated.
   --apiserver-ip <addr>        IP SAN for the apiserver certificate. May be repeated.
+  --algorithm <rsa|ed25519>    ServiceAccount JWT signing key algorithm. Default: rsa.
+                               Apiserver config must use signing_algorithm = "RS256" (rsa)
+                               or "EdDSA" (ed25519) to match this choice.
   --force                      Regenerate existing certificates and keys.
 USAGE
 }
@@ -71,6 +75,22 @@ parse_args() {
                     return 2
                 fi
                 APISERVER_IPS+=("${1#--apiserver-ip=}")
+                shift
+                ;;
+            --algorithm)
+                if [[ "$#" -lt 2 || -z "$2" ]]; then
+                    log_error "--algorithm requires rsa or ed25519."
+                    return 2
+                fi
+                SA_SIGNING_ALGORITHM="$2"
+                shift 2
+                ;;
+            --algorithm=*)
+                SA_SIGNING_ALGORITHM="${1#--algorithm=}"
+                if [[ -z "${SA_SIGNING_ALGORITHM}" ]]; then
+                    log_error "--algorithm requires rsa or ed25519."
+                    return 2
+                fi
                 shift
                 ;;
             --force)
@@ -128,23 +148,78 @@ set_default_sans() {
 }
 
 all_outputs_exist() {
+    core_outputs_exist && service_account_signing_outputs_exist
+}
+
+core_outputs_exist() {
     [[ -f "${PKI_DIR}/ca.crt" &&
         -f "${PKI_DIR}/ca.key" &&
         -f "${PKI_DIR}/apiserver.crt" &&
         -f "${PKI_DIR}/apiserver.key" ]]
 }
 
+service_account_signing_outputs_exist() {
+    [[ -f "${PKI_DIR}/tugboat-apiserver-sa-signing.key" &&
+        -f "${PKI_DIR}/tugboat-apiserver-sa-signing.pub" ]]
+}
+
 any_output_exists() {
     [[ -e "${PKI_DIR}/ca.crt" ||
         -e "${PKI_DIR}/ca.key" ||
         -e "${PKI_DIR}/apiserver.crt" ||
-        -e "${PKI_DIR}/apiserver.key" ]]
+        -e "${PKI_DIR}/apiserver.key" ||
+        -e "${PKI_DIR}/tugboat-apiserver-sa-signing.key" ||
+        -e "${PKI_DIR}/tugboat-apiserver-sa-signing.pub" ]]
+}
+
+any_service_account_signing_output_exists() {
+    [[ -e "${PKI_DIR}/tugboat-apiserver-sa-signing.key" ||
+        -e "${PKI_DIR}/tugboat-apiserver-sa-signing.pub" ]]
 }
 
 set_pki_permissions() {
     chmod 0755 -- "${PKI_DIR}"
-    chmod 0644 -- "${PKI_DIR}/ca.crt" "${PKI_DIR}/apiserver.crt"
-    chmod 0600 -- "${PKI_DIR}/ca.key" "${PKI_DIR}/apiserver.key"
+    chmod 0644 -- "${PKI_DIR}/ca.crt" "${PKI_DIR}/apiserver.crt" "${PKI_DIR}/tugboat-apiserver-sa-signing.pub"
+    chmod 0600 -- "${PKI_DIR}/ca.key" "${PKI_DIR}/apiserver.key" "${PKI_DIR}/tugboat-apiserver-sa-signing.key"
+}
+
+normalize_sa_signing_algorithm() {
+    # Normalize to a lowercase token; the configuration file uses the JWT name
+    # (RS256 / EdDSA), but operators sometimes pass those here too.
+    case "${SA_SIGNING_ALGORITHM,,}" in
+        rsa|rs256)
+            SA_SIGNING_ALGORITHM="rsa"
+            ;;
+        ed25519|eddsa)
+            SA_SIGNING_ALGORITHM="ed25519"
+            ;;
+        *)
+            log_error "--algorithm must be one of: rsa, ed25519 (got: ${SA_SIGNING_ALGORITHM})."
+            return 2
+            ;;
+    esac
+}
+
+generate_service_account_signing_key() {
+    case "${SA_SIGNING_ALGORITHM}" in
+        rsa)
+            openssl genpkey -algorithm RSA \
+                -pkeyopt rsa_keygen_bits:2048 \
+                -out "${PKI_DIR}/tugboat-apiserver-sa-signing.key"
+            ;;
+        ed25519)
+            openssl genpkey -algorithm ED25519 \
+                -out "${PKI_DIR}/tugboat-apiserver-sa-signing.key"
+            ;;
+        *)
+            log_error "Internal error: unsupported SA_SIGNING_ALGORITHM=${SA_SIGNING_ALGORITHM}."
+            return 1
+            ;;
+    esac
+    openssl pkey \
+        -in "${PKI_DIR}/tugboat-apiserver-sa-signing.key" \
+        -pubout \
+        -out "${PKI_DIR}/tugboat-apiserver-sa-signing.pub"
 }
 
 write_extfile() {
@@ -179,6 +254,20 @@ generate_pki() {
         if all_outputs_exist; then
             set_pki_permissions
             log_info "Existing Tugboat PKI found at ${PKI_DIR}; leaving it unchanged."
+            return 0
+        fi
+        if core_outputs_exist; then
+            if any_service_account_signing_output_exists; then
+                log_error "Partial ServiceAccount signing key exists in ${PKI_DIR}; use --force to regenerate."
+                return 1
+            fi
+            mkdir -p -- "${PKI_DIR}"
+            (
+                umask 077
+                generate_service_account_signing_key
+            )
+            set_pki_permissions
+            log_info "Generated Tugboat ServiceAccount signing key in ${PKI_DIR}."
             return 0
         fi
         if any_output_exists; then
@@ -218,6 +307,8 @@ generate_pki() {
             -sha256 \
             -extfile "${extfile}"
         rm -f -- "${PKI_DIR}/ca.srl"
+
+        generate_service_account_signing_key
     )
 
     set_pki_permissions
@@ -226,6 +317,7 @@ generate_pki() {
 
 main() {
     parse_args "$@"
+    normalize_sa_signing_algorithm
     require_openssl
     set_default_sans
     generate_pki

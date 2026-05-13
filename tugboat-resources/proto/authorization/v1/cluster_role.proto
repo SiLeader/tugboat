@@ -24,4 +24,43 @@ message ClusterRole {
   tugboat.meta.v1.TypeMeta type_meta = 1;
   tugboat.meta.v1.ObjectMeta object_meta = 2;
   repeated PolicyRule rules = 3;
+  optional AggregationRule aggregation_rule = 4;
+}
+
+// AggregationRule describes how to aggregate rules from other ClusterRoles
+// whose labels match the provided selectors. Matching ClusterRoles are
+// resolved by the controller manager, which writes the union of their rules
+// into the parent ClusterRole's `rules` field.
+message AggregationRule {
+  repeated LabelSelector cluster_role_selectors = 1;
+}
+
+// LabelSelector matches resources by their labels.
+//
+// Supports both `match_labels` (equality-based, all entries ANDed) and
+// `match_expressions` (set-based, all expressions ANDed). When both are set,
+// all of `match_labels` AND every expression in `match_expressions` must
+// match.
+//
+// A selector with no entries at all matches no resources (this differs from
+// Kubernetes' default "empty selector selects all", but is correct for
+// aggregationRule selectors where a fully-empty selector would otherwise
+// aggregate every ClusterRole in the cluster).
+message LabelSelector {
+  map<string, string> match_labels = 1;
+  repeated LabelSelectorRequirement match_expressions = 2;
+}
+
+// LabelSelectorRequirement is a single set-based requirement, matching
+// Kubernetes' `metav1.LabelSelectorRequirement` shape.
+//
+// `operator` must be one of:
+//   - "In":           label key is present and value is in `values`
+//   - "NotIn":        label key is absent, or value is not in `values`
+//   - "Exists":       label key is present (regardless of value, `values` must be empty)
+//   - "DoesNotExist": label key is absent (`values` must be empty)
+message LabelSelectorRequirement {
+  string key = 1;
+  string operator = 2;
+  repeated string values = 3;
 }

@@ -26,6 +26,7 @@ mod persistent_volume_claim;
 mod runtime_class;
 mod secret;
 mod service_account;
+mod service_account_token;
 mod ship;
 mod shipclass;
 mod storage_class;
@@ -101,6 +102,7 @@ mod storage_class;
         service_account::handle_service_account_patch,
         service_account::handle_service_account_read,
         service_account::handle_service_account_replace,
+        service_account_token::handle_service_account_token_create,
         storage_class::handle_storage_class_create,
         storage_class::handle_storage_class_delete,
         storage_class::handle_storage_class_list,
@@ -134,6 +136,9 @@ mod storage_class;
         tugboat_resources::manifests::core::v1::ShipClass,
         tugboat_resources::manifests::core::v1::NetworkClass,
         tugboat_resources::manifests::core::v1::ClusterNetworkClass,
+        crate::auth::service_account_jwt::BoundObjectReference,
+        crate::auth::service_account_jwt::ServiceAccountTokenRequest,
+        crate::auth::service_account_jwt::ServiceAccountTokenResponse,
         node::NodeDrainResponse,
         node::NodeDrainWarning,
         tugboat_resources::manifests::meta::v1::ObjectMeta,
@@ -253,7 +258,8 @@ pub(super) fn register_service_account(service: &mut ServiceConfig) {
         .service(service_account::handle_service_account_list_all)
         .service(service_account::handle_service_account_patch)
         .service(service_account::handle_service_account_read)
-        .service(service_account::handle_service_account_replace);
+        .service(service_account::handle_service_account_replace)
+        .service(service_account_token::handle_service_account_token_create);
 }
 
 pub(super) fn register_storage_class(service: &mut ServiceConfig) {

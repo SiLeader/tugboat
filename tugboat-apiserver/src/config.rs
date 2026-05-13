@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::operator::ApiOperator;
+use std::collections::HashMap;
 use tugboat_resource_store::{EtcdTlsConfig, ResourceStore};
 use tugboat_runtime_common::config::{ConfigLoadError, load_component_toml_config};
 
@@ -24,6 +25,8 @@ pub struct ApiServerConfig {
     authentication: AuthenticationConfig,
     #[serde(default)]
     authorization: AuthorizationConfig,
+    #[serde(default)]
+    audit: AuditConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -61,6 +64,78 @@ pub struct TlsConfig {
 pub struct AuthenticationConfig {
     #[serde(default = "default_anonymous_enabled")]
     pub(crate) anonymous_enabled: bool,
+    #[serde(default)]
+    pub(crate) service_account: ServiceAccountTokenConfig,
+    #[serde(default)]
+    pub(crate) oidc: Vec<OidcProviderConfig>,
+}
+
+#[derive(Clone, serde::Deserialize)]
+pub(crate) struct OidcProviderConfig {
+    pub(crate) issuer_url: String,
+    pub(crate) client_id: String,
+    #[serde(default = "default_oidc_username_claim")]
+    pub(crate) username_claim: String,
+    #[serde(default)]
+    pub(crate) username_prefix: String,
+    #[serde(default = "default_oidc_groups_claim")]
+    pub(crate) groups_claim: String,
+    #[serde(default)]
+    pub(crate) groups_prefix: String,
+    #[serde(default)]
+    pub(crate) required_claims: HashMap<String, String>,
+    pub(crate) ca_file: Option<String>,
+    #[serde(default = "default_oidc_jwks_refresh_seconds")]
+    pub(crate) jwks_refresh_seconds: u64,
+    #[serde(default = "default_oidc_jwks_min_refresh_seconds")]
+    pub(crate) jwks_min_refresh_seconds: u64,
+    /// Allow plaintext HTTP connections to this OIDC provider. **Insecure** —
+    /// use only for local development with an HTTP-only IdP. Defaults to false.
+    #[serde(default)]
+    pub(crate) allow_insecure_http: bool,
+}
+
+#[derive(Clone, serde::Deserialize)]
+pub(crate) struct ServiceAccountTokenConfig {
+    pub(crate) issuer: Option<String>,
+    #[serde(default)]
+    pub(crate) audiences: Vec<String>,
+    pub(crate) signing_key_file: Option<String>,
+    pub(crate) signing_key_id: Option<String>,
+    #[serde(default)]
+    pub(crate) signing_algorithm: ServiceAccountSigningAlgorithm,
+    #[serde(default = "default_service_account_token_ttl_seconds")]
+    pub(crate) default_token_ttl_seconds: u64,
+    #[serde(default = "default_service_account_token_max_ttl_seconds")]
+    pub(crate) max_token_ttl_seconds: u64,
+    #[serde(default = "default_service_account_token_leeway_seconds")]
+    pub(crate) leeway_seconds: u64,
+    #[serde(default)]
+    pub(crate) additional_verification_keys: HashMap<String, String>,
+}
+
+impl Default for ServiceAccountTokenConfig {
+    fn default() -> Self {
+        Self {
+            issuer: None,
+            audiences: Vec::new(),
+            signing_key_file: None,
+            signing_key_id: None,
+            signing_algorithm: ServiceAccountSigningAlgorithm::default(),
+            default_token_ttl_seconds: default_service_account_token_ttl_seconds(),
+            max_token_ttl_seconds: default_service_account_token_max_ttl_seconds(),
+            leeway_seconds: default_service_account_token_leeway_seconds(),
+            additional_verification_keys: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, serde::Deserialize)]
+pub(crate) enum ServiceAccountSigningAlgorithm {
+    #[default]
+    RS256,
+    #[serde(rename = "EdDSA", alias = "eddsa")]
+    EdDsa,
 }
 
 #[derive(Clone, Default, serde::Deserialize)]
@@ -77,14 +152,139 @@ pub enum AuthorizationMode {
     Rbac,
 }
 
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct AuditConfig {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_audit_log_path")]
+    pub(crate) log_path: String,
+    // Size-based rotation is not yet wired; the appender rotates daily.
+    #[allow(dead_code)]
+    #[serde(default = "default_audit_max_size_mb")]
+    pub(crate) max_size_mb: u64,
+    #[serde(default = "default_audit_max_backups")]
+    pub(crate) max_backups: usize,
+    // Reserved for future use; max_backups acts as a daily-file cap today.
+    #[allow(dead_code)]
+    #[serde(default = "default_audit_max_age_days")]
+    pub(crate) max_age_days: u64,
+    #[serde(default = "default_audit_channel_capacity")]
+    pub(crate) channel_capacity: usize,
+    #[serde(default = "default_audit_max_request_body_bytes")]
+    pub(crate) max_request_body_bytes: usize,
+    #[serde(default = "default_audit_max_response_body_bytes")]
+    pub(crate) max_response_body_bytes: usize,
+    #[serde(default, rename = "rules")]
+    pub(crate) rules: Vec<AuditRule>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct AuditRule {
+    pub(crate) level: AuditLevel,
+    #[serde(default)]
+    pub(crate) verbs: Vec<String>,
+    #[serde(default)]
+    pub(crate) users: Vec<String>,
+    #[serde(default)]
+    pub(crate) user_groups: Vec<String>,
+    #[serde(default)]
+    pub(crate) namespaces: Vec<String>,
+    #[serde(default)]
+    pub(crate) resources: Vec<AuditResourceSelector>,
+    #[serde(default)]
+    pub(crate) non_resource_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct AuditResourceSelector {
+    #[serde(default)]
+    pub(crate) group: String,
+    #[serde(default)]
+    pub(crate) resources: Vec<String>,
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum AuditLevel {
+    #[default]
+    None,
+    Metadata,
+    Request,
+    RequestResponse,
+}
+
 fn default_anonymous_enabled() -> bool {
     false
+}
+
+fn default_service_account_token_ttl_seconds() -> u64 {
+    3600
+}
+
+fn default_service_account_token_max_ttl_seconds() -> u64 {
+    86400
+}
+
+fn default_service_account_token_leeway_seconds() -> u64 {
+    60
+}
+
+fn default_oidc_username_claim() -> String {
+    "sub".to_string()
+}
+
+fn default_oidc_groups_claim() -> String {
+    "groups".to_string()
+}
+
+fn default_oidc_jwks_refresh_seconds() -> u64 {
+    600
+}
+
+fn default_oidc_jwks_min_refresh_seconds() -> u64 {
+    30
+}
+
+fn default_audit_log_path() -> String {
+    "-".to_string()
+}
+
+// Exposed so the audit writer can detect operator-supplied non-default values
+// for fields it does not yet honor (max_size_mb, max_age_days) and emit a
+// targeted warning at startup. Keep these in sync with the `default_audit_*`
+// helpers below.
+pub(crate) const AUDIT_DEFAULT_MAX_SIZE_MB: u64 = 100;
+pub(crate) const AUDIT_DEFAULT_MAX_AGE_DAYS: u64 = 30;
+
+fn default_audit_max_size_mb() -> u64 {
+    AUDIT_DEFAULT_MAX_SIZE_MB
+}
+
+fn default_audit_max_backups() -> usize {
+    5
+}
+
+fn default_audit_max_age_days() -> u64 {
+    AUDIT_DEFAULT_MAX_AGE_DAYS
+}
+
+fn default_audit_channel_capacity() -> usize {
+    1024
+}
+
+fn default_audit_max_request_body_bytes() -> usize {
+    256 * 1024
+}
+
+fn default_audit_max_response_body_bytes() -> usize {
+    256 * 1024
 }
 
 impl Default for AuthenticationConfig {
     fn default() -> Self {
         Self {
             anonymous_enabled: default_anonymous_enabled(),
+            service_account: ServiceAccountTokenConfig::default(),
+            oidc: Vec::new(),
         }
     }
 }
@@ -103,13 +303,33 @@ impl crate::ApiServer {
                 "TLS configuration is missing and allow_insecure_etcd is false. Refusing to connect to etcd in insecure mode.".to_string(),
             ));
         };
-        let operator = ApiOperator::new(store);
+        let service_account_tokens =
+            crate::auth::service_account_jwt::ServiceAccountTokenIssuer::from_config(
+                &value.authentication.service_account,
+            )
+            .map_err(|reason| {
+                tugboat_resource_store::error::Error::InvalidField(
+                    "authentication.service_account".to_string(),
+                    reason,
+                )
+            })?;
+        let oidc_authenticator = crate::auth::oidc::OidcAuthenticator::from_config(
+            &value.authentication.oidc,
+        )
+        .map_err(|reason| {
+            tugboat_resource_store::error::Error::InvalidField(
+                "authentication.oidc".to_string(),
+                reason,
+            )
+        })?;
+        let operator = ApiOperator::new(store, service_account_tokens, oidc_authenticator);
         Ok(Self::new(
             value.http.listen,
             operator,
             value.http.tls,
             value.authentication,
             value.authorization,
+            value.audit,
             value.http.allow_insecure_http,
         ))
     }
@@ -130,6 +350,7 @@ impl ApiServerConfig {
             },
             authentication: AuthenticationConfig::default(),
             authorization: AuthorizationConfig::default(),
+            audit: AuditConfig::default(),
         }
     }
 
@@ -208,7 +429,9 @@ mod tests {
                 "[etcd.tls]\nca_cert_path = \"/etc/tugboat/pki/etcd/ca.crt\"\ncert_path = \"/etc/tugboat/pki/etcd/client.crt\"\nkey_path = \"/etc/tugboat/pki/etcd/client.key\"",
             )
             .replace("${APISERVER_AUTHORIZATION_MODE}", "RBAC")
-            .replace("${APISERVER_ANONYMOUS_ENABLED}", "false");
+            .replace("${APISERVER_ANONYMOUS_ENABLED}", "false")
+            .replace("${APISERVER_SERVICE_ACCOUNT_TOKEN_CONFIG}", "")
+            .replace("${APISERVER_AUDIT_CONFIG}", "");
 
         let config: ApiServerConfig = toml::from_str(&rendered).unwrap();
 

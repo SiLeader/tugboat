@@ -294,9 +294,17 @@ control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`Storag
 ## RBAC
 
 TugboatはRBACシステムを提供します。
-すべてのリクエストに対してapiserverがアクセス制御を適用します。
+すべてのリクエストに対して、apiserverでアクセス制御が適用されます。
+
+詳細ドキュメント:
+- [RBACの概要](./docs/rbac.md)
+- [Service Accountトークンとプロジェクション](./docs/service-account-tokens.md)
+- [OIDC統合](./docs/oidc.md)
+- [集約ClusterRole](./docs/aggregated-clusterroles.md)
+- [監査ログ](./docs/audit-logging.md)
 
 ### リソース
+
 
 | リソース                 | APIグループ            | スコープ       | 説明                                            |
 |----------------------|--------------------|------------|-----------------------------------------------|
@@ -404,16 +412,61 @@ roleRef:
 subjects:
   - kind: Group
     name: ops-team
+
+  #### 集約ClusterRole
+
+  `view` ロールにカスタムリソースの権限を追加します。
+
+  ```yaml
+  apiVersion: authorization/v1
+  kind: ClusterRole
+  metadata:
+  name: my-extension-view
+  labels:
+  rbac.tugboat.cloud/aggregate-to-view: "true"
+  rules:
+  - apiGroups: ["my.example.com"]
+  resources: ["myresources"]
+  verbs: ["get", "list", "watch"]
+  ```
+
+  #### OIDC RoleBinding
+
+  ```yaml
+  apiVersion: authorization/v1
+  kind: RoleBinding
+  metadata:
+  name: oidc-developers-binding
+  namespace: default
+  subjects:
+  - kind: Group
+  name: oidc:developers
+  apiGroup: authorization/v1
+  roleRef:
+  kind: ClusterRole
+  name: view
+  apiGroup: authorization/v1
+  ```
+
+  #### Shipへのトークン自動投影
+
+  ```yaml
+  apiVersion: core/v1
+  kind: Ship
+  metadata:
+  name: my-ship
+  spec:
+  serviceAccountName: my-sa
+  automountServiceAccountToken: true
+  ```
+
 ```
 
 ### 今後の拡張予定
 
-- **署名済みJWTトークン** — 現状は不透明なランダム文字列を Secret に保存しているが、audience・有効期限付きの署名済みJWTへの移行を予定
-- **ServiceAccountトークン投影** — スコープ付きトークンをShipに自動マウント（Kubernetesの projected service account token
-  相当）
-- **集約ClusterRole** — ラベルセレクタでClusterRoleを合成し、拡張機能がルールを自動注入できるようにする
-- **OIDC統合** — OIDCディスカバリ経由で外部IDプロバイダ（Dex、Keycloak、クラウドIAMなど）が発行したトークンを検証
-- **監査ログ** — 全APIリクエストに対する構造化監査レコード（誰が・何を・いつ・レスポンスコード）、リソースごとに詳細度設定可能
+- **Topology-aware scheduling と snapshot 系ワークフロー** — データの局所性に基づいた Ship の配置最適化と、ステートフルなワークロードの増分バックアップ・復元をサポート
+- **CRD (Custom Resource Definition)** — Tugboat のコアを変更することなく、ユーザーが独自のリソース型を定義可能にする
+- **高可用性（HA）設計** — apiserver の水平スケーリングとスケジューラの Lease ベースのリーダー選挙
 
 ## Roadmap
 
@@ -467,20 +520,20 @@ subjects:
     - [x] Ship の `spec.runtimeClass` フィールド
     - [x] スケジューラの `RuntimeClassFit` プラグイン（ライブマイグレーション対応チェック）
     - [x] RuntimeClass フラグによるホットプラグ操作の制御
-- [ ] RBAC / ServiceAccount
+- [x] RBAC / ServiceAccount
     - [x] `ServiceAccount` リソース定義とAPI (`core/v1`)
     - [x] `Role` / `ClusterRole` リソース定義とAPI (`authorization/v1`)
     - [x] `RoleBinding` / `ClusterRoleBinding` リソース定義とAPI (`authorization/v1`)
     - [x] apiserverにおけるRBAC認可の適用
     - [x] 組み込みロール (`cluster-admin`、`admin`、`edit`、`view`)
-    - [ ] ServiceAccountトークンの生成と検証
+    - [x] ServiceAccountトークンの生成と検証
         - [x] `service-account-token` 型 Secret による不透明なベアラートークンの発行
         - [x] namespace ごとの default ServiceAccount 自動作成
-        - [ ] audience・有効期限付きの署名済みJWT
-    - [ ] ShipへのServiceAccountトークン自動投影
-    - [ ] 外部IDプロバイダとのOIDC統合
-    - [ ] 集約ClusterRole
-    - [ ] 監査ログ
+        - [x] audience・有効期限付きの署名済みJWT
+    - [x] ShipへのServiceAccountトークン自動投影
+    - [x] 外部IDプロバイダとのOIDC統合
+    - [x] 集約ClusterRole
+    - [x] 監査ログ
 - [x] インストーラー (systemd)
     - [x] `install-control-plane.sh` — etcd・apiserver・scheduler・controller-manager を systemd ユニットとしてインストール
     - [x] `install-worker.sh` — agent と VM ランタイム（QEMU または Cloud Hypervisor）を systemd ユニットとしてインストール

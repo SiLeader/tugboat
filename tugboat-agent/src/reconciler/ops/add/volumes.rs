@@ -174,6 +174,7 @@ impl ShipReconciler {
                 vm_volumes.push(vm_volume_config(volume, &published, read_only));
             } else if let Some(volume) = volume.materialized() {
                 let path = self.materialize_volume(guard.ship_id, volume)?;
+                self.start_service_account_token_refresh(guard.ship_id, namespace, volume);
                 vm_volumes.push(VmVolumeConfig::filesystem(path, volume.name.clone(), true));
             }
         }
@@ -252,6 +253,7 @@ impl ShipReconciler {
                 vm_volumes.push(vm_volume_config(volume, published, read_only));
             } else if let Some(volume) = volume.materialized() {
                 let path = self.materialize_volume(ship_id, volume)?;
+                self.start_service_account_token_refresh(ship_id, namespace, volume);
                 vm_volumes.push(VmVolumeConfig::filesystem(path, volume.name.clone(), true));
             }
         }

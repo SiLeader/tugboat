@@ -135,7 +135,18 @@ impl ShipReconciler {
         let Some(spec) = ship.spec.as_ref() else {
             return Ok((Vec::new(), HashMap::new()));
         };
-        let volumes = self.get_related_volumes(namespace, spec).await?;
+        let ship_meta = ship.object_meta();
+        let ship_name = ship_meta
+            .as_ref()
+            .and_then(|m| m.name.as_deref())
+            .unwrap_or("");
+        let ship_uid = ship_meta
+            .as_ref()
+            .and_then(|m| m.uid.as_deref())
+            .unwrap_or("");
+        let volumes = self
+            .get_related_volumes(namespace, ship_name, ship_uid, spec)
+            .await?;
         let secrets = self
             .controller_publish_secret_map(namespace, &volumes, published_volumes)
             .await?;

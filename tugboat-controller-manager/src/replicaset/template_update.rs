@@ -5,19 +5,25 @@ use std::time::Duration;
 use tugboat_client::Api;
 use tugboat_client::runtime::Action;
 use tugboat_resources::manifests::apps::v1::ReplicaSet;
-use tugboat_resources::manifests::core::v1::{Ship, ShipSpec};
+use tugboat_resources::manifests::core::v1::{Ship, ShipSpec, ShipVolume};
 use tugboat_resources::{ObjectMetaResource, ShipMigrationExt};
 
 pub(super) const UPDATE_STRATEGY_ANNOTATION: &str = "tugboat.cloud/update-strategy";
 pub(super) const UPDATE_STRATEGY_ALL: &str = "all";
+const DEFAULT_SERVICE_ACCOUNT_NAME: &str = "default";
+const SERVICE_ACCOUNT_TOKEN_VOLUME_NAME: &str = "serviceaccount-token";
+const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH: &str = "token";
 
 pub(super) fn needs_spec_update(template_spec: &ShipSpec, ship_spec: &ShipSpec) -> bool {
+    let mut normalized_template_spec = template_spec.clone();
     let mut normalized_ship_spec = ship_spec.clone();
     normalized_ship_spec.node_name = template_spec.node_name.clone();
     normalized_ship_spec.scheduler_name = template_spec.scheduler_name.clone();
     normalized_ship_spec.target_node_name = template_spec.target_node_name.clone();
+    normalize_service_account_defaults(&mut normalized_template_spec);
+    normalize_service_account_defaults(&mut normalized_ship_spec);
 
-    template_spec != &normalized_ship_spec
+    normalized_template_spec != normalized_ship_spec
 }
 
 pub(super) fn ship_needs_update(ship: &Ship, template_spec: &ShipSpec) -> bool {
@@ -34,6 +40,35 @@ pub(super) fn apply_template_spec(ship: &mut Ship, template_spec: &ShipSpec) {
         target_node_name: current_spec.target_node_name,
         ..template_spec.clone()
     });
+}
+
+fn normalize_service_account_defaults(spec: &mut ShipSpec) {
+    if spec.service_account_name.as_deref() == Some(DEFAULT_SERVICE_ACCOUNT_NAME) {
+        spec.service_account_name = None;
+    }
+    if spec.automount_service_account_token == Some(true) {
+        spec.automount_service_account_token = None;
+    }
+    spec.volumes
+        .retain(|volume| !is_default_service_account_token_volume(volume));
+}
+
+fn is_default_service_account_token_volume(volume: &ShipVolume) -> bool {
+    if volume.name != SERVICE_ACCOUNT_TOKEN_VOLUME_NAME
+        || volume.persistent_volume_claim.is_some()
+        || volume.config_map.is_some()
+        || volume.secret.is_some()
+    {
+        return false;
+    }
+    let Some(projected) = volume.projected.as_ref() else {
+        return false;
+    };
+    projected.sources.len() == 1
+        && projected.sources[0]
+            .service_account_token
+            .as_ref()
+            .is_some_and(|token| token.path == DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH)
 }
 
 pub(super) fn update_strategy(rs: &ReplicaSet) -> Option<&str> {

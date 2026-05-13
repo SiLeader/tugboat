@@ -512,7 +512,19 @@ impl ShipReconciler {
             return Ok(MigrationPreflight::Reject(reason));
         }
 
-        let volumes = self.get_related_volumes(namespace, ship_spec).await?;
+        let ship_meta = ship.object_meta();
+        let ship_name = ship_meta
+            .as_ref()
+            .and_then(|m| m.name.as_deref())
+            .unwrap_or("");
+        let ship_uid = ship_meta
+            .as_ref()
+            .and_then(|m| m.uid.as_deref())
+            .unwrap_or("");
+
+        let volumes = self
+            .get_related_volumes(namespace, ship_name, ship_uid, ship_spec)
+            .await?;
         if let Some(reason) = validate_storage_eligibility(&volumes) {
             return Ok(MigrationPreflight::Reject(reason));
         }

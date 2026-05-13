@@ -1,15 +1,22 @@
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::error::ReconcileError;
 use crate::reconciler::volume::{
-    MaterializedVolumeInfo, MaterializedVolumeSourceKind, materialized_volume_names_for_resource,
+    MaterializedVolumeInfo, MaterializedVolumeSourceKind, ProjectedServiceAccountTokenInfo,
+    materialized_volume_names_for_resource,
 };
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error};
+use tugboat_client::{BoundObjectReference, ServiceAccountTokenRequest};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Ship;
+use tugboat_resources::manifests::meta::v1::Time;
 
 impl ShipReconciler {
     pub(crate) fn materialize_volume(
@@ -125,6 +132,157 @@ impl ShipReconciler {
     fn materialized_volume_dir(&self, ship_id: &str, volume_name: &str) -> PathBuf {
         self.materialized_ship_dir(ship_id).join(volume_name)
     }
+
+    pub(crate) fn start_service_account_token_refresh(
+        &self,
+        ship_id: &str,
+        namespace: &str,
+        volume: &MaterializedVolumeInfo,
+    ) {
+        for token in &volume.service_account_tokens {
+            self.spawn_service_account_token_refresh(
+                ship_id.to_string(),
+                namespace.to_string(),
+                volume.name.clone(),
+                token.clone(),
+            );
+        }
+    }
+
+    fn spawn_service_account_token_refresh(
+        &self,
+        ship_id: String,
+        namespace: String,
+        volume_name: String,
+        token: ProjectedServiceAccountTokenInfo,
+    ) {
+        let client = self.client.clone();
+        let global_cancellation = self.cancellation_token.clone();
+        let file_path = self
+            .materialized_volume_dir(&ship_id, &volume_name)
+            .join(&token.path);
+
+        // Replace any previous refresh task for the same (ship, volume, path).
+        // Without this, repeat reconciles of the same Ship spawn multiple
+        // tasks that race each other on the projected file's atomic rename
+        // and can leave a stale token as the last writer.
+        let key = (ship_id.clone(), volume_name.clone(), file_path.clone());
+        let task_cancellation = self.token_refreshes.replace(key.clone());
+        let registry = self.token_refreshes.clone();
+
+        tokio::spawn(async move {
+            let mut token = token;
+            let mut delay = refresh_delay_until(&token.expiration_timestamp);
+            loop {
+                tokio::select! {
+                    _ = sleep(delay) => {}
+                    _ = global_cancellation.cancelled() => break,
+                    _ = task_cancellation.cancelled() => {
+                        debug!(
+                            "Cancelling stale ServiceAccount token refresh for '{}'",
+                            file_path.display()
+                        );
+                        return;
+                    }
+                }
+
+                if !file_path.exists() {
+                    debug!(
+                        "Stopping ServiceAccount token refresh for removed projected file '{}'",
+                        file_path.display()
+                    );
+                    break;
+                }
+
+                match refresh_once(&client, &namespace, &token, &file_path, &task_cancellation)
+                    .await
+                {
+                    Ok(expiration_timestamp) => {
+                        token.expiration_timestamp = expiration_timestamp;
+                        delay = refresh_delay_until(&token.expiration_timestamp);
+                    }
+                    Err(err) => {
+                        error!("{err}");
+                        delay = Duration::from_secs(60);
+                    }
+                }
+            }
+
+            // Only forget the registry entry if *we* are still the registered
+            // task. A racing replacement may have already overwritten us; in
+            // that case the new task owns the slot and must keep it.
+            if task_cancellation.is_cancelled() {
+                return;
+            }
+            registry.forget(&key);
+        });
+    }
+}
+
+async fn refresh_once(
+    client: &tugboat_client::TugboatClient,
+    namespace: &str,
+    token: &ProjectedServiceAccountTokenInfo,
+    file_path: &Path,
+    task_cancellation: &CancellationToken,
+) -> Result<Time, String> {
+    let response = client
+        .create_service_account_token(
+            namespace,
+            &token.service_account_name,
+            ServiceAccountTokenRequest {
+                audiences: token.audience.clone().into_iter().collect(),
+                expiration_seconds: token.expiration_seconds,
+                bound_object_ref: Some(BoundObjectReference {
+                    kind: "Ship".to_string(),
+                    api_version: "v1".to_string(),
+                    name: token.ship_name.clone(),
+                    uid: Some(token.ship_uid.clone()),
+                }),
+            },
+        )
+        .await
+        .map_err(|err| {
+            format!(
+                "Failed to refresh projected ServiceAccount token for '{}/{}': {err}",
+                namespace, token.service_account_name
+            )
+        })?;
+
+    // A racing replacement may have run while we were waiting on the apiserver.
+    // Drop the write so the newer task owns the file.
+    if task_cancellation.is_cancelled() {
+        return Ok(response.expiration_timestamp);
+    }
+
+    write_file_atomically(file_path, response.token.as_bytes(), 0o600).map_err(|err| {
+        format!(
+            "Failed to write projected ServiceAccount token at '{}': {err}",
+            file_path.display()
+        )
+    })?;
+    Ok(response.expiration_timestamp)
+}
+
+fn refresh_delay(ttl_seconds: u64) -> Duration {
+    let leeway = (ttl_seconds / 5).max(1);
+    Duration::from_secs(ttl_seconds.saturating_sub(leeway).max(1))
+}
+
+fn refresh_delay_until(expiration_timestamp: &Time) -> Duration {
+    refresh_delay_until_unix(expiration_timestamp.seconds, unix_timestamp())
+}
+
+fn refresh_delay_until_unix(expiration_seconds: i64, now_seconds: i64) -> Duration {
+    let remaining = expiration_seconds.saturating_sub(now_seconds);
+    refresh_delay(u64::try_from(remaining).unwrap_or(0).max(1))
+}
+
+fn unix_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
 fn create_dir_with_mode(path: &Path, mode: u32) -> io::Result<()> {
@@ -185,10 +343,13 @@ fn materialized_io_error(volume: &str, path: &Path, reason: String) -> Reconcile
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_directory_contents, create_dir_with_mode, write_file_atomically};
+    use super::{
+        clear_directory_contents, create_dir_with_mode, refresh_delay_until_unix,
+        write_file_atomically,
+    };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn creates_directory_with_requested_mode() {
@@ -257,5 +418,21 @@ mod tests {
                 .is_none()
         );
         fs::remove_dir_all(root).expect("temporary directory should be removed");
+    }
+
+    #[test]
+    fn refresh_delay_uses_actual_expiration_timestamp() {
+        assert_eq!(
+            refresh_delay_until_unix(10_000 + 3_600, 10_000),
+            Duration::from_secs(2_880)
+        );
+        assert_eq!(
+            refresh_delay_until_unix(10_000 + 1, 10_000),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            refresh_delay_until_unix(9_999, 10_000),
+            Duration::from_secs(1)
+        );
     }
 }

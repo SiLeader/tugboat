@@ -149,6 +149,7 @@ Runs multiple reconciliation controllers as concurrent tasks:
 - **ReplicaSetController** – manages individual Ship replicas for a ReplicaSet
 - **NamespaceDefaultServiceAccountController** – creates the default ServiceAccount in each Namespace
 - **ServiceAccountTokenController** – creates service-account-token Secrets
+- **AggregatedClusterRoleController** – aggregates rules into ClusterRoles based on label selectors
 - **PersistentVolumeCleanupController** – deletes CSI-backed PVs when released
 
 Shared controller boundaries:

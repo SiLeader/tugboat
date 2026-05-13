@@ -41,6 +41,8 @@ message ShipSpec {
   repeated ShipVolume volumes = 9;
   optional string target_node_name = 10;
   optional string runtime_class = 11;
+  optional string service_account_name = 12;
+  optional bool automount_service_account_token = 13;
 }
 
 message ShipVolumeClaimReference {
@@ -52,6 +54,7 @@ message ShipVolume {
   optional PersistentVolumeClaimVolumeSource persistent_volume_claim = 2;
   optional ConfigMapVolumeSource config_map = 3;
   optional SecretVolumeSource secret = 4;
+  optional ProjectedVolumeSource projected = 5;
 }
 
 message PersistentVolumeClaimVolumeSource {
@@ -75,6 +78,35 @@ message SecretVolumeSource {
   repeated KeyToPath items = 2;
   optional int32 default_mode = 3;
   optional bool optional = 4;
+}
+
+message ProjectedVolumeSource {
+  repeated VolumeProjection sources = 1;
+  optional int32 default_mode = 2;
+}
+
+message VolumeProjection {
+  optional ServiceAccountTokenProjection service_account_token = 1;
+  optional ConfigMapProjection config_map = 2;
+  optional SecretProjection secret = 3;
+}
+
+message ServiceAccountTokenProjection {
+  optional string audience = 1;
+  optional int64 expiration_seconds = 2;
+  string path = 3;
+}
+
+message ConfigMapProjection {
+  string name = 1;
+  repeated KeyToPath items = 2;
+  optional bool optional = 3;
+}
+
+message SecretProjection {
+  string name = 1;
+  repeated KeyToPath items = 2;
+  optional bool optional = 3;
 }
 
 message Toleration {

@@ -19,6 +19,7 @@ pub(crate) enum UserIdentity {
     Anonymous,
     ServiceAccount,
     X509,
+    Oidc,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +76,24 @@ impl UserInfo {
             groups,
             extra,
             identity: UserIdentity::X509,
+        }
+    }
+
+    pub(crate) fn oidc(
+        username: String,
+        groups: Vec<String>,
+        extra: HashMap<String, Vec<String>>,
+    ) -> Self {
+        let mut groups = groups;
+        if !groups.iter().any(|group| group == "system:authenticated") {
+            groups.push("system:authenticated".to_string());
+        }
+        Self {
+            username,
+            uid: None,
+            groups,
+            extra,
+            identity: UserIdentity::Oidc,
         }
     }
 

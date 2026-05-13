@@ -50,6 +50,7 @@ pub async fn run() {
     let runtime_class = config.node.runtime_class.clone();
     let network_probe_interval = config.node.network_probe_interval();
     let cni_config = config.cni.clone();
+    let apiserver_ca_cert_path = config.apiserver.tls.ca_cert_path.clone();
     let client = TugboatClient::try_new(
         config.apiserver.url,
         config.apiserver.auth,
@@ -100,6 +101,7 @@ pub async fn run() {
         csi_operator,
         CsiDrivers::from(config.csi.drivers),
         config.csi.publish_dir,
+        apiserver_ca_cert_path,
     );
 
     reconciler.run().await;

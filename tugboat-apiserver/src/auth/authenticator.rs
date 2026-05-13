@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use crate::auth::middleware::ClientCertificateInfo;
+use crate::auth::oidc::{OidcAuthenticator, OidcVerifyError, ProviderMatch};
+use crate::auth::service_account_jwt::{BoundObjectReference, looks_like_jwt};
 use crate::auth::user_info::UserInfo;
 use crate::config::AuthenticationConfig;
 use crate::data::StatusResponse;
@@ -21,15 +23,24 @@ use actix_web::HttpRequest;
 use actix_web::http::header::AUTHORIZATION;
 use actix_web::web::Data;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::prelude::BASE64_STANDARD;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::RwLock;
-use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
+use tokio::sync::{Mutex, RwLock};
+use tracing::warn;
+use tugboat_resource_store::serializer::StaticSerializable;
+use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
+use tugboat_resources::manifests::coordination::v1::Lease;
+use tugboat_resources::manifests::core::v1::{
+    ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
+    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
+};
+use tugboat_resources::{ObjectMetaResource, StaticResource};
 use tugboat_resources::{SERVICE_ACCOUNT_NAME_ANNOTATION, SERVICE_ACCOUNT_TOKEN_SECRET_TYPE};
 
 /// How long the token→secret mapping cache is considered fresh. After this
@@ -75,6 +86,8 @@ pub(crate) struct DefaultAuthenticator {
     anonymous_enabled: bool,
     /// Shared cache across all cloned instances of this authenticator.
     token_cache: Arc<RwLock<TokenCacheState>>,
+    /// Shared lock to ensure only one thread rebuilds the token cache at a time.
+    token_refresh_lock: Arc<Mutex<()>>,
 }
 
 impl DefaultAuthenticator {
@@ -83,6 +96,7 @@ impl DefaultAuthenticator {
             operator,
             anonymous_enabled: config.anonymous_enabled,
             token_cache: Arc::new(RwLock::new(TokenCacheState::default())),
+            token_refresh_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -91,7 +105,7 @@ impl DefaultAuthenticator {
         req: &HttpRequest,
     ) -> Result<Option<UserInfo>, Box<StatusResponse>> {
         if let Some(token) = bearer_token(req)? {
-            let user = self.authenticate_service_account_token(&token).await?;
+            let user = self.authenticate_bearer_token(&token).await?;
             return Ok(Some(user));
         }
         if let Some(cert) = req.conn_data::<ClientCertificateInfo>() {
@@ -99,6 +113,55 @@ impl DefaultAuthenticator {
             return Ok(Some(user));
         }
         Ok(None)
+    }
+
+    async fn authenticate_bearer_token(
+        &self,
+        token: &str,
+    ) -> Result<UserInfo, Box<StatusResponse>> {
+        // JWT dispatch is exclusive: a token with `iss` set must be verified by
+        // the matching issuer (own SA, or a configured OIDC provider) and must
+        // not fall back to the opaque-token path, otherwise an unrelated
+        // foreign JWT could be silently treated as a Secret-stored opaque token.
+        if looks_like_jwt(token)
+            && let Some(issuer) = peek_jwt_issuer(token)
+        {
+            if let Some(sa_issuer) = &self.operator.service_account_tokens
+                && sa_issuer_matches(sa_issuer, &issuer)
+            {
+                return self
+                    .authenticate_service_account_jwt(sa_issuer, token)
+                    .await;
+            }
+            if let Some(oidc) = &self.operator.oidc_authenticator {
+                match oidc.provider_for_token(token) {
+                    ProviderMatch::Matched(provider) => {
+                        return self.authenticate_oidc(oidc, provider, token).await;
+                    }
+                    ProviderMatch::UnknownIssuer(iss) => {
+                        warn!(
+                            issuer = %iss,
+                            "rejecting JWT bearer token from unregistered issuer"
+                        );
+                        return Err(Box::new(StatusResponse::unauthorized(
+                            "JWT issuer is not registered",
+                            None,
+                        )));
+                    }
+                    ProviderMatch::NotJwt => {}
+                }
+            } else {
+                warn!(
+                    issuer = %issuer,
+                    "rejecting JWT bearer token: no OIDC providers configured and issuer does not match the service-account issuer"
+                );
+                return Err(Box::new(StatusResponse::unauthorized(
+                    "JWT issuer is not registered",
+                    None,
+                )));
+            }
+        }
+        self.authenticate_service_account_token(token).await
     }
 
     async fn authenticate_service_account_token(
@@ -164,6 +227,255 @@ impl DefaultAuthenticator {
         ))
     }
 
+    async fn authenticate_service_account_jwt(
+        &self,
+        jwt_issuer: &crate::auth::service_account_jwt::ServiceAccountTokenIssuer,
+        token: &str,
+    ) -> Result<UserInfo, Box<StatusResponse>> {
+        let verified = jwt_issuer
+            .verify_token(token)
+            .map_err(|_| Box::new(StatusResponse::unauthorized("Invalid bearer token", None)))?;
+        let service_account = self
+            .operator
+            .store
+            .get::<ServiceAccount>(Some(verified.namespace.clone()), &verified.name)
+            .await?
+            .map(|resource| resource.apply_revision())
+            .ok_or_else(|| {
+                Box::new(StatusResponse::unauthorized(
+                    "Service account for bearer token was not found",
+                    None,
+                ))
+            })?;
+        let current_uid = service_account
+            .object_meta()
+            .as_ref()
+            .and_then(|meta| meta.uid.clone());
+        if verified.uid.is_some() && verified.uid != current_uid {
+            return Err(Box::new(StatusResponse::unauthorized(
+                "Service account token UID does not match current service account",
+                None,
+            )));
+        }
+        if let Some(bound_object_ref) = &verified.bound_object_ref {
+            self.validate_bound_object_ref(&verified.namespace, bound_object_ref)
+                .await?;
+        }
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "authentication.kubernetes.io/credential".to_string(),
+            vec!["Bearer/JWT".to_string()],
+        );
+
+        Ok(UserInfo::service_account(
+            &verified.namespace,
+            &verified.name,
+            current_uid,
+            extra,
+        ))
+    }
+
+    async fn authenticate_oidc(
+        &self,
+        oidc: &OidcAuthenticator,
+        provider: &crate::auth::oidc::OidcProvider,
+        token: &str,
+    ) -> Result<UserInfo, Box<StatusResponse>> {
+        let identity = oidc.verify(provider, token).await.map_err(|err| {
+            // Log every verification failure so operators can diagnose IdP
+            // outages vs. real client errors. The response stays a single
+            // generic 401 string so we never leak internal details (issuer
+            // URL, kid, JWKS fetch errors, etc.) to unauthenticated callers.
+            match &err {
+                OidcVerifyError::Discovery { issuer, source } => {
+                    warn!(
+                        issuer = %issuer,
+                        error = %source,
+                        "OIDC discovery failed during token verification"
+                    );
+                }
+                OidcVerifyError::Jwks { issuer, source } => {
+                    warn!(
+                        issuer = %issuer,
+                        error = %source,
+                        "OIDC JWKS fetch failed during token verification"
+                    );
+                }
+                other => {
+                    warn!(
+                        issuer = %provider.issuer_url(),
+                        error = %other,
+                        "OIDC token verification failed"
+                    );
+                }
+            }
+            Box::new(StatusResponse::unauthorized("Invalid bearer token", None))
+        })?;
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "authentication.kubernetes.io/credential".to_string(),
+            vec!["OIDC".to_string()],
+        );
+        extra.insert(
+            "authentication.tugboat.cloud/oidc-issuer".to_string(),
+            vec![identity.issuer.clone()],
+        );
+        Ok(UserInfo::oidc(identity.username, identity.groups, extra))
+    }
+
+    async fn validate_bound_object_ref(
+        &self,
+        service_account_namespace: &str,
+        reference: &BoundObjectReference,
+    ) -> Result<(), Box<StatusResponse>> {
+        match (reference.api_version.as_str(), reference.kind.as_str()) {
+            ("v1", "ClusterNetworkClass") => {
+                self.validate_typed_bound_object::<ClusterNetworkClass>(None, reference)
+                    .await
+            }
+            ("v1", "ConfigMap") => {
+                self.validate_typed_bound_object::<ConfigMap>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "Namespace") => {
+                self.validate_typed_bound_object::<Namespace>(None, reference)
+                    .await
+            }
+            ("v1", "NetworkClass") => {
+                self.validate_typed_bound_object::<NetworkClass>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "Node") => {
+                self.validate_typed_bound_object::<Node>(None, reference)
+                    .await
+            }
+            ("v1", "PersistentVolume") => {
+                self.validate_typed_bound_object::<PersistentVolume>(None, reference)
+                    .await
+            }
+            ("v1", "PersistentVolumeClaim") => {
+                self.validate_typed_bound_object::<PersistentVolumeClaim>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "RuntimeClass") => {
+                self.validate_typed_bound_object::<RuntimeClass>(None, reference)
+                    .await
+            }
+            ("v1", "Secret") => {
+                self.validate_typed_bound_object::<Secret>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "ServiceAccount") => {
+                self.validate_typed_bound_object::<ServiceAccount>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "Ship") => {
+                self.validate_typed_bound_object::<Ship>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("v1", "ShipClass") => {
+                self.validate_typed_bound_object::<ShipClass>(None, reference)
+                    .await
+            }
+            ("v1", "StorageClass") => {
+                self.validate_typed_bound_object::<StorageClass>(None, reference)
+                    .await
+            }
+            ("apps/v1", "Deployment") => {
+                self.validate_typed_bound_object::<Deployment>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("apps/v1", "Fleet") => {
+                self.validate_typed_bound_object::<Fleet>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("apps/v1", "ReplicaSet") => {
+                self.validate_typed_bound_object::<ReplicaSet>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            ("coordination/v1", "Lease") => {
+                self.validate_typed_bound_object::<Lease>(
+                    Some(service_account_namespace.to_string()),
+                    reference,
+                )
+                .await
+            }
+            _ => Err(Box::new(StatusResponse::unauthorized(
+                "Service account token bound object kind is not supported",
+                None,
+            ))),
+        }
+    }
+
+    async fn validate_typed_bound_object<T>(
+        &self,
+        namespace: Option<String>,
+        reference: &BoundObjectReference,
+    ) -> Result<(), Box<StatusResponse>>
+    where
+        T: StaticSerializable + StaticResource + ObjectMetaResource,
+    {
+        let expected_namespace = if T::is_cluster_scoped() {
+            None
+        } else {
+            namespace
+        };
+        let Some(object) = self
+            .operator
+            .store
+            .get::<T>(expected_namespace, &reference.name)
+            .await?
+            .map(|resource| resource.apply_revision())
+        else {
+            return Err(Box::new(StatusResponse::unauthorized(
+                "Service account token bound object was not found",
+                None,
+            )));
+        };
+        if let Some(expected_uid) = &reference.uid {
+            let actual_uid = object
+                .object_meta()
+                .as_ref()
+                .and_then(|meta| meta.uid.as_ref());
+            if actual_uid != Some(expected_uid) {
+                return Err(Box::new(StatusResponse::unauthorized(
+                    "Service account token bound object UID does not match current object",
+                    None,
+                )));
+            }
+        }
+        Ok(())
+    }
+
     async fn find_service_account_token_secret(
         &self,
         token: &str,
@@ -197,6 +509,26 @@ impl DefaultAuthenticator {
             // newly created service-account tokens are picked up immediately.
         }
 
+        let _lock = self.token_refresh_lock.lock().await;
+
+        // Re-check cache after acquiring lock
+        {
+            let cache = self.token_cache.read().await;
+            if !cache.is_stale()
+                && let Some((namespace, name)) = cache.map.get(&encoded)
+                && let Some(data) = self
+                    .operator
+                    .store
+                    .get::<Secret>(Some(namespace.clone()), name)
+                    .await?
+            {
+                let secret = data.apply_revision();
+                if secret_contains_token(&secret, token) {
+                    return Ok(Some(secret));
+                }
+            }
+        }
+
         // --- Slow path: full scan ---
         // Rebuild the cache from all secrets currently in etcd and locate the
         // matching secret while we have the data in hand.
@@ -217,7 +549,7 @@ impl DefaultAuthenticator {
             };
             if let Some(stored_encoded) = secret.data.get(TOKEN_DATA_KEY) {
                 new_map.insert(stored_encoded.clone(), (ns.to_string(), name.to_string()));
-                if stored_encoded == &encoded && found.is_none() {
+                if secret_contains_token(&secret, token) && found.is_none() {
                     found = Some(secret);
                 }
             }
@@ -269,6 +601,25 @@ fn bearer_token(req: &HttpRequest) -> Result<Option<String>, Box<StatusResponse>
         )));
     }
     Ok(Some(token.to_string()))
+}
+
+fn peek_jwt_issuer(token: &str) -> Option<String> {
+    let mut parts = token.split('.');
+    let _header = parts.next()?;
+    let claims_b64 = parts.next()?;
+    let claims_bytes = URL_SAFE_NO_PAD.decode(claims_b64).ok()?;
+    let value: Value = serde_json::from_slice(&claims_bytes).ok()?;
+    value
+        .get("iss")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim_end_matches('/').to_string())
+}
+
+fn sa_issuer_matches(
+    issuer: &crate::auth::service_account_jwt::ServiceAccountTokenIssuer,
+    candidate: &str,
+) -> bool {
+    issuer.issuer().trim_end_matches('/') == candidate
 }
 
 fn authenticate_client_certificate(

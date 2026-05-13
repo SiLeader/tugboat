@@ -21,7 +21,7 @@ license.workspace = true
 [dependencies]
 tugboat-resources.workspace = true
 
-reqwest = { version = "0.13.3", features = ["json", "stream"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
 url.workspace = true
 
 thiserror.workspace = true

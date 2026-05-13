@@ -20,11 +20,12 @@ use crate::reconciler::error::{InvalidSecretVolumeDataError, ReconcileError};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 pub(crate) use normalize::{
-    MaterializedFile, MaterializedVolumeSourceKind, NormalizedKeyToPath, NormalizedVolumeSource,
-    build_materialized_files, normalized_ship_volumes,
+    MaterializedFile, MaterializedVolumeSourceKind, NormalizedKeyToPath, NormalizedVolume,
+    NormalizedVolumeProjection, NormalizedVolumeSource, build_materialized_files,
+    normalized_ship_volumes,
 };
 use std::collections::{HashMap, HashSet};
-use tugboat_client::Api;
+use tugboat_client::{Api, BoundObjectReference, ServiceAccountTokenRequest};
 use tugboat_resources::manifests::core::v1::{
     ConfigMap, CsiPersistentVolumeSource, PersistentVolume, PersistentVolumeClaim,
     PersistentVolumeClaimReference, PersistentVolumeClaimSpec, PersistentVolumeSpec,
@@ -52,6 +53,18 @@ pub(crate) struct PersistentVolumeClaimVolumeInfo {
 pub(crate) struct MaterializedVolumeInfo {
     pub name: String,
     pub files: Vec<MaterializedFile>,
+    pub service_account_tokens: Vec<ProjectedServiceAccountTokenInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectedServiceAccountTokenInfo {
+    pub service_account_name: String,
+    pub audience: Option<String>,
+    pub expiration_seconds: Option<u64>,
+    pub expiration_timestamp: tugboat_resources::manifests::meta::v1::Time,
+    pub path: String,
+    pub ship_name: String,
+    pub ship_uid: String,
 }
 
 impl VolumeInfo {
@@ -84,6 +97,17 @@ pub(crate) fn ship_references_materialized_resource(
             NormalizedVolumeSource::Secret { secret_name, .. } => {
                 kind == MaterializedVolumeSourceKind::Secret && secret_name == resource_name
             }
+            NormalizedVolumeSource::Projected { sources, .. } => {
+                sources.into_iter().any(|source| match source {
+                    NormalizedVolumeProjection::ConfigMap { name, .. } => {
+                        kind == MaterializedVolumeSourceKind::ConfigMap && name == resource_name
+                    }
+                    NormalizedVolumeProjection::Secret { name, .. } => {
+                        kind == MaterializedVolumeSourceKind::Secret && name == resource_name
+                    }
+                    NormalizedVolumeProjection::ServiceAccountToken { .. } => false,
+                })
+            }
             NormalizedVolumeSource::PersistentVolumeClaim { .. } => false,
         }))
 }
@@ -106,6 +130,19 @@ pub(crate) fn materialized_volume_names_for_resource(
             {
                 Some(volume.name)
             }
+            NormalizedVolumeSource::Projected { sources, .. }
+                if sources.iter().any(|source| match source {
+                    NormalizedVolumeProjection::ConfigMap { name, .. } => {
+                        kind == MaterializedVolumeSourceKind::ConfigMap && name == resource_name
+                    }
+                    NormalizedVolumeProjection::Secret { name, .. } => {
+                        kind == MaterializedVolumeSourceKind::Secret && name == resource_name
+                    }
+                    NormalizedVolumeProjection::ServiceAccountToken { .. } => false,
+                }) =>
+            {
+                Some(volume.name)
+            }
             _ => None,
         })
         .collect())
@@ -115,6 +152,8 @@ impl ShipReconciler {
     pub(crate) async fn get_related_volumes(
         &self,
         namespace: &str,
+        ship_name: &str,
+        ship_uid: &str,
         ship_spec: &ShipSpec,
     ) -> Result<Vec<VolumeInfo>, ReconcileError> {
         let claim_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
@@ -168,6 +207,26 @@ impl ShipReconciler {
                             items,
                             default_mode,
                             optional,
+                        )
+                        .await?,
+                    ));
+                }
+                NormalizedVolumeSource::Projected {
+                    sources,
+                    default_mode,
+                } => {
+                    volumes.push(VolumeInfo::Materialized(
+                        self.load_projected_volume(
+                            namespace,
+                            ship_spec
+                                .service_account_name
+                                .as_deref()
+                                .unwrap_or("default"),
+                            ship_name,
+                            ship_uid,
+                            volume.name,
+                            sources,
+                            default_mode,
                         )
                         .await?,
                     ));
@@ -267,6 +326,7 @@ impl ShipReconciler {
                 return Ok(MaterializedVolumeInfo {
                     name: volume_name,
                     files: Vec::new(),
+                    service_account_tokens: Vec::new(),
                 });
             }
             return Err(ReconcileError::ConfigMapNotFound {
@@ -293,6 +353,7 @@ impl ShipReconciler {
         Ok(MaterializedVolumeInfo {
             name: volume_name,
             files,
+            service_account_tokens: Vec::new(),
         })
     }
 
@@ -311,6 +372,7 @@ impl ShipReconciler {
                 return Ok(MaterializedVolumeInfo {
                     name: volume_name,
                     files: Vec::new(),
+                    service_account_tokens: Vec::new(),
                 });
             }
             return Err(ReconcileError::SecretVolumeNotFound {
@@ -332,6 +394,139 @@ impl ShipReconciler {
         Ok(MaterializedVolumeInfo {
             name: volume_name,
             files,
+            service_account_tokens: Vec::new(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn load_projected_volume(
+        &self,
+        namespace: &str,
+        service_account_name: &str,
+        ship_name: &str,
+        ship_uid: &str,
+        volume_name: String,
+        sources: Vec<NormalizedVolumeProjection>,
+        default_mode: u32,
+    ) -> Result<MaterializedVolumeInfo, ReconcileError> {
+        let mut files = Vec::new();
+        let mut service_account_tokens = Vec::new();
+        let mut seen_paths = HashSet::new();
+
+        for source in sources {
+            let source_files = match source {
+                NormalizedVolumeProjection::ServiceAccountToken {
+                    audience,
+                    expiration_seconds,
+                    path,
+                } => {
+                    let response = self
+                        .client
+                        .create_service_account_token(
+                            namespace,
+                            service_account_name,
+                            ServiceAccountTokenRequest {
+                                audiences: audience.clone().into_iter().collect(),
+                                expiration_seconds,
+                                bound_object_ref: Some(BoundObjectReference {
+                                    kind: "Ship".to_string(),
+                                    api_version: "v1".to_string(),
+                                    name: ship_name.to_string(),
+                                    uid: Some(ship_uid.to_string()),
+                                }),
+                            },
+                        )
+                        .await?;
+                    let expiration_timestamp = response.expiration_timestamp;
+                    service_account_tokens.push(ProjectedServiceAccountTokenInfo {
+                        service_account_name: service_account_name.to_string(),
+                        audience,
+                        expiration_seconds,
+                        expiration_timestamp,
+                        path: path.clone(),
+                        ship_name: ship_name.to_string(),
+                        ship_uid: ship_uid.to_string(),
+                    });
+                    vec![MaterializedFile {
+                        path,
+                        contents: response.token.into_bytes(),
+                        mode: 0o600,
+                    }]
+                }
+                NormalizedVolumeProjection::ConfigMap {
+                    name,
+                    items,
+                    optional,
+                } => {
+                    let volume = self
+                        .load_config_map_volume(
+                            namespace,
+                            volume_name.clone(),
+                            name,
+                            items,
+                            default_mode,
+                            optional,
+                        )
+                        .await?;
+                    volume.files
+                }
+                NormalizedVolumeProjection::Secret {
+                    name,
+                    items,
+                    optional,
+                } => {
+                    let volume = self
+                        .load_secret_volume(
+                            namespace,
+                            volume_name.clone(),
+                            name,
+                            items,
+                            default_mode,
+                            optional,
+                        )
+                        .await?;
+                    volume.files
+                }
+            };
+
+            for file in source_files {
+                if !seen_paths.insert(file.path.clone()) {
+                    return Err(ReconcileError::DuplicateVolumeItemPath {
+                        volume: volume_name.clone(),
+                        path: file.path,
+                    });
+                }
+                files.push(file);
+            }
+        }
+
+        if !seen_paths.contains("namespace") {
+            files.push(MaterializedFile {
+                path: "namespace".to_string(),
+                contents: namespace.as_bytes().to_vec(),
+                mode: default_mode,
+            });
+        }
+        if !seen_paths.contains("ca.crt")
+            && let Some(path) = &self.apiserver_ca_cert_path
+        {
+            files.push(MaterializedFile {
+                path: "ca.crt".to_string(),
+                contents: std::fs::read(path).map_err(|err| {
+                    ReconcileError::MaterializedVolumeIo {
+                        volume: volume_name.clone(),
+                        path: path.display().to_string(),
+                        reason: err.to_string(),
+                    }
+                })?,
+                mode: default_mode,
+            });
+        }
+
+        Ok(MaterializedVolumeInfo {
+            name: volume_name,
+            files,
+            service_account_tokens,
         })
     }
 }

@@ -5,3 +5,4 @@
 .codex
 todo/
 /installer/systemd/test/artifacts
+/logs

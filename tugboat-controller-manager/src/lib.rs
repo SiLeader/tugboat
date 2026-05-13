@@ -1,3 +1,4 @@
+use aggregated_clusterrole::AggregatedClusterRoleController;
 use config::ControllerManagerConfig;
 use deployment::DeploymentController;
 use fleet::FleetController;
@@ -11,6 +12,7 @@ use service_account_token_controller::ServiceAccountTokenController;
 use tugboat_client::TugboatClient;
 use tugboat_csi_operator::TugboatCsiOperator;
 
+mod aggregated_clusterrole;
 mod base;
 mod change_classifier;
 mod config;
@@ -56,6 +58,7 @@ pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
         client.clone(),
     ));
     tcm.add_controller(ServiceAccountTokenController::new(client.clone()));
+    tcm.add_controller(AggregatedClusterRoleController::new(client.clone()));
     tcm.add_controller(PersistentVolumeCleanupController::new(
         client,
         csi_operator,

@@ -22,12 +22,21 @@ use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use tugboat_resources::ShipMigrationExt;
+use tugboat_resources::manifests::core::v1::{
+    Namespace, ProjectedVolumeSource, ServiceAccount, ServiceAccountTokenProjection, ShipVolume,
+    VolumeProjection,
+};
 use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
 use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_resources::{ObjectMetaResource, Resource};
 
 const PHASE_FAILED: &str = "Failed";
 const CONDITION_VM_MIGRATION_ABORTED: &str = "VmMigrationAborted";
 const MIGRATION_ABORT_MESSAGE: &str = "Live migration aborted via API request";
+const DEFAULT_SERVICE_ACCOUNT_NAME: &str = "default";
+const SERVICE_ACCOUNT_TOKEN_VOLUME_NAME: &str = "serviceaccount-token";
+const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH: &str = "token";
+const DEFAULT_SERVICE_ACCOUNT_TOKEN_EXPIRATION_SECONDS: i64 = 3600;
 
 #[utoipa::path(
         responses(
@@ -46,8 +55,7 @@ pub(super) async fn handle_ship_create(
     json: Json<Ship>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
-    resource_handlers::create_namespaced(json.into_inner(), path.into_inner().namespace, operator)
-        .await
+    create_ship_with_defaults(json.into_inner(), path.into_inner().namespace, operator).await
 }
 
 #[utoipa::path(
@@ -163,7 +171,7 @@ pub(super) async fn handle_ship_replace(
     let current = get_current_ship(&operator, namespace.clone(), name.clone()).await?;
     let replacement = replacement.into_inner();
     validate_resource_name(&replacement, &name)?;
-    let replaced = ResourceUpdater::new(
+    let mut replaced = ResourceUpdater::new(
         &current,
         ReplaceOptions {
             preserve_status: true,
@@ -172,6 +180,7 @@ pub(super) async fn handle_ship_replace(
         },
     )
     .apply_replacement(&replacement)?;
+    apply_ship_service_account_defaults(&operator, &namespace, &mut replaced).await?;
     validate_resource(&replaced)?;
     validate_ship_target_node_name_update(&current, &replaced)?;
 
@@ -213,7 +222,7 @@ pub(super) async fn handle_ship_patch(
     let namespace = path.namespace;
     let name = path.name;
     let current = get_current_ship(&operator, namespace.clone(), name.clone()).await?;
-    let patched = ResourceUpdater::new(
+    let mut patched = ResourceUpdater::new(
         &current,
         ReplaceOptions {
             preserve_status: true,
@@ -222,6 +231,7 @@ pub(super) async fn handle_ship_patch(
         },
     )
     .apply_patch(patch.into_inner())?;
+    apply_ship_service_account_defaults(&operator, &namespace, &mut patched).await?;
     validate_resource(&patched)?;
     validate_ship_target_node_name_update(&current, &patched)?;
 
@@ -376,6 +386,170 @@ fn abort_ship_migration(mut ship: Ship) -> Result<Ship, Box<StatusResponse>> {
     Ok(ship)
 }
 
+async fn create_ship_with_defaults(
+    mut ship: Ship,
+    namespace: String,
+    operator: Data<ApiOperator>,
+) -> Result<ModifyResponse<Ship>, Box<StatusResponse>> {
+    ensure_namespace_exists(&operator, &namespace).await?;
+    let object_meta = crate::extract_object_meta!(ship);
+    let object_meta = operator.apply_namespace(object_meta, namespace.clone());
+    apply_ship_service_account_defaults(&operator, &namespace, &mut ship).await?;
+    validate_resource(&ship)?;
+
+    crate::create_object!(operator, object_meta, ship, Ship::type_meta())
+}
+
+async fn ensure_namespace_exists(
+    operator: &ApiOperator,
+    namespace: &str,
+) -> Result<(), Box<StatusResponse>> {
+    if operator
+        .store
+        .get::<Namespace>(None, namespace)
+        .await
+        .map_err(Box::<StatusResponse>::from)?
+        .is_some()
+    {
+        Ok(())
+    } else {
+        Err(Box::new(StatusResponse::not_found(
+            format!("namespaces \"{namespace}\" not found"),
+            Some(serde_json::json!({ "name": namespace })),
+        )))
+    }
+}
+
+async fn apply_ship_service_account_defaults(
+    operator: &ApiOperator,
+    namespace: &str,
+    ship: &mut Ship,
+) -> Result<(), Box<StatusResponse>> {
+    let Some(spec) = ship.spec.as_mut() else {
+        return Ok(());
+    };
+    let service_account_name_was_explicit = spec.service_account_name.is_some();
+    let service_account_name = spec
+        .service_account_name
+        .get_or_insert_with(|| DEFAULT_SERVICE_ACCOUNT_NAME.to_string())
+        .clone();
+
+    if service_account_name_was_explicit && service_account_name != DEFAULT_SERVICE_ACCOUNT_NAME {
+        ensure_service_account_exists(operator, namespace, &service_account_name).await?;
+    }
+
+    if should_project_service_account_token(
+        operator.service_account_tokens.is_some(),
+        spec.automount_service_account_token,
+    ) {
+        ensure_default_service_account_token_volume(spec)?;
+    } else {
+        remove_default_service_account_token_volume(spec);
+    }
+
+    Ok(())
+}
+
+async fn ensure_service_account_exists(
+    operator: &ApiOperator,
+    namespace: &str,
+    name: &str,
+) -> Result<(), Box<StatusResponse>> {
+    let found = operator
+        .store
+        .get::<ServiceAccount>(Some(namespace.to_string()), name)
+        .await
+        .map_err(Box::<StatusResponse>::from)?;
+    if found
+        .map(|data| data.apply_revision().deletion_timestamp().is_none())
+        .unwrap_or(false)
+    {
+        Ok(())
+    } else {
+        Err(Box::new(StatusResponse::invalid(
+            "spec.serviceAccountName references a ServiceAccount that does not exist",
+            Some(serde_json::json!({
+                "namespace": namespace,
+                "serviceAccountName": name,
+            })),
+        )))
+    }
+}
+
+fn should_project_service_account_token(
+    token_issuer_enabled: bool,
+    automount_service_account_token: Option<bool>,
+) -> bool {
+    token_issuer_enabled && automount_service_account_token.unwrap_or(true)
+}
+
+fn ensure_default_service_account_token_volume(
+    spec: &mut tugboat_resources::manifests::core::v1::ShipSpec,
+) -> Result<(), Box<StatusResponse>> {
+    if let Some(existing) = spec
+        .volumes
+        .iter()
+        .find(|volume| volume.name == SERVICE_ACCOUNT_TOKEN_VOLUME_NAME)
+    {
+        if is_default_service_account_token_volume(existing) {
+            return Ok(());
+        }
+        return Err(Box::new(StatusResponse::bad_request(
+            format!(
+                "Ship volume '{}' is reserved for the default ServiceAccount token projection",
+                SERVICE_ACCOUNT_TOKEN_VOLUME_NAME
+            ),
+            None,
+        )));
+    }
+
+    spec.volumes.push(default_service_account_token_volume());
+    Ok(())
+}
+
+fn remove_default_service_account_token_volume(
+    spec: &mut tugboat_resources::manifests::core::v1::ShipSpec,
+) {
+    spec.volumes
+        .retain(|volume| !is_default_service_account_token_volume(volume));
+}
+
+fn default_service_account_token_volume() -> ShipVolume {
+    ShipVolume {
+        name: SERVICE_ACCOUNT_TOKEN_VOLUME_NAME.to_string(),
+        projected: Some(ProjectedVolumeSource {
+            sources: vec![VolumeProjection {
+                service_account_token: Some(ServiceAccountTokenProjection {
+                    audience: None,
+                    expiration_seconds: Some(DEFAULT_SERVICE_ACCOUNT_TOKEN_EXPIRATION_SECONDS),
+                    path: DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH.to_string(),
+                }),
+                ..Default::default()
+            }],
+            default_mode: Some(0o600),
+        }),
+        ..Default::default()
+    }
+}
+
+fn is_default_service_account_token_volume(volume: &ShipVolume) -> bool {
+    if volume.name != SERVICE_ACCOUNT_TOKEN_VOLUME_NAME
+        || volume.persistent_volume_claim.is_some()
+        || volume.config_map.is_some()
+        || volume.secret.is_some()
+    {
+        return false;
+    }
+    let Some(projected) = volume.projected.as_ref() else {
+        return false;
+    };
+    projected.sources.len() == 1
+        && projected.sources[0]
+            .service_account_token
+            .as_ref()
+            .is_some_and(|token| token.path == DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH)
+}
+
 async fn get_current_ship(
     operator: &ApiOperator,
     namespace: String,
@@ -444,7 +618,8 @@ fn ship_has_active_migration(ship: &Ship) -> bool {
 mod tests {
     use super::{
         CONDITION_VM_MIGRATION_ABORTED, MIGRATION_ABORT_MESSAGE, PHASE_FAILED,
-        abort_ship_migration, ship_has_active_migration, validate_ship_target_node_name_update,
+        abort_ship_migration, ship_has_active_migration, should_project_service_account_token,
+        validate_ship_target_node_name_update,
     };
     use actix_web::ResponseError;
     use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
@@ -588,6 +763,15 @@ mod tests {
             .expect_err("empty target node name should fail");
 
         assert_eq!(err.status_code().as_u16(), 400);
+    }
+
+    #[test]
+    fn service_account_token_projection_requires_enabled_token_issuer() {
+        assert!(should_project_service_account_token(true, None));
+        assert!(should_project_service_account_token(true, Some(true)));
+        assert!(!should_project_service_account_token(true, Some(false)));
+        assert!(!should_project_service_account_token(false, None));
+        assert!(!should_project_service_account_token(false, Some(true)));
     }
 
     #[test]

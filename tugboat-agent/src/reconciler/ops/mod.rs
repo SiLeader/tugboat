@@ -114,23 +114,37 @@ fn pvc_volume_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
 /// Changes to these can be applied in-place by re-materializing files on the host.
 fn materialized_volume_fingerprint(spec: &ShipSpec) -> Result<String, ReconcileError> {
     use crate::reconciler::volume::NormalizedVolumeSource;
+    #[derive(Serialize)]
+    struct MaterializedVolumeFields<'a> {
+        service_account_name: &'a Option<String>,
+        automount_service_account_token: &'a Option<bool>,
+        volumes: Vec<crate::reconciler::volume::NormalizedVolume>,
+    }
+
     let normalized: Vec<_> = normalized_ship_volumes(spec)?
         .into_iter()
         .filter(|v| {
             matches!(
                 v.source,
-                NormalizedVolumeSource::ConfigMap { .. } | NormalizedVolumeSource::Secret { .. }
+                NormalizedVolumeSource::ConfigMap { .. }
+                    | NormalizedVolumeSource::Secret { .. }
+                    | NormalizedVolumeSource::Projected { .. }
             )
         })
         .collect();
-    Ok(sha256_fingerprint(&normalized)?)
+    Ok(sha256_fingerprint(&MaterializedVolumeFields {
+        service_account_name: &spec.service_account_name,
+        automount_service_account_token: &spec.automount_service_account_token,
+        volumes: normalized,
+    })?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tugboat_resources::manifests::core::v1::{
-        ConfigMapVolumeSource, ShipSpec, ShipVolume, Toleration,
+        ConfigMapVolumeSource, ProjectedVolumeSource, ServiceAccountTokenProjection, ShipSpec,
+        ShipVolume, Toleration, VolumeProjection,
     };
 
     fn base_spec() -> ShipSpec {
@@ -146,6 +160,8 @@ mod tests {
             volume_claim_ref: vec![],
             volumes: vec![],
             target_node_name: None,
+            service_account_name: None,
+            automount_service_account_token: None,
         }
     }
 
@@ -222,6 +238,39 @@ mod tests {
             }),
             ..Default::default()
         });
+        let fp_a = ShipFingerprints::new(&a).unwrap();
+        let fp_b = ShipFingerprints::new(&b).unwrap();
+        assert_ne!(fp_a.materialized_volume, fp_b.materialized_volume);
+        assert_eq!(fp_a.pvc_volume, fp_b.pvc_volume);
+        assert_eq!(fp_a.spec, fp_b.spec);
+    }
+
+    #[test]
+    fn service_account_name_change_alters_materialized_fingerprint_not_spec_or_pvc() {
+        fn projected_token_volume() -> ShipVolume {
+            ShipVolume {
+                name: "api-token".to_string(),
+                projected: Some(ProjectedVolumeSource {
+                    sources: vec![VolumeProjection {
+                        service_account_token: Some(ServiceAccountTokenProjection {
+                            audience: None,
+                            expiration_seconds: Some(3600),
+                            path: "token".to_string(),
+                        }),
+                        ..Default::default()
+                    }],
+                    default_mode: Some(0o600),
+                }),
+                ..Default::default()
+            }
+        }
+
+        let mut a = base_spec();
+        a.service_account_name = Some("builder".to_string());
+        a.volumes.push(projected_token_volume());
+        let mut b = a.clone();
+        b.service_account_name = Some("runner".to_string());
+
         let fp_a = ShipFingerprints::new(&a).unwrap();
         let fp_b = ShipFingerprints::new(&b).unwrap();
         assert_ne!(fp_a.materialized_volume, fp_b.materialized_volume);

@@ -297,7 +297,7 @@ impl ShipReconciler {
         )
         .await?;
 
-        self.check_pending_volume_expansions(ship_id, namespace, new_spec)
+        self.check_pending_volume_expansions(ship_id, namespace, &prepared.ship_name, new_spec)
             .await;
         Ok(true)
     }
@@ -343,8 +343,12 @@ impl ShipReconciler {
             .diff_hotplug_networks(ship_id, &old_spec, new_spec, namespace)
             .await?;
 
-        let old_volumes = self.get_related_volumes(namespace, &old_spec).await?;
-        let new_volumes = self.get_related_volumes(namespace, new_spec).await?;
+        let old_volumes = self
+            .get_related_volumes(namespace, &ship_name, ship_id, &old_spec)
+            .await?;
+        let new_volumes = self
+            .get_related_volumes(namespace, &ship_name, ship_id, new_spec)
+            .await?;
         let Some((added_published_volumes, added_vm_volumes, removed_volume_aliases)) = self
             .prepare_hotplug_volume_changes(ship_id, namespace, &old_spec, new_spec, &new_volumes)
             .await?

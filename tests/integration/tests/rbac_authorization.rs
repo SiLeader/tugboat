@@ -42,6 +42,92 @@ async fn bearer_token_authentication_succeeds_and_invalid_token_is_rejected() ->
 }
 
 #[tokio::test]
+async fn token_request_issues_signed_jwt_that_authenticates() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let admin = ctx.admin_client()?;
+    create_namespace(&admin, &ctx.base_url, "jwt").await?;
+    request_json(
+        &admin,
+        Method::POST,
+        &format!("{}/api/v1/namespaces/jwt/serviceaccounts", ctx.base_url),
+        StatusCode::OK,
+        Some(json!({
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {
+                "name": "reader",
+                "namespace": "jwt"
+            }
+        })),
+    )
+    .await?;
+    create_cluster_role_binding(
+        &admin,
+        &ctx.base_url,
+        "jwt-reader-binding",
+        "view",
+        "jwt",
+        "reader",
+    )
+    .await?;
+
+    let token_response = request_json(
+        &admin,
+        Method::POST,
+        &format!(
+            "{}/api/v1/namespaces/jwt/serviceaccounts/reader/token",
+            ctx.base_url
+        ),
+        StatusCode::OK,
+        Some(json!({
+            "audiences": [ctx.base_url],
+            "expirationSeconds": 600
+        })),
+    )
+    .await?;
+    let token = token_response["token"]
+        .as_str()
+        .ok_or("token response is missing token")?;
+    assert_eq!(token.split('.').count(), 3);
+
+    let jwt_client = ctx.bearer_client(token)?;
+    let allowed = jwt_client
+        .get(format!("{}/api/v1/namespaces", ctx.base_url))
+        .send()
+        .await?;
+    assert_eq!(allowed.status(), StatusCode::OK);
+
+    let external_token_response = request_json(
+        &admin,
+        Method::POST,
+        &format!(
+            "{}/api/v1/namespaces/jwt/serviceaccounts/reader/token",
+            ctx.base_url
+        ),
+        StatusCode::OK,
+        Some(json!({
+            "audiences": ["external-system"],
+            "expirationSeconds": 600
+        })),
+    )
+    .await?;
+    let external_token = external_token_response["token"]
+        .as_str()
+        .ok_or("token response is missing token")?;
+    let rejected = ctx
+        .bearer_client(external_token)?
+        .get(format!("{}/api/v1/namespaces", ctx.base_url))
+        .send()
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn unreferenced_service_account_token_secret_is_rejected() -> Result<(), DynError> {
     let Some(ctx) = setup_or_skip().await? else {
         return Ok(());

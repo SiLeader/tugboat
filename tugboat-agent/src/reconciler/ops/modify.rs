@@ -58,6 +58,7 @@ impl ShipReconciler {
                 "metadata.uid".to_string(),
             ));
         };
+        let ship_name = ship_metadata.name.as_deref().unwrap_or("");
         let namespace = ship_metadata
             .namespace
             .clone()
@@ -143,7 +144,7 @@ impl ShipReconciler {
                 debug!("Ship '{}' runtime-significant spec is unchanged", ship_id);
                 // Even though the spec is unchanged, check for pending volume expansions
                 // since PV status updates are external to the Ship resource.
-                self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
+                self.check_pending_volume_expansions(ship_id, &namespace, ship_name, ship_spec)
                     .await;
                 Ok(())
             }
@@ -275,9 +276,12 @@ impl ShipReconciler {
         &self,
         ship_id: &str,
         namespace: &str,
+        ship_name: &str,
         ship_spec: &ShipSpec,
     ) -> Result<(), ReconcileError> {
-        let volumes = self.get_related_volumes(namespace, ship_spec).await?;
+        let volumes = self
+            .get_related_volumes(namespace, ship_name, ship_id, ship_spec)
+            .await?;
         for volume in &volumes {
             let Some(volume) = volume.materialized() else {
                 continue;
@@ -289,6 +293,7 @@ impl ShipReconciler {
                 );
                 return Err(err);
             }
+            self.start_service_account_token_refresh(ship_id, namespace, volume);
         }
         Ok(())
     }
@@ -344,7 +349,7 @@ impl ShipReconciler {
         }
 
         if let Err(err) = self
-            .refresh_materialized_volumes(ship_id, &namespace, ship_spec)
+            .refresh_materialized_volumes(ship_id, &namespace, name, ship_spec)
             .await
         {
             let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
@@ -373,7 +378,7 @@ impl ShipReconciler {
         });
         api.replace_status(name, status_ship).await?;
 
-        self.check_pending_volume_expansions(ship_id, &namespace, ship_spec)
+        self.check_pending_volume_expansions(ship_id, &namespace, name, ship_spec)
             .await;
         Ok(())
     }
@@ -386,9 +391,13 @@ impl ShipReconciler {
         &self,
         ship_id: &str,
         namespace: &str,
+        ship_name: &str,
         ship_spec: &ShipSpec,
     ) {
-        let volumes = match self.get_related_volumes(namespace, ship_spec).await {
+        let volumes = match self
+            .get_related_volumes(namespace, ship_name, ship_id, ship_spec)
+            .await
+        {
             Ok(v) => v,
             Err(err) => {
                 warn!(
@@ -618,6 +627,8 @@ mod tests {
             volumes: vec![],
             target_node_name: None,
             runtime_class: None,
+            service_account_name: None,
+            automount_service_account_token: None,
         }
     }
 
