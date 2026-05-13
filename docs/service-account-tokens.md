@@ -31,6 +31,12 @@ When `automountServiceAccountToken: true` is set in the Ship spec (which is the 
 - `ca.crt`: The CA certificate for the apiserver.
 - `namespace`: The namespace of the Ship.
 
+#### Implicit `namespace` and `ca.crt` files in any projected volume
+
+Unlike Kubernetes — where `namespace` comes from a `downwardAPI` projection and `ca.crt` from a `configMap` projection that the user writes explicitly — Tugboat injects both files automatically into **every** projected volume (whether or not it contains a `serviceAccountToken` projection), as long as the user did not already write files at those paths.
+
+This means a `projected` volume composed only of `configMap` and `secret` projections will still produce a `namespace` file (and `ca.crt` when the agent is configured with an apiserver CA path) alongside the user-declared files. If you need to suppress them, declare your own projection that writes to those paths.
+
 #### Rotation
 
 The Tugboat agent automatically rotates the projected token when it reaches 80% of its lifetime (or when it has 10 minutes remaining, whichever is shorter).

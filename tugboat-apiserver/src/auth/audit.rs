@@ -25,7 +25,6 @@ use actix_web::http::Method;
 use actix_web::web::Bytes;
 use actix_web::{HttpMessage, HttpRequest};
 use chrono::SecondsFormat;
-use futures_util::StreamExt;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::future::{Future, Ready, ready};
@@ -33,6 +32,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Instant;
@@ -615,6 +615,14 @@ where
         let sink = self.sink.clone();
 
         Box::pin(async move {
+            // Health checks are not user-visible API activity; skip audit so
+            // operators with a catch-all rule do not flood the audit log with
+            // probe traffic.
+            if req.path() == "/healthz" {
+                let res = service.call(req).await?;
+                return Ok(res.map_into_right_body());
+            }
+
             let Some(sink) = sink else {
                 let res = service.call(req).await?;
                 return Ok(res.map_into_right_body());
@@ -674,22 +682,23 @@ where
             };
 
             let mut annotations = BTreeMap::new();
-            let mut request_object: Option<serde_json::Value> = None;
 
-            // Capture request body if needed.
-            if matches!(level, AuditLevel::Request | AuditLevel::RequestResponse)
-                && sink.max_request_body_bytes() > 0
-            {
-                let (body, truncated) =
-                    drain_payload(&mut req, sink.max_request_body_bytes()).await?;
-                if truncated {
-                    annotations.insert(
-                        "audit.tugboat.cloud/request-body-truncated".to_string(),
-                        "true".to_string(),
-                    );
-                }
-                request_object = Some(body_to_value(body));
-            }
+            // Set up streaming capture of the request body if needed. Unlike a
+            // pre-drain, the tee observes bytes as the handler reads them, so
+            // memory usage is bounded by `max_request_body_bytes` regardless
+            // of the actual payload size — a 50 MiB upload no longer doubles
+            // the memory footprint of the apiserver when audit is enabled.
+            let request_body_capture: Option<Arc<Mutex<CapturedRequestBody>>> =
+                if matches!(level, AuditLevel::Request | AuditLevel::RequestResponse)
+                    && sink.max_request_body_bytes() > 0
+                {
+                    Some(install_request_body_tee(
+                        &mut req,
+                        sink.max_request_body_bytes(),
+                    ))
+                } else {
+                    None
+                };
 
             let context = RequestContext {
                 audit_id,
@@ -739,7 +748,7 @@ where
             let user_audit = audit_user(&user_clone);
             let sink_for_body = sink.clone();
             let annotations_for_body = annotations.clone();
-            let request_object_for_body = request_object.clone();
+            let request_body_capture_for_body = request_body_capture.clone();
 
             let res = res.map_body(|_head, body| {
                 if !capture_response {
@@ -757,7 +766,7 @@ where
                             user: user_audit.clone(),
                             status_code,
                             annotations: annotations_for_body.clone(),
-                            request_object: request_object_for_body.clone(),
+                            request_body_capture: request_body_capture_for_body.clone(),
                             capture_response: false,
                         }),
                     });
@@ -774,7 +783,7 @@ where
                         user: user_audit.clone(),
                         status_code,
                         annotations: annotations_for_body.clone(),
-                        request_object: request_object_for_body.clone(),
+                        request_body_capture: request_body_capture_for_body.clone(),
                         capture_response: true,
                     }),
                 })
@@ -783,6 +792,55 @@ where
             Ok(res)
         })
     }
+}
+
+#[derive(Default)]
+pub(crate) struct CapturedRequestBody {
+    bytes: Vec<u8>,
+    limit: usize,
+    truncated: bool,
+}
+
+impl CapturedRequestBody {
+    fn append(&mut self, chunk: &[u8]) {
+        if self.bytes.len() >= self.limit {
+            self.truncated = true;
+            return;
+        }
+        let take = self.limit.saturating_sub(self.bytes.len()).min(chunk.len());
+        self.bytes.extend_from_slice(&chunk[..take]);
+        if take < chunk.len() {
+            self.truncated = true;
+        }
+    }
+}
+
+fn install_request_body_tee(
+    req: &mut ServiceRequest,
+    limit: usize,
+) -> Arc<Mutex<CapturedRequestBody>> {
+    use actix_web::error::PayloadError;
+    use futures_util::Stream;
+    use futures_util::StreamExt;
+
+    let captured = Arc::new(Mutex::new(CapturedRequestBody {
+        bytes: Vec::new(),
+        limit,
+        truncated: false,
+    }));
+    let observer = captured.clone();
+    let payload = req.take_payload();
+    let teed = payload.map(move |result| {
+        if let Ok(chunk) = &result
+            && let Ok(mut buf) = observer.lock()
+        {
+            buf.append(chunk);
+        }
+        result
+    });
+    let boxed: Pin<Box<dyn Stream<Item = Result<Bytes, PayloadError>>>> = Box::pin(teed);
+    req.set_payload(Payload::from(boxed));
+    captured
 }
 
 fn audit_user(user: &UserInfo) -> AuditUser {
@@ -796,35 +854,6 @@ fn audit_user(user: &UserInfo) -> AuditUser {
         groups: user.groups.clone(),
         extra,
     }
-}
-
-async fn drain_payload(req: &mut ServiceRequest, limit: usize) -> Result<(Vec<u8>, bool), Error> {
-    use actix_web::error::PayloadError;
-    use futures_util::Stream;
-
-    let mut payload = req.take_payload();
-    let mut replay: Vec<u8> = Vec::new();
-    let mut captured: Vec<u8> = Vec::new();
-    let mut truncated = false;
-    while let Some(chunk) = payload.next().await {
-        let chunk = chunk.map_err(actix_web::error::ErrorInternalServerError)?;
-        if captured.len() >= limit {
-            truncated = true;
-            replay.extend_from_slice(&chunk);
-            continue;
-        }
-        let take = limit.saturating_sub(captured.len()).min(chunk.len());
-        captured.extend_from_slice(&chunk[..take]);
-        if take < chunk.len() {
-            truncated = true;
-        }
-        replay.extend_from_slice(&chunk);
-    }
-    let stored = Bytes::from(replay);
-    let stream = futures_util::stream::once(async move { Ok::<Bytes, PayloadError>(stored) });
-    let boxed: Pin<Box<dyn Stream<Item = Result<Bytes, PayloadError>>>> = Box::pin(stream);
-    req.set_payload(Payload::from(boxed));
-    Ok((captured, truncated))
 }
 
 fn body_to_value(bytes: Vec<u8>) -> serde_json::Value {
@@ -847,7 +876,7 @@ struct BodyCompletion {
     user: AuditUser,
     status_code: u16,
     annotations: BTreeMap<String, String>,
-    request_object: Option<serde_json::Value>,
+    request_body_capture: Option<Arc<Mutex<CapturedRequestBody>>>,
     capture_response: bool,
 }
 
@@ -917,6 +946,22 @@ fn emit_completion<B>(body: &mut CapturedBody<B>) {
     };
 
     let mut annotations = completion.annotations;
+    let request_object = match completion.request_body_capture {
+        Some(captured) => {
+            let mut buf = match captured.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if buf.truncated {
+                annotations.insert(
+                    "audit.tugboat.cloud/request-body-truncated".to_string(),
+                    "true".to_string(),
+                );
+            }
+            Some(body_to_value(std::mem::take(&mut buf.bytes)))
+        }
+        None => None,
+    };
     let response_object = if completion.capture_response {
         if body.truncated {
             annotations.insert(
@@ -951,7 +996,7 @@ fn emit_completion<B>(body: &mut CapturedBody<B>) {
         response_status: ResponseStatus {
             code: completion.status_code,
         },
-        request_object: completion.request_object,
+        request_object,
         response_object,
         request_received_timestamp: completion
             .context
@@ -1389,6 +1434,46 @@ mod tests {
         let object_ref = event.object_ref.expect("object ref present");
         assert_eq!(object_ref.resource, "ships");
         assert_eq!(object_ref.namespace.as_deref(), Some("default"));
+    }
+
+    #[actix_web::test]
+    async fn middleware_skips_healthz_even_with_catch_all_policy() {
+        use actix_web::{App, HttpResponse, test, web};
+
+        let policy = Arc::new(AuditPolicy::from_rules(vec![AuditRule {
+            level: AuditLevel::Metadata,
+            ..Default::default()
+        }]));
+        let (sender, mut receiver) = mpsc::channel::<AuditEvent>(8);
+        let sink = AuditSink {
+            sender,
+            dropped: Arc::new(AtomicU64::new(0)),
+            max_request_body_bytes: 0,
+            max_response_body_bytes: 0,
+        };
+
+        let app = test::init_service(
+            App::new()
+                .wrap(AuditMiddleware::new(policy.clone(), Some(sink.clone())))
+                .route(
+                    "/healthz",
+                    web::get().to(|| async { HttpResponse::Ok().finish() }),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/healthz").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+        drop(resp);
+
+        let timeout = tokio::time::timeout(std::time::Duration::from_millis(100), receiver.recv())
+            .await
+            .ok();
+        assert!(
+            timeout.is_none(),
+            "healthz must not produce an audit event even when a catch-all rule is configured"
+        );
     }
 
     #[actix_web::test]

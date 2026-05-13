@@ -437,7 +437,7 @@ impl ShipReconciler {
                             },
                         )
                         .await?;
-                    let expiration_timestamp = response.expiration_timestamp.clone();
+                    let expiration_timestamp = response.expiration_timestamp;
                     service_account_tokens.push(ProjectedServiceAccountTokenInfo {
                         service_account_name: service_account_name.to_string(),
                         audience,
