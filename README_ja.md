@@ -412,54 +412,53 @@ roleRef:
 subjects:
   - kind: Group
     name: ops-team
+```
 
-  #### 集約ClusterRole
+#### 集約ClusterRole
 
-  `view` ロールにカスタムリソースの権限を追加します。
+`view` ロールにカスタムリソースの権限を追加します。
 
-  ```yaml
-  apiVersion: authorization/v1
-  kind: ClusterRole
-  metadata:
+```yaml
+apiVersion: authorization/v1
+kind: ClusterRole
+metadata:
   name: my-extension-view
   labels:
-  rbac.tugboat.cloud/aggregate-to-view: "true"
-  rules:
+    rbac.tugboat.cloud/aggregate-to-view: "true"
+rules:
   - apiGroups: ["my.example.com"]
-  resources: ["myresources"]
-  verbs: ["get", "list", "watch"]
-  ```
+    resources: ["myresources"]
+    verbs: ["get", "list", "watch"]
+```
 
-  #### OIDC RoleBinding
+#### OIDC RoleBinding
 
-  ```yaml
-  apiVersion: authorization/v1
-  kind: RoleBinding
-  metadata:
+```yaml
+apiVersion: authorization/v1
+kind: RoleBinding
+metadata:
   name: oidc-developers-binding
   namespace: default
-  subjects:
+subjects:
   - kind: Group
-  name: oidc:developers
-  apiGroup: authorization/v1
-  roleRef:
-  kind: ClusterRole
-  name: view
-  apiGroup: authorization/v1
-  ```
+    name: oidc:developers
+    apiGroup: authorization/v1
+    roleRef:
+      kind: ClusterRole
+      name: view
+      apiGroup: authorization/v1
+```
 
-  #### Shipへのトークン自動投影
+#### Shipへのトークン自動投影
 
-  ```yaml
-  apiVersion: core/v1
-  kind: Ship
-  metadata:
+```yaml
+apiVersion: core/v1
+kind: Ship
+metadata:
   name: my-ship
-  spec:
+spec:
   serviceAccountName: my-sa
   automountServiceAccountToken: true
-  ```
-
 ```
 
 ### 今後の拡張予定
