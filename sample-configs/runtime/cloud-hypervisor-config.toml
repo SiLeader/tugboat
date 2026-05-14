@@ -15,6 +15,10 @@
 [cloud_hypervisor]
 executable = "/usr/bin/cloud-hypervisor"
 disk_image_location = "/var/lib/tugboat-agent/images"
+# Optional. Directory where ShipSnapshot artifacts are staged (one
+# sub-directory per Ship). Defaults to /var/lib/tugboat/snapshots when
+# absent. Cloud Hypervisor stores snapshots as a directory tree.
+# snapshot_dir = "/var/lib/tugboat/snapshots"
 
 # Direct kernel boot (recommended)
 [cloud_hypervisor.boot]

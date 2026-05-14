@@ -631,6 +631,7 @@ mod tests {
             automount_service_account_token: None,
             affinity: None,
             topology_spread_constraints: Vec::new(),
+            restore_from_snapshot: None,
         }
     }
 

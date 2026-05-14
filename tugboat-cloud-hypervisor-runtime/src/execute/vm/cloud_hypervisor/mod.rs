@@ -275,6 +275,7 @@ mod tests {
                 initramfs: Some("/var/lib/tugboat/initramfs.img".into()),
                 firmware: Some("/usr/share/ovmf.fd".into()),
             },
+            snapshot_dir: None,
         }
     }
 

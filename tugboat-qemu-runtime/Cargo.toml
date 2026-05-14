@@ -36,5 +36,7 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 qapi = { workspace = true, features = ["qmp", "async-tokio-all"] }
+chrono = "0.4.44"
+uuid = { workspace = true, features = ["v4"] }
 
 nix = { workspace = true, features = ["sched", "user", "signal", "fs", "mount"] }

@@ -3448,6 +3448,7 @@ name = "tugboat-cloud-hypervisor-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "clap",
  "futures",
  "nix",
@@ -3461,6 +3462,7 @@ dependencies = [
  "tugboat-resources",
  "tugboat-runtime-common",
  "tugboat-vm-runtime-interface",
+ "uuid",
 ]
 
 [[package]]
@@ -3536,6 +3538,7 @@ name = "tugboat-qemu-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "clap",
  "futures",
  "nix",
@@ -3550,6 +3553,7 @@ dependencies = [
  "tugboat-resources",
  "tugboat-runtime-common",
  "tugboat-vm-runtime-interface",
+ "uuid",
 ]
 
 [[package]]

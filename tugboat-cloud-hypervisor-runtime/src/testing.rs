@@ -39,6 +39,7 @@ impl TestVm {
                     initramfs: None,
                     firmware: None,
                 },
+                snapshot_dir: None,
             },
             id: id.into(),
             base_dir,

@@ -18,5 +18,6 @@ pub mod migrate;
 #[cfg(feature = "operator")]
 pub mod operator;
 pub mod run;
+pub mod snapshot;
 pub mod status;
 pub mod stop;

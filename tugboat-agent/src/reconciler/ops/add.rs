@@ -26,6 +26,7 @@ use tugboat_resources::manifests::meta::v1::Time;
 mod cleanup;
 mod migration_target;
 mod recovery;
+mod restore;
 mod volumes;
 use recovery::{RecoveredRuntimeAction, recovered_runtime_action, runtime_fingerprints_for_ship};
 

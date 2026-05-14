@@ -26,7 +26,8 @@ use tugboat_resources::manifests::authorization::v1::{
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
-    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
+    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, ShipSnapshot,
+    StorageClass,
 };
 use tugboat_resources::manifests::snapshot::v1::{
     VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotContent,
@@ -137,6 +138,10 @@ pub(crate) fn all_resource_apis() -> &'static [ResourceApiDescriptor] {
             ResourceApiDescriptor::new::<ShipClass>(
                 &resource_api::SHIP_CLASS,
                 v1_core::register_shipclass,
+            ),
+            ResourceApiDescriptor::new::<ShipSnapshot>(
+                &resource_api::SHIP_SNAPSHOT,
+                v1_core::register_ship_snapshot,
             ),
             ResourceApiDescriptor::new::<StorageClass>(
                 &resource_api::STORAGE_CLASS,

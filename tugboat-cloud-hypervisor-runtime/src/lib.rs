@@ -14,7 +14,9 @@
 
 use crate::cmd::start;
 use clap::{Parser, Subcommand};
-use cmd::{create, hotplug, migrate, migrate_cancel, migration_status, run, status, stop};
+use cmd::{
+    create, hotplug, migrate, migrate_cancel, migration_status, run, snapshot, status, stop,
+};
 use nix::errno::Errno;
 use serde::Deserialize;
 use thiserror::Error;
@@ -33,6 +35,8 @@ pub struct CloudHypervisorVmConfig {
     pub executable: String,
     pub disk_image_location: String,
     pub boot: CloudHypervisorBootConfig,
+    #[serde(default)]
+    pub snapshot_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +53,15 @@ impl CloudHypervisorVmConfig {
 
     pub fn get_event_path(&self, id: &str) -> String {
         format!("{}/{}.events", self.disk_image_location, id)
+    }
+
+    pub fn snapshot_dir_path(&self) -> std::path::PathBuf {
+        self.snapshot_dir
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(tugboat_runtime_common::snapshot::DEFAULT_SNAPSHOT_DIR)
+            })
     }
 }
 
@@ -100,6 +113,10 @@ enum SubCommand {
     MigrateCancel(migrate_cancel::MigrateCancelArgs),
     Start(start::StartArgs),
     Stop(stop::StopArgs),
+    SnapshotCreate(snapshot::SnapshotCreateArgs),
+    SnapshotDelete(snapshot::SnapshotDeleteArgs),
+    SnapshotRestore(snapshot::SnapshotRestoreArgs),
+    SnapshotList(snapshot::SnapshotListArgs),
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +168,18 @@ pub fn run() {
                 (SubCommand::Start(start_args), _) => start::start(start_args).await,
                 (SubCommand::Stop(stop_args), cloud_hypervisor) => {
                     stop::stop(cloud_hypervisor, stop_args).await
+                }
+                (SubCommand::SnapshotCreate(snapshot_args), cloud_hypervisor) => {
+                    snapshot::snapshot_create(cloud_hypervisor, snapshot_args).await
+                }
+                (SubCommand::SnapshotDelete(snapshot_args), cloud_hypervisor) => {
+                    snapshot::snapshot_delete(cloud_hypervisor, snapshot_args).await
+                }
+                (SubCommand::SnapshotRestore(snapshot_args), cloud_hypervisor) => {
+                    snapshot::snapshot_restore(cloud_hypervisor, snapshot_args).await
+                }
+                (SubCommand::SnapshotList(snapshot_args), cloud_hypervisor) => {
+                    snapshot::snapshot_list(cloud_hypervisor, snapshot_args).await
                 }
             }
         })?;

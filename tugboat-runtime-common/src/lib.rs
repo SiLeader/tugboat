@@ -18,6 +18,7 @@ use thiserror::Error;
 pub mod config;
 pub mod pre;
 pub mod signal;
+pub mod snapshot;
 pub mod validate;
 
 #[derive(Debug, Error)]

@@ -14,6 +14,11 @@
 
 [qemu]
 disk_image_location = "./test/data"
+# Optional. Directory where ShipSnapshot artifacts are staged (one
+# sub-directory per Ship). Defaults to /var/lib/tugboat/snapshots when
+# absent. Stretch: this can be pointed at a CSI-mounted shared
+# filesystem so snapshots survive node failure.
+# snapshot_dir = "/var/lib/tugboat/snapshots"
 
 [qemu.executables]
 qemu = "/usr/bin/qemu-system-x86_64"

@@ -23,7 +23,8 @@ use tugboat_resources::manifests::authorization::v1::{
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
-    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
+    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, ShipSnapshot,
+    StorageClass,
 };
 use tugboat_resources::manifests::meta::v1::TypeMeta;
 use tugboat_resources::manifests::snapshot::v1::{
@@ -89,6 +90,7 @@ protobuf_serializable!(RuntimeClass);
 protobuf_serializable!(ServiceAccount);
 protobuf_serializable!(Ship);
 protobuf_serializable!(ShipClass);
+protobuf_serializable!(ShipSnapshot);
 protobuf_serializable!(StorageClass);
 protobuf_serializable!(Secret);
 protobuf_serializable!(PersistentVolume);
@@ -112,8 +114,8 @@ mod tests {
     use tugboat_resources::manifests::core::v1::{
         ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, NodeSelector,
         NodeSelectorRequirement, NodeSelectorTerm, PersistentVolume, PersistentVolumeClaim,
-        PersistentVolumeSpec, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
-        StorageClassSpec, TopologySelectorLabelRequirement, TopologySelectorTerm,
+        PersistentVolumeSpec, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, ShipSnapshot,
+        StorageClass, StorageClassSpec, TopologySelectorLabelRequirement, TopologySelectorTerm,
         VolumeNodeAffinity,
     };
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
@@ -146,6 +148,7 @@ mod tests {
             serializable_descriptor::<ServiceAccount>(),
             serializable_descriptor::<Ship>(),
             serializable_descriptor::<ShipClass>(),
+            serializable_descriptor::<ShipSnapshot>(),
             serializable_descriptor::<StorageClass>(),
             serializable_descriptor::<Secret>(),
             serializable_descriptor::<PersistentVolume>(),

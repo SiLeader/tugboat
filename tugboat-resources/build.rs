@@ -84,6 +84,7 @@ fn main() {
                 "proto/core/v1/storage_class.proto",
                 "proto/core/v1/ship.proto",
                 "proto/core/v1/ship_class.proto",
+                "proto/core/v1/ship_snapshot.proto",
                 "proto/core/v1/service_account.proto",
                 // snapshot/v1
                 "proto/snapshot/v1/volume_snapshot.proto",

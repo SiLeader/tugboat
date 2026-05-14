@@ -28,6 +28,7 @@ mod secret;
 mod service_account;
 mod service_account_token;
 mod ship;
+mod ship_snapshot;
 mod shipclass;
 mod storage_class;
 
@@ -121,6 +122,15 @@ mod storage_class;
         shipclass::handle_shipclass_delete,
         shipclass::handle_shipclass_list,
         shipclass::handle_shipclass_read,
+        ship_snapshot::handle_ship_snapshot_create,
+        ship_snapshot::handle_ship_snapshot_delete,
+        ship_snapshot::handle_ship_snapshot_list,
+        ship_snapshot::handle_ship_snapshot_list_all,
+        ship_snapshot::handle_ship_snapshot_patch,
+        ship_snapshot::handle_ship_snapshot_read,
+        ship_snapshot::handle_ship_snapshot_replace,
+        ship_snapshot::handle_ship_snapshot_status_patch,
+        ship_snapshot::handle_ship_snapshot_status_replace,
     ),
     components(schemas(
         tugboat_resources::manifests::core::v1::Namespace,
@@ -134,6 +144,11 @@ mod storage_class;
         tugboat_resources::manifests::core::v1::StorageClass,
         tugboat_resources::manifests::core::v1::Ship,
         tugboat_resources::manifests::core::v1::ShipClass,
+        tugboat_resources::manifests::core::v1::ShipSnapshot,
+        tugboat_resources::manifests::core::v1::ShipSnapshotSpec,
+        tugboat_resources::manifests::core::v1::ShipSnapshotStatus,
+        tugboat_resources::manifests::core::v1::ShipSnapshotVolumeRef,
+        tugboat_resources::manifests::core::v1::ShipSnapshotCondition,
         tugboat_resources::manifests::core::v1::NetworkClass,
         tugboat_resources::manifests::core::v1::ClusterNetworkClass,
         crate::auth::service_account_jwt::BoundObjectReference,
@@ -290,4 +305,17 @@ pub(super) fn register_shipclass(service: &mut ServiceConfig) {
         .service(shipclass::handle_shipclass_delete)
         .service(shipclass::handle_shipclass_list)
         .service(shipclass::handle_shipclass_read);
+}
+
+pub(super) fn register_ship_snapshot(service: &mut ServiceConfig) {
+    service
+        .service(ship_snapshot::handle_ship_snapshot_create)
+        .service(ship_snapshot::handle_ship_snapshot_delete)
+        .service(ship_snapshot::handle_ship_snapshot_list)
+        .service(ship_snapshot::handle_ship_snapshot_list_all)
+        .service(ship_snapshot::handle_ship_snapshot_patch)
+        .service(ship_snapshot::handle_ship_snapshot_read)
+        .service(ship_snapshot::handle_ship_snapshot_replace)
+        .service(ship_snapshot::handle_ship_snapshot_status_patch)
+        .service(ship_snapshot::handle_ship_snapshot_status_replace);
 }

@@ -48,6 +48,7 @@ pub mod core {
         apply_resource!(StorageClass, resource_api::STORAGE_CLASS, cluster);
         apply_resource!(Ship, resource_api::SHIP, namespaced);
         apply_resource!(ShipClass, resource_api::SHIP_CLASS, cluster);
+        apply_resource!(ShipSnapshot, resource_api::SHIP_SNAPSHOT, namespaced);
 
         apply_validators!(ConfigMap, validators NameValidator);
         apply_validators!(Namespace, validators NameValidator, NamespaceProhibitedValidator);
@@ -113,14 +114,51 @@ pub mod core {
         }
         apply_validators!(Ship, validators NameValidator, ShipSchedulingValidator);
         apply_validators!(ShipClass, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(
+            ShipSnapshot,
+            validators NameValidator,
+            ShipSnapshotSpecValidator,
+            ShipSnapshotStatusValidator
+        );
+
+        pub struct ShipSnapshotSpecValidator;
+        impl Validator<ShipSnapshot> for ShipSnapshotSpecValidator {
+            fn validate(&self, value: &ShipSnapshot) -> bool {
+                let Some(spec) = value.spec.as_ref() else {
+                    return false;
+                };
+                if spec.ship_name.trim().is_empty() {
+                    return false;
+                }
+                match spec.mode.as_deref() {
+                    None | Some("Online") | Some("Offline") => {}
+                    _ => return false,
+                }
+                true
+            }
+        }
+
+        pub struct ShipSnapshotStatusValidator;
+        impl Validator<ShipSnapshot> for ShipSnapshotStatusValidator {
+            fn validate(&self, value: &ShipSnapshot) -> bool {
+                let Some(status) = value.status.as_ref() else {
+                    return true;
+                };
+                matches!(
+                    status.phase.as_str(),
+                    "Pending" | "Capturing" | "Ready" | "Failed"
+                )
+            }
+        }
 
         #[cfg(test)]
         mod tests {
             use super::{
                 ConfigMap, NodeSelector, NodeSelectorRequirement, NodeSelectorTerm,
                 PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimSpec,
-                PersistentVolumeSpec, RuntimeClass, StorageClass, StorageClassSpec,
-                TypedLocalObjectReference, VolumeNodeAffinity,
+                PersistentVolumeSpec, RuntimeClass, ShipSnapshot, ShipSnapshotSpec,
+                ShipSnapshotStatus, StorageClass, StorageClassSpec, TypedLocalObjectReference,
+                VolumeNodeAffinity,
             };
             use crate::manifests::meta::v1::ObjectMeta;
             use crate::validators::Validatable;
@@ -346,6 +384,62 @@ pub mod core {
                         "kind={kind} api_group={api_group} name={name}"
                     );
                 }
+            }
+
+            fn ship_snapshot_with_spec(
+                name: &str,
+                ship_name: &str,
+                mode: Option<&str>,
+            ) -> ShipSnapshot {
+                ShipSnapshot {
+                    object_meta: Some(ObjectMeta {
+                        name: Some(name.to_string()),
+                        namespace: Some("default".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(ShipSnapshotSpec {
+                        ship_name: ship_name.to_string(),
+                        mode: mode.map(str::to_string),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            }
+
+            #[test]
+            fn ship_snapshot_accepts_valid_modes() {
+                for mode in [None, Some("Online"), Some("Offline")] {
+                    let snap = ship_snapshot_with_spec("snap-a", "ship-a", mode);
+                    assert!(snap.validate(), "mode={mode:?}");
+                }
+            }
+
+            #[test]
+            fn ship_snapshot_rejects_unknown_mode() {
+                let snap = ship_snapshot_with_spec("snap-a", "ship-a", Some("Fast"));
+                assert!(!snap.validate());
+            }
+
+            #[test]
+            fn ship_snapshot_rejects_empty_ship_name() {
+                let snap = ship_snapshot_with_spec("snap-a", "  ", None);
+                assert!(!snap.validate());
+            }
+
+            #[test]
+            fn ship_snapshot_status_phase_must_be_known() {
+                let mut snap = ship_snapshot_with_spec("snap-a", "ship-a", None);
+                snap.status = Some(ShipSnapshotStatus {
+                    phase: "Ready".to_string(),
+                    ..Default::default()
+                });
+                assert!(snap.validate());
+
+                snap.status = Some(ShipSnapshotStatus {
+                    phase: "Bogus".to_string(),
+                    ..Default::default()
+                });
+                assert!(!snap.validate());
             }
         }
     }

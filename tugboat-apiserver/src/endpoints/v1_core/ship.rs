@@ -183,6 +183,7 @@ pub(super) async fn handle_ship_replace(
     apply_ship_service_account_defaults(&operator, &namespace, &mut replaced).await?;
     validate_resource(&replaced)?;
     validate_ship_target_node_name_update(&current, &replaced)?;
+    validate_ship_restore_from_snapshot_update(&current, &replaced)?;
 
     let replaced = if current != replaced {
         operator
@@ -234,6 +235,7 @@ pub(super) async fn handle_ship_patch(
     apply_ship_service_account_defaults(&operator, &namespace, &mut patched).await?;
     validate_resource(&patched)?;
     validate_ship_target_node_name_update(&current, &patched)?;
+    validate_ship_restore_from_snapshot_update(&current, &patched)?;
 
     let patched = if current != patched {
         operator
@@ -614,12 +616,49 @@ fn ship_has_active_migration(ship: &Ship) -> bool {
     ship.has_active_migration()
 }
 
+fn ship_is_running(ship: &Ship) -> bool {
+    ship.spec
+        .as_ref()
+        .and_then(|spec| spec.node_name.as_deref())
+        .is_some_and(|node| !node.is_empty())
+}
+
+fn validate_ship_restore_from_snapshot_update(
+    current: &Ship,
+    updated: &Ship,
+) -> Result<(), Box<StatusResponse>> {
+    let current_value = current
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.restore_from_snapshot.as_deref());
+    let updated_value = updated
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.restore_from_snapshot.as_deref());
+
+    if matches!(updated_value, Some("")) {
+        return Err(Box::new(StatusResponse::bad_request(
+            "spec.restoreFromSnapshot must not be empty",
+            None,
+        )));
+    }
+
+    if current_value != updated_value && ship_is_running(current) {
+        return Err(Box::new(StatusResponse::conflict(
+            "spec.restoreFromSnapshot is immutable after the Ship is running",
+            None,
+        )));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         CONDITION_VM_MIGRATION_ABORTED, MIGRATION_ABORT_MESSAGE, PHASE_FAILED,
         abort_ship_migration, ship_has_active_migration, should_project_service_account_token,
-        validate_ship_target_node_name_update,
+        validate_ship_restore_from_snapshot_update, validate_ship_target_node_name_update,
     };
     use actix_web::ResponseError;
     use tugboat_resources::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
@@ -846,6 +885,70 @@ mod tests {
 
         validate_ship_target_node_name_update(&current, &current)
             .expect("unchanged target should be allowed");
+    }
+
+    #[test]
+    fn validate_restore_from_snapshot_rejects_empty_string() {
+        let updated = Ship {
+            spec: Some(ShipSpec {
+                restore_from_snapshot: Some(String::new()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let err = validate_ship_restore_from_snapshot_update(&Ship::default(), &updated)
+            .expect_err("empty restoreFromSnapshot should fail");
+        assert_eq!(err.status_code().as_u16(), 400);
+    }
+
+    #[test]
+    fn validate_restore_from_snapshot_allows_setting_before_running() {
+        let updated = Ship {
+            spec: Some(ShipSpec {
+                restore_from_snapshot: Some("snap-a".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        validate_ship_restore_from_snapshot_update(&Ship::default(), &updated)
+            .expect("setting before running should be allowed");
+    }
+
+    #[test]
+    fn validate_restore_from_snapshot_rejects_change_after_running() {
+        let current = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-a".to_string()),
+                restore_from_snapshot: Some("snap-a".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let updated = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-a".to_string()),
+                restore_from_snapshot: Some("snap-b".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let err = validate_ship_restore_from_snapshot_update(&current, &updated)
+            .expect_err("changing restoreFromSnapshot after running should fail");
+        assert_eq!(err.status_code().as_u16(), 409);
+    }
+
+    #[test]
+    fn validate_restore_from_snapshot_allows_unchanged_after_running() {
+        let current = Ship {
+            spec: Some(ShipSpec {
+                node_name: Some("node-a".to_string()),
+                restore_from_snapshot: Some("snap-a".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        validate_ship_restore_from_snapshot_update(&current, &current)
+            .expect("unchanged restoreFromSnapshot should be allowed");
     }
 
     #[test]

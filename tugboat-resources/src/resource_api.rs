@@ -371,6 +371,16 @@ descriptor!(
     CLUSTER_DEFAULT_OPS
 );
 descriptor!(
+    SHIP_SNAPSHOT,
+    "core",
+    "v1",
+    "ShipSnapshot",
+    "shipsnapshots",
+    "shipsnapshot",
+    Namespaced,
+    SNAPSHOT_RESOURCE_OPS
+);
+descriptor!(
     DEPLOYMENT,
     "apps",
     "v1",
@@ -501,6 +511,7 @@ pub const ALL_RESOURCE_DESCRIPTORS: &[ResourceApiDescriptor] = &[
     SERVICE_ACCOUNT,
     SHIP,
     SHIP_CLASS,
+    SHIP_SNAPSHOT,
     STORAGE_CLASS,
     LEASE,
     VOLUME_SNAPSHOT,

@@ -1,0 +1,66 @@
+// Copyright 2025- SiLeader (Cerussite).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+import "meta/v1/object_meta.proto";
+import "meta/v1/time.proto";
+import "meta/v1/type_meta.proto";
+
+package tugboat.core.v1;
+
+message ShipSnapshot {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+  ShipSnapshotSpec spec = 3;
+  optional ShipSnapshotStatus status = 4;
+}
+
+message ShipSnapshotSpec {
+  string ship_name = 1;
+  // "Online" leaves the guest running and only pauses briefly during
+  // capture. "Offline" requires the Ship to be stopped first.
+  // Default: "Online".
+  optional string mode = 2;
+  // When true, the controller also creates a VolumeSnapshot for every
+  // PVC referenced by the Ship, so the result is a consistent set.
+  // The snapshots use the cluster's default VolumeSnapshotClass per
+  // PVC's StorageClass unless overridden here.
+  optional bool include_volumes = 3;
+  optional string volume_snapshot_class_name = 4;
+}
+
+message ShipSnapshotStatus {
+  string phase = 1; // Pending | Capturing | Ready | Failed
+  optional meta.v1.Time creation_time = 2;
+  optional string handle = 3; // runtime-specific snapshot handle
+  optional string runtime = 4; // qemu | cloud-hypervisor
+  repeated ShipSnapshotVolumeRef volume_snapshots = 5;
+  optional string error = 6;
+  optional int64 size_bytes = 7;
+  repeated ShipSnapshotCondition conditions = 8;
+}
+
+message ShipSnapshotVolumeRef {
+  string pvc_name = 1;
+  string volume_snapshot_name = 2;
+  optional bool ready_to_use = 3;
+}
+
+message ShipSnapshotCondition {
+  string type = 1;
+  string status = 2;
+  string message = 3;
+  meta.v1.Time timestamp = 4;
+}

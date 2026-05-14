@@ -46,6 +46,10 @@ message ShipSpec {
   optional bool automount_service_account_token = 13;
   optional Affinity affinity = 14;
   repeated TopologySpreadConstraint topology_spread_constraints = 15;
+  // Name of a ShipSnapshot (same namespace) to boot from instead of
+  // the normal add path. Immutable once the Ship reaches a running
+  // state.
+  optional string restore_from_snapshot = 16;
 }
 
 message Affinity {
