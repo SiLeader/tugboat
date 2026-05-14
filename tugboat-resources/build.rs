@@ -34,6 +34,8 @@ fn main() {
         ".tugboat.meta.v1.ObjectMeta",
         ".tugboat.meta.v1.ObjectReference",
         ".tugboat.meta.v1.OwnerReference",
+        ".tugboat.meta.v1.LabelSelector",
+        ".tugboat.meta.v1.LabelSelectorRequirement",
         ".tugboat.meta.v1.TypeMeta",
     ];
 

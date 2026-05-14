@@ -21,8 +21,8 @@ use tracing::{debug, info, warn};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_cni_operator::CniOperatorConfig;
 use tugboat_resources::manifests::core::v1::{
-    Node, NodeCniPluginStatus, NodeCondition, NodeOvercommitSpec, NodeResource, NodeSpec,
-    NodeStatus,
+    Node, NodeCniPluginStatus, NodeCondition, NodeImageStatus, NodeOvercommitSpec, NodeResource,
+    NodeSpec, NodeStatus,
 };
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
 use tugboat_resources::{
@@ -104,6 +104,7 @@ pub(crate) async fn publish_node_status(
     runtime_class: Option<&str>,
     topology: &TopologyConfig,
     cni: &CniOperatorConfig,
+    image_cache_dir: &str,
 ) -> Result<(), NodeRegistrationError> {
     let api: Api<Node> = Api::all(client);
     let Some(mut node) = api.get(node_name).await? else {
@@ -118,7 +119,7 @@ pub(crate) async fn publish_node_status(
         topology,
     )
     .await?;
-    node.status = Some(build_node_status(cni)?);
+    node.status = Some(build_node_status(cni, image_cache_dir)?);
     api.replace_status(node_name, node).await?;
     debug!("Published CNI status for node '{node_name}'");
     Ok(())
@@ -130,6 +131,7 @@ pub(crate) async fn refresh_node_status_loop(
     runtime_class: Option<String>,
     topology: TopologyConfig,
     cni: CniOperatorConfig,
+    image_cache_dir: String,
     interval: Duration,
 ) {
     info!(
@@ -145,6 +147,7 @@ pub(crate) async fn refresh_node_status_loop(
             normalized_runtime_class(runtime_class.as_deref()),
             &topology,
             &cni,
+            &image_cache_dir,
         )
         .await
         {
@@ -293,9 +296,13 @@ pub(crate) fn normalized_host_architecture() -> &'static str {
     }
 }
 
-fn build_node_status(cni: &CniOperatorConfig) -> Result<NodeStatus, io::Error> {
+fn build_node_status(
+    cni: &CniOperatorConfig,
+    image_cache_dir: &str,
+) -> Result<NodeStatus, io::Error> {
     build_node_status_with_flannel_paths(
         cni,
+        Path::new(image_cache_dir),
         Path::new(DEFAULT_FLANNEL_SUBNET_FILE),
         Path::new(DEFAULT_FLANNEL_DATA_DIR),
     )
@@ -303,6 +310,7 @@ fn build_node_status(cni: &CniOperatorConfig) -> Result<NodeStatus, io::Error> {
 
 fn build_node_status_with_flannel_paths(
     cni: &CniOperatorConfig,
+    image_cache_dir: &Path,
     flannel_subnet_file: &Path,
     flannel_data_dir: &Path,
 ) -> Result<NodeStatus, io::Error> {
@@ -351,7 +359,37 @@ fn build_node_status_with_flannel_paths(
     Ok(NodeStatus {
         conditions: vec![condition],
         cni_plugins,
+        images: probe_cached_images(image_cache_dir)?,
     })
+}
+
+fn probe_cached_images(image_cache_dir: &Path) -> Result<Vec<NodeImageStatus>, io::Error> {
+    let mut images = Vec::new();
+    if !image_cache_dir.try_exists()? {
+        return Ok(images);
+    }
+    for entry in std::fs::read_dir(image_cache_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let reference_path = entry.path().join("reference");
+        if !reference_path.try_exists()? {
+            continue;
+        }
+        let image = std::fs::read_to_string(&reference_path)?.trim().to_string();
+        if image.is_empty() {
+            continue;
+        }
+        let disk_path = entry.path().join("disk.qcow2");
+        let size_bytes = std::fs::metadata(disk_path)
+            .ok()
+            .and_then(|metadata| i64::try_from(metadata.len()).ok())
+            .filter(|size| *size > 0);
+        images.push(NodeImageStatus { image, size_bytes });
+    }
+    images.sort_by(|a, b| a.image.cmp(&b.image));
+    Ok(images)
 }
 
 fn probe_plugin_binary(bin_dir: &str, plugin: &str) -> Result<NodeCniPluginStatus, io::Error> {
@@ -766,7 +804,9 @@ mod tests {
         std::fs::create_dir_all(&data_dir).unwrap();
         std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
 
-        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let images = base.join("images");
+        let status =
+            build_node_status_with_flannel_paths(&config, &images, &subnet, &data_dir).unwrap();
         let condition = status.conditions.first().expect("condition should exist");
 
         assert_eq!(condition.r#type, "CniReady");
@@ -791,7 +831,9 @@ mod tests {
         std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
 
         let config = test_cni_config(&bin);
-        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let images = base.join("images");
+        let status =
+            build_node_status_with_flannel_paths(&config, &images, &subnet, &data_dir).unwrap();
 
         let flannel = status
             .cni_plugins
@@ -821,7 +863,9 @@ mod tests {
         std::fs::write(&subnet, "FLANNEL_NETWORK=not-a-cidr").unwrap();
 
         let config = test_cni_config(&bin);
-        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let images = base.join("images");
+        let status =
+            build_node_status_with_flannel_paths(&config, &images, &subnet, &data_dir).unwrap();
 
         let flannel = status
             .cni_plugins
@@ -847,7 +891,9 @@ mod tests {
         std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
 
         let config = test_cni_config(&bin);
-        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let images = base.join("images");
+        let status =
+            build_node_status_with_flannel_paths(&config, &images, &subnet, &data_dir).unwrap();
 
         let flannel = status
             .cni_plugins

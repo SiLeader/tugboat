@@ -54,6 +54,12 @@ message NodeResource {
 message NodeStatus {
   repeated NodeCondition conditions = 1;
   repeated NodeCniPluginStatus cni_plugins = 2;
+  repeated NodeImageStatus images = 3;
+}
+
+message NodeImageStatus {
+  string image = 1;
+  optional int64 size_bytes = 2;
 }
 
 message NodeCondition {

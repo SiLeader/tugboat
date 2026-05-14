@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use tugboat_resources::manifests::core::v1::{
-    ClusterNetworkClass, NetworkClass, PersistentVolume, PersistentVolumeClaim, RuntimeClass, Ship,
-    ShipClass,
+    ClusterNetworkClass, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim, RuntimeClass,
+    Ship, ShipClass, StorageClass,
 };
 
 /// Context shared across plugin invocations for a single scheduling cycle.
@@ -31,12 +31,16 @@ pub struct SchedulingContext {
     pub all_runtime_classes: Vec<RuntimeClass>,
     /// All Ships currently in the cluster (for resource usage calculation).
     pub all_ships: Vec<Ship>,
+    /// All Nodes currently in the cluster (for topology-aware scheduling).
+    pub all_nodes: Vec<Node>,
     /// All ShipClasses (for resolving resource requirements of scheduled ships).
     pub all_ship_classes: Vec<ShipClass>,
     /// All PersistentVolumeClaims in the cluster (for storage-fit checks).
     pub all_persistent_volume_claims: Vec<PersistentVolumeClaim>,
     /// All PersistentVolumes in the cluster (for storage-fit checks).
     pub all_persistent_volumes: Vec<PersistentVolume>,
+    /// All StorageClasses in the cluster (for WFFC topology checks).
+    pub all_storage_classes: Vec<StorageClass>,
 }
 
 impl SchedulingContext {
@@ -81,24 +85,8 @@ impl SchedulingContext {
     /// Return PVs bound to PVCs referenced by the Ship being scheduled.
     /// Only PVC-backed volumes are included; ConfigMap/Secret volumes are skipped.
     pub fn ship_bound_persistent_volumes(&self) -> Vec<&PersistentVolume> {
-        let namespace = self.ship_namespace();
-        let Some(spec) = self.ship.spec.as_ref() else {
-            return Vec::new();
-        };
-
         let mut result = Vec::new();
-        for volume in &spec.volumes {
-            let Some(pvc_source) = volume.persistent_volume_claim.as_ref() else {
-                continue;
-            };
-            let claim_name = &pvc_source.claim_name;
-            let Some(pvc) = self.all_persistent_volume_claims.iter().find(|pvc| {
-                let meta = pvc.object_meta.as_ref();
-                meta.and_then(|m| m.name.as_deref()) == Some(claim_name.as_str())
-                    && meta.and_then(|m| m.namespace.as_deref()) == Some(namespace)
-            }) else {
-                continue;
-            };
+        for pvc in self.ship_persistent_volume_claims() {
             let pv_name = pvc
                 .spec
                 .as_ref()
@@ -113,6 +101,30 @@ impl SchedulingContext {
                 .find(|pv| pv.object_meta.as_ref().and_then(|m| m.name.as_deref()) == Some(pv_name))
             {
                 result.push(pv);
+            }
+        }
+        result
+    }
+
+    /// Return PVCs referenced by PVC-backed volumes of the Ship being scheduled.
+    pub fn ship_persistent_volume_claims(&self) -> Vec<&PersistentVolumeClaim> {
+        let namespace = self.ship_namespace();
+        let Some(spec) = self.ship.spec.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut result = Vec::new();
+        for volume in &spec.volumes {
+            let Some(pvc_source) = volume.persistent_volume_claim.as_ref() else {
+                continue;
+            };
+            let claim_name = &pvc_source.claim_name;
+            if let Some(pvc) = self.all_persistent_volume_claims.iter().find(|pvc| {
+                let meta = pvc.object_meta.as_ref();
+                meta.and_then(|m| m.name.as_deref()) == Some(claim_name.as_str())
+                    && meta.and_then(|m| m.namespace.as_deref()) == Some(namespace)
+            }) {
+                result.push(pvc);
             }
         }
         result
@@ -149,6 +161,16 @@ impl SchedulingContext {
     pub fn find_runtime_class(&self, name: &str) -> Option<&RuntimeClass> {
         self.all_runtime_classes.iter().find(|runtime_class| {
             runtime_class
+                .object_meta
+                .as_ref()
+                .and_then(|meta| meta.name.as_deref())
+                == Some(name)
+        })
+    }
+
+    pub fn find_storage_class(&self, name: &str) -> Option<&StorageClass> {
+        self.all_storage_classes.iter().find(|storage_class| {
+            storage_class
                 .object_meta
                 .as_ref()
                 .and_then(|meta| meta.name.as_deref())

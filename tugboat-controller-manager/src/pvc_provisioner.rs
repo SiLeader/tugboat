@@ -8,15 +8,18 @@ use crate::provisioning::{
     reclaim_policy_from_storage_class, requested_capacity_bytes, storage_class_csi_config,
     storage_class_provisioner,
 };
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_csi_operator::TugboatCsiOperator;
-use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, StorageClass,
+    Node, PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimCondition,
+    PersistentVolumeClaimStatus, StorageClass,
 };
+use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_resources::{ObjectMetaResource, SELECTED_NODE_ANNOTATION};
 
 #[derive(Clone)]
 struct PvcProvisionerReconciler {
@@ -28,6 +31,13 @@ struct PvcProvisionerReconciler {
 pub(crate) struct PvcProvisionerController {
     controller: Controller<PersistentVolumeClaim>,
     reconciler: PvcProvisionerReconciler,
+}
+
+#[derive(Default)]
+struct WffcAccessibilityTopologies {
+    waiting: bool,
+    requeue: bool,
+    topologies: Vec<HashMap<String, String>>,
 }
 
 impl PvcProvisionerController {
@@ -80,6 +90,92 @@ impl PvcProvisionerReconciler {
         Action::requeue(self.config.csi.requeue_interval())
     }
 
+    async fn wffc_accessibility_topologies(
+        &self,
+        pvc: &PersistentVolumeClaim,
+        storage_class: &StorageClass,
+        namespace: &str,
+        name: &str,
+    ) -> Result<WffcAccessibilityTopologies, ControllerError> {
+        let Some(storage_class_spec) = storage_class.spec.as_ref() else {
+            return Ok(WffcAccessibilityTopologies::default());
+        };
+        if storage_class_spec.volume_binding_mode.as_deref() != Some("WaitForFirstConsumer") {
+            return Ok(WffcAccessibilityTopologies::default());
+        }
+        if pvc
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.volume_name.as_deref())
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Ok(WffcAccessibilityTopologies::default());
+        }
+
+        let Some(selected_node) = pvc
+            .object_meta
+            .as_ref()
+            .and_then(|meta| meta.annotations.get(SELECTED_NODE_ANNOTATION))
+            .map(String::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(WffcAccessibilityTopologies {
+                waiting: true,
+                requeue: false,
+                topologies: Vec::new(),
+            });
+        };
+
+        let node_api: Api<Node> = Api::all(self.client.clone());
+        let Some(node) = node_api.get(selected_node).await? else {
+            tracing::warn!(
+                "PersistentVolumeClaim '{}/{}' selected node '{}' is not available yet",
+                namespace,
+                name,
+                selected_node
+            );
+            return Ok(WffcAccessibilityTopologies {
+                waiting: true,
+                requeue: true,
+                topologies: Vec::new(),
+            });
+        };
+        let Some(labels) = node.object_meta.as_ref().map(|meta| &meta.labels) else {
+            return Ok(WffcAccessibilityTopologies::default());
+        };
+        let topology = selected_topology_labels(labels, storage_class);
+        Ok(WffcAccessibilityTopologies {
+            waiting: false,
+            requeue: false,
+            topologies: if topology.is_empty() {
+                Vec::new()
+            } else {
+                vec![topology]
+            },
+        })
+    }
+
+    async fn apply_waiting_for_first_consumer(
+        &self,
+        pvc: &PersistentVolumeClaim,
+        namespace: &str,
+        name: &str,
+    ) -> Result<(), ControllerError> {
+        let mut updated = pvc.clone();
+        let changed = apply_pvc_status(&mut updated, "Pending", None, false)
+            | upsert_pvc_condition(
+                &mut updated,
+                "WaitingForFirstConsumer",
+                "Waiting for the scheduler to select a node before provisioning.",
+            );
+        if changed {
+            let pvc_api: Api<PersistentVolumeClaim> =
+                Api::namespaced(self.client.clone(), namespace);
+            pvc_api.replace_status(name, updated).await?;
+        }
+        Ok(())
+    }
+
     async fn reconcile_applied(
         &self,
         pvc: PersistentVolumeClaim,
@@ -121,6 +217,18 @@ impl PvcProvisionerReconciler {
         let Some(provisioner_config) = provisioner_config(&self.config, &provisioner) else {
             return Ok(Action::await_change());
         };
+        let accessibility_topologies = self
+            .wffc_accessibility_topologies(&pvc, &storage_class, &namespace, &name)
+            .await?;
+        if accessibility_topologies.waiting {
+            self.apply_waiting_for_first_consumer(&pvc, &namespace, &name)
+                .await?;
+            return Ok(if accessibility_topologies.requeue {
+                self.requeue_action()
+            } else {
+                Action::await_change()
+            });
+        }
         let reclaim_policy = reclaim_policy_from_storage_class(&storage_class)?;
         let access_modes = claim_access_modes(&namespace, &name, &spec.access_modes)?;
         let access_type = claim_access_type(&namespace, &name, spec.volume_mode.as_deref())?;
@@ -166,6 +274,7 @@ impl PvcProvisionerReconciler {
                     access_type,
                     controller_create_secrets.clone(),
                     csi_config.mount_options.clone(),
+                    accessibility_topologies.topologies,
                 )
                 .await
             {
@@ -595,6 +704,64 @@ fn apply_pvc_status(
         changed = true;
     }
     changed
+}
+
+fn upsert_pvc_condition(
+    pvc: &mut PersistentVolumeClaim,
+    condition_type: &str,
+    message: &str,
+) -> bool {
+    let status = pvc
+        .status
+        .get_or_insert_with(PersistentVolumeClaimStatus::default);
+    if let Some(existing) = status
+        .conditions
+        .iter_mut()
+        .find(|condition| condition.status == condition_type)
+    {
+        if existing.message == message {
+            return false;
+        }
+        existing.message = message.to_string();
+        existing.timestamp = Some(Time::now());
+        return true;
+    }
+    status.conditions.push(PersistentVolumeClaimCondition {
+        status: condition_type.to_string(),
+        message: message.to_string(),
+        timestamp: Some(Time::now()),
+    });
+    true
+}
+
+fn selected_topology_labels(
+    labels: &HashMap<String, String>,
+    storage_class: &StorageClass,
+) -> HashMap<String, String> {
+    let allowed_keys = storage_class
+        .spec
+        .as_ref()
+        .map(|spec| {
+            spec.allowed_topologies
+                .iter()
+                .flat_map(|term| term.match_label_expressions.iter())
+                .map(|requirement| requirement.key.clone())
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+
+    if allowed_keys.is_empty() {
+        return labels
+            .iter()
+            .filter(|(key, _)| key.starts_with("topology."))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+    }
+
+    allowed_keys
+        .into_iter()
+        .filter_map(|key| labels.get(&key).map(|value| (key, value.clone())))
+        .collect()
 }
 
 fn apply_pv_status(

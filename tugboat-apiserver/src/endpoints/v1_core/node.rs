@@ -436,9 +436,11 @@ fn plan_node_drain(
             all_network_classes: resources.network_classes.clone(),
             all_runtime_classes: resources.runtime_classes.clone(),
             all_ships: shadow_ships.clone(),
+            all_nodes: resources.nodes.clone(),
             all_ship_classes: resources.ship_classes.clone(),
             all_persistent_volume_claims: resources.persistent_volume_claims.clone(),
             all_persistent_volumes: resources.persistent_volumes.clone(),
+            all_storage_classes: Vec::new(),
         };
 
         let Some(selected_node) = framework.schedule(&ctx, &resources.nodes) else {

@@ -12,7 +12,8 @@ use crate::proto::csi::v1::{
     ControllerPublishVolumeRequest, ControllerUnpublishVolumeRequest, CreateVolumeRequest,
     DeleteVolumeRequest, NodeExpandVolumeRequest, NodeGetCapabilitiesRequest,
     NodeGetVolumeStatsRequest, NodePublishVolumeRequest, NodeStageVolumeRequest,
-    NodeUnpublishVolumeRequest, NodeUnstageVolumeRequest, VolumeCapability,
+    NodeUnpublishVolumeRequest, NodeUnstageVolumeRequest, Topology, TopologyRequirement,
+    VolumeCapability,
 };
 pub use error::Error;
 use hyper_util::rt::TokioIo;
@@ -187,6 +188,7 @@ impl TugboatCsiOperator {
         access_type: CsiAccessType,
         secrets: HashMap<String, String>,
         mount_flags: Vec<String>,
+        accessibility_topologies: Vec<HashMap<String, String>>,
     ) -> Result<ProvisionedVolume, error::Error> {
         validate_volume_name(&name)?;
         validate_optional_capacity_bytes(capacity_bytes)?;
@@ -207,7 +209,7 @@ impl TugboatCsiOperator {
             parameters,
             secrets,
             volume_content_source: None,
-            accessibility_requirements: None,
+            accessibility_requirements: topology_requirement(accessibility_topologies),
             mutable_parameters: Default::default(),
         };
 
@@ -687,6 +689,21 @@ fn volume_capability(
             }),
         }),
     }
+}
+
+fn topology_requirement(topologies: Vec<HashMap<String, String>>) -> Option<TopologyRequirement> {
+    let topologies = topologies
+        .into_iter()
+        .filter(|segments| !segments.is_empty())
+        .map(|segments| Topology { segments })
+        .collect::<Vec<_>>();
+    if topologies.is_empty() {
+        return None;
+    }
+    Some(TopologyRequirement {
+        requisite: topologies.clone(),
+        preferred: topologies,
+    })
 }
 
 async fn connect_channel_once(

@@ -15,7 +15,7 @@
 use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, NetworkClass, Node, PersistentVolume, PersistentVolumeClaim, RuntimeClass,
-    Ship, ShipClass,
+    Ship, ShipClass, StorageClass,
 };
 
 pub(crate) struct Cache {
@@ -28,6 +28,7 @@ pub(crate) struct Cache {
     ship_classes: Vec<ShipClass>,
     persistent_volume_claims: Vec<PersistentVolumeClaim>,
     persistent_volumes: Vec<PersistentVolume>,
+    storage_classes: Vec<StorageClass>,
 }
 
 impl Cache {
@@ -42,6 +43,7 @@ impl Cache {
             ship_classes: Vec::new(),
             persistent_volume_claims: Vec::new(),
             persistent_volumes: Vec::new(),
+            storage_classes: Vec::new(),
         }
     }
 
@@ -54,6 +56,7 @@ impl Cache {
         let ship_class_api: Api<ShipClass> = Api::all(self.client.clone());
         let pvc_api: Api<PersistentVolumeClaim> = Api::all(self.client.clone());
         let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
+        let storage_class_api: Api<StorageClass> = Api::all(self.client.clone());
 
         self.cluster_network_classes = cluster_network_class_api.list().await?;
         self.network_classes = network_class_api.list().await?;
@@ -63,10 +66,11 @@ impl Cache {
         self.ship_classes = ship_class_api.list().await?;
         self.persistent_volume_claims = pvc_api.list().await?;
         self.persistent_volumes = pv_api.list().await?;
+        self.storage_classes = storage_class_api.list().await?;
 
         tracing::debug!(
             "Cache refreshed: {} cluster network classes, {} network classes, {} runtime classes, \
-             {} nodes, {} ships, {} ship classes, {} pvcs, {} pvs",
+             {} nodes, {} ships, {} ship classes, {} pvcs, {} pvs, {} storage classes",
             self.cluster_network_classes.len(),
             self.network_classes.len(),
             self.runtime_classes.len(),
@@ -75,6 +79,7 @@ impl Cache {
             self.ship_classes.len(),
             self.persistent_volume_claims.len(),
             self.persistent_volumes.len(),
+            self.storage_classes.len(),
         );
 
         Ok(())
@@ -122,5 +127,9 @@ impl Cache {
 
     pub fn persistent_volumes(&self) -> &[PersistentVolume] {
         &self.persistent_volumes
+    }
+
+    pub fn storage_classes(&self) -> &[StorageClass] {
+        &self.storage_classes
     }
 }

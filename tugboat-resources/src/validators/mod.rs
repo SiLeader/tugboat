@@ -16,12 +16,14 @@ mod name;
 mod namespace;
 mod node_affinity;
 mod reclaim_policy;
+mod ship_scheduling;
 mod volume_binding_mode;
 
 pub use name::*;
 pub use namespace::*;
 pub use node_affinity::*;
 pub use reclaim_policy::*;
+pub use ship_scheduling::*;
 pub use volume_binding_mode::*;
 
 pub trait Validator<T> {

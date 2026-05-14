@@ -21,7 +21,7 @@ pub mod core {
         use crate::validators::{
             HasNodeAffinity, HasReclaimPolicy, HasVolumeBindingMode, NameValidator,
             NamespaceProhibitedValidator, NodeAffinityValidator, ReclaimPolicyValidator,
-            VolumeBindingModeValidator,
+            ShipSchedulingValidator, VolumeBindingModeValidator,
         };
         use crate::{apply_resource, apply_validators, resource_api};
 
@@ -87,7 +87,7 @@ pub mod core {
                 self.spec.as_ref()?.node_affinity.as_ref()
             }
         }
-        apply_validators!(Ship, validators NameValidator);
+        apply_validators!(Ship, validators NameValidator, ShipSchedulingValidator);
         apply_validators!(ShipClass, validators NameValidator, NamespaceProhibitedValidator);
 
         #[cfg(test)]

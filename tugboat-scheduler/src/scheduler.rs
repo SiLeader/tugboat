@@ -18,10 +18,14 @@ use crate::framework::Framework;
 use crate::framework::SchedulingContext;
 use crate::leader_election::LeaderElector;
 use tugboat_client::{Api, TugboatClient};
-use tugboat_resources::manifests::core::v1::{Ship, ShipCondition, ShipStatus};
+use tugboat_resources::manifests::core::v1::{
+    PersistentVolumeClaim, Ship, ShipCondition, ShipStatus,
+};
 use tugboat_resources::manifests::meta::v1::Time;
 
 const CONDITION_SCHEDULING_BLOCKED: &str = "SchedulingBlocked";
+const SELECTED_NODE_ANNOTATION: &str = "volume.tugboat.cloud/selected-node";
+const WAIT_FOR_FIRST_CONSUMER: &str = "WaitForFirstConsumer";
 
 pub(crate) struct Scheduler {
     client: TugboatClient,
@@ -169,9 +173,11 @@ impl Scheduler {
             all_network_classes: cache.network_classes().to_vec(),
             all_runtime_classes: cache.runtime_classes().to_vec(),
             all_ships: cache.ships().to_vec(),
+            all_nodes: cache.nodes().to_vec(),
             all_ship_classes: cache.ship_classes().to_vec(),
             all_persistent_volume_claims: cache.persistent_volume_claims().to_vec(),
             all_persistent_volumes: cache.persistent_volumes().to_vec(),
+            all_storage_classes: cache.storage_classes().to_vec(),
         };
 
         let Some(selected_node) = self.framework.schedule(&ctx, cache.nodes()) else {
@@ -186,6 +192,16 @@ impl Scheduler {
             .unwrap_or("unknown");
 
         tracing::info!("Scheduling ship {ship_namespace}/{ship_name} to node {node_name}");
+
+        if let Err(error) = self
+            .annotate_wffc_claims(&ctx, ship_namespace, node_name)
+            .await
+        {
+            tracing::error!(
+                "Failed to annotate WFFC PersistentVolumeClaims for ship {ship_namespace}/{ship_name}: {error}"
+            );
+            return;
+        }
 
         // Bind: update the Ship's spec.nodeName
         let mut updated = ship.clone();
@@ -213,6 +229,36 @@ impl Scheduler {
         }
     }
 
+    async fn annotate_wffc_claims(
+        &self,
+        ctx: &SchedulingContext,
+        namespace: &str,
+        node_name: &str,
+    ) -> Result<(), tugboat_client::Error> {
+        let pvc_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
+        for pvc in ctx.ship_persistent_volume_claims() {
+            if !is_unbound_wffc_claim(ctx, pvc) || selected_node(pvc) == Some(node_name) {
+                continue;
+            }
+            let Some(name) = pvc
+                .object_meta
+                .as_ref()
+                .and_then(|meta| meta.name.as_deref())
+            else {
+                continue;
+            };
+            let patch = serde_json::json!({
+                "metadata": {
+                    "annotations": {
+                        SELECTED_NODE_ANNOTATION: node_name
+                    }
+                }
+            });
+            pvc_api.patch(name, patch).await?;
+        }
+        Ok(())
+    }
+
     async fn update_ship_scheduling_status(
         &self,
         ship: &Ship,
@@ -238,6 +284,38 @@ impl Scheduler {
             );
         }
     }
+}
+
+fn is_unbound_wffc_claim(ctx: &SchedulingContext, pvc: &PersistentVolumeClaim) -> bool {
+    let Some(spec) = pvc.spec.as_ref() else {
+        return false;
+    };
+    if spec
+        .volume_name
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+    {
+        return false;
+    }
+    let Some(storage_class_name) = spec
+        .storage_class_name
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    ctx.find_storage_class(storage_class_name)
+        .and_then(|storage_class| storage_class.spec.as_ref())
+        .and_then(|spec| spec.volume_binding_mode.as_deref())
+        == Some(WAIT_FOR_FIRST_CONSUMER)
+}
+
+fn selected_node(pvc: &PersistentVolumeClaim) -> Option<&str> {
+    pvc.object_meta
+        .as_ref()
+        .and_then(|meta| meta.annotations.get(SELECTED_NODE_ANNOTATION))
+        .map(String::as_str)
+        .filter(|value| !value.is_empty())
 }
 
 fn append_ship_condition(ship: &mut Ship, condition: ShipCondition) {

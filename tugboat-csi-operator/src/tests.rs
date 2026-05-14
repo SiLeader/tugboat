@@ -451,6 +451,7 @@ async fn create_volume_rejects_empty_name() {
             CsiAccessType::Filesystem,
             HashMap::new(),
             Vec::new(),
+            Vec::new(),
         )
         .await
         .expect_err("empty volume name should fail before RPC");
@@ -471,6 +472,7 @@ async fn create_volume_rejects_empty_access_modes() {
             CsiAccessType::Filesystem,
             HashMap::new(),
             Vec::new(),
+            Vec::new(),
         )
         .await
         .expect_err("missing access modes should fail before RPC");
@@ -490,6 +492,7 @@ async fn create_volume_rejects_non_positive_capacity() {
             vec![CsiAccessMode::ReadWriteOnce],
             CsiAccessType::Filesystem,
             HashMap::new(),
+            Vec::new(),
             Vec::new(),
         )
         .await

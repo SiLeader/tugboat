@@ -41,10 +41,10 @@ impl VmImageRegistry {
             .await?;
 
         for layer in data.layers {
-            let filename = if layer.media_type.contains("qcow2") {
+            let (filename, reference_path) = if layer.media_type.contains("qcow2") {
                 let dir = self.directory.join(layer.sha256_digest());
                 tokio::fs::create_dir_all(&dir).await?;
-                dir.join("disk.qcow2")
+                (dir.join("disk.qcow2"), dir.join("reference"))
             } else {
                 continue;
             };
@@ -55,6 +55,7 @@ impl VmImageRegistry {
                 .to_string();
             let data = decompress_gzip(layer.data.as_slice())?;
             tokio::fs::write(&filename, data).await?;
+            tokio::fs::write(reference_path, image).await?;
             info!("Image '{image}' pull finished");
             return Ok(Image { location });
         }

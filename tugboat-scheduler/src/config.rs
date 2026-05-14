@@ -87,11 +87,22 @@ fn default_filter_plugins() -> Vec<String> {
         "RuntimeClassFit".to_string(),
         "ResourceFit".to_string(),
         "StorageFit".to_string(),
+        "StorageBindingReady".to_string(),
+        "VolumeTopology".to_string(),
+        "NodeAffinity".to_string(),
+        "ShipAffinity".to_string(),
+        "TopologySpread".to_string(),
     ]
 }
 
 fn default_score_plugins() -> Vec<String> {
-    vec!["TaintToleration".to_string(), "LeastAllocated".to_string()]
+    vec![
+        "TaintToleration".to_string(),
+        "LeastAllocated".to_string(),
+        "NodeAffinity".to_string(),
+        "TopologySpread".to_string(),
+        "ImageLocality".to_string(),
+    ]
 }
 
 impl SchedulerConfig {
