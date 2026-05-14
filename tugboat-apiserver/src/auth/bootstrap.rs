@@ -129,7 +129,11 @@ fn builtin_aggregate_children() -> Vec<ClusterRole> {
 
 fn admin_rules() -> Vec<PolicyRule> {
     vec![
-        policy_rule(&["core", "apps", "coordination"], &["*"], &["*"]),
+        policy_rule(
+            &["core", "apps", "coordination", "snapshot"],
+            &["*"],
+            &["*"],
+        ),
         policy_rule(&[RBAC_API_GROUP], &["roles", "rolebindings"], &["*"]),
     ]
 }
@@ -137,7 +141,7 @@ fn admin_rules() -> Vec<PolicyRule> {
 fn edit_rules() -> Vec<PolicyRule> {
     vec![
         policy_rule(
-            &["core", "apps", "coordination"],
+            &["core", "apps", "coordination", "snapshot"],
             &["*"],
             &[
                 "create", "get", "list", "watch", "update", "patch", "delete",
@@ -154,7 +158,7 @@ fn edit_rules() -> Vec<PolicyRule> {
 fn view_rules() -> Vec<PolicyRule> {
     vec![
         policy_rule(
-            &["core", "apps", "coordination"],
+            &["core", "apps", "coordination", "snapshot"],
             &["*"],
             &["get", "list", "watch"],
         ),

@@ -16,6 +16,7 @@ use crate::endpoints::v1_apps;
 use crate::endpoints::v1_authorization;
 use crate::endpoints::v1_coordination;
 use crate::endpoints::v1_core;
+use crate::endpoints::v1_snapshot;
 use std::ops::Deref;
 use tugboat_resources::StaticResource;
 use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
@@ -26,6 +27,9 @@ use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
     PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
+};
+use tugboat_resources::manifests::snapshot::v1::{
+    VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotContent,
 };
 use tugboat_resources::resource_api;
 use tugboat_resources::resource_api::ResourceApiDescriptor as ResourceMetadataDescriptor;
@@ -141,6 +145,18 @@ pub(crate) fn all_resource_apis() -> &'static [ResourceApiDescriptor] {
             ResourceApiDescriptor::new::<Lease>(
                 &resource_api::LEASE,
                 v1_coordination::register_lease,
+            ),
+            ResourceApiDescriptor::new::<VolumeSnapshot>(
+                &resource_api::VOLUME_SNAPSHOT,
+                v1_snapshot::register_volume_snapshot,
+            ),
+            ResourceApiDescriptor::new::<VolumeSnapshotContent>(
+                &resource_api::VOLUME_SNAPSHOT_CONTENT,
+                v1_snapshot::register_volume_snapshot_content,
+            ),
+            ResourceApiDescriptor::new::<VolumeSnapshotClass>(
+                &resource_api::VOLUME_SNAPSHOT_CLASS,
+                v1_snapshot::register_volume_snapshot_class,
             ),
         ]
     })

@@ -54,6 +54,12 @@ pub async fn discovery() -> impl Responder {
             server_relative_url: "/openapi/v3/apis/coordination/v1".to_string(),
         },
     );
+    paths.insert(
+        "apis/snapshot/v1".to_string(),
+        DiscoveryPath {
+            server_relative_url: "/openapi/v3/apis/snapshot/v1".to_string(),
+        },
+    );
 
     HttpResponse::Ok().json(DiscoveryResponse { paths })
 }
@@ -65,6 +71,7 @@ mod tests {
     use crate::endpoints::v1_authorization::openapi_authorization_v1;
     use crate::endpoints::v1_coordination::openapi_coordination_v1;
     use crate::endpoints::v1_core::openapi_core_v1;
+    use crate::endpoints::v1_snapshot::openapi_snapshot_v1;
     use actix_web::{App, test};
     use serde_json::Value;
 
@@ -76,7 +83,8 @@ mod tests {
                 .service(openapi_authorization_v1)
                 .service(openapi_apps_v1)
                 .service(openapi_core_v1)
-                .service(openapi_coordination_v1),
+                .service(openapi_coordination_v1)
+                .service(openapi_snapshot_v1),
         )
         .await;
 
@@ -102,6 +110,11 @@ mod tests {
         assert_eq!(
             resp.paths["apis/coordination/v1"].server_relative_url,
             "/openapi/v3/apis/coordination/v1"
+        );
+        assert!(resp.paths.contains_key("apis/snapshot/v1"));
+        assert_eq!(
+            resp.paths["apis/snapshot/v1"].server_relative_url,
+            "/openapi/v3/apis/snapshot/v1"
         );
 
         let req = test::TestRequest::get()
@@ -146,5 +159,17 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
+
+        let req = test::TestRequest::get()
+            .uri("/openapi/v3/apis/snapshot/v1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+        let body = test::read_body(resp).await;
+        let schema: Value = serde_json::from_slice(&body).unwrap();
+        assert!(schema["paths"]["/apis/snapshot/v1/volumesnapshotclasses"].is_object());
+        assert!(
+            schema["paths"]["/apis/snapshot/v1/namespaces/{namespace}/volumesnapshots"].is_object()
+        );
     }
 }

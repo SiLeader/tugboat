@@ -30,6 +30,7 @@ fn main() {
         ".tugboat.apps.v1",
         ".tugboat.authorization.v1",
         ".tugboat.core.v1",
+        ".tugboat.snapshot.v1",
         ".tugboat.coordination.v1",
         ".tugboat.meta.v1.ObjectMeta",
         ".tugboat.meta.v1.ObjectReference",
@@ -84,6 +85,10 @@ fn main() {
                 "proto/core/v1/ship.proto",
                 "proto/core/v1/ship_class.proto",
                 "proto/core/v1/service_account.proto",
+                // snapshot/v1
+                "proto/snapshot/v1/volume_snapshot.proto",
+                "proto/snapshot/v1/volume_snapshot_content.proto",
+                "proto/snapshot/v1/volume_snapshot_class.proto",
                 // meta/v1
                 "proto/meta/v1/object_meta.proto",
                 "proto/meta/v1/object_reference.proto",

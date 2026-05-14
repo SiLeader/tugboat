@@ -118,6 +118,39 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         assert_has_verbs(resource, &["create", "list", "get", "delete"])?;
     }
 
+    let snapshot_group = groups
+        .iter()
+        .find(|group| group["name"] == "snapshot")
+        .ok_or("snapshot API group is missing")?;
+    assert_eq!(
+        snapshot_group["preferredVersion"]["groupVersion"],
+        "snapshot/v1"
+    );
+
+    let snapshot_v1_resources = get_json(&client, &ctx.base_url, "/apis/snapshot/v1").await?;
+    assert_eq!(snapshot_v1_resources["groupVersion"], "snapshot/v1");
+    let snapshot_resources = snapshot_v1_resources["resources"]
+        .as_array()
+        .ok_or("snapshot/v1 discovery response is missing resources")?;
+    for (resource_name, namespaced) in [
+        ("volumesnapshots", true),
+        ("volumesnapshotcontents", false),
+        ("volumesnapshotclasses", false),
+    ] {
+        let resource = find_resource(snapshot_resources, resource_name)?;
+        assert_eq!(resource["namespaced"], namespaced);
+        assert_has_verbs(
+            resource,
+            &[
+                "create", "list", "get", "patch", "update", "delete", "watch",
+            ],
+        )?;
+
+        let status = find_resource(snapshot_resources, &format!("{resource_name}/status"))?;
+        assert_eq!(status["namespaced"], namespaced);
+        assert_has_verbs(status, &["patch", "update"])?;
+    }
+
     let openapi_discovery = get_json(&client, &ctx.base_url, "/openapi/v3").await?;
     assert_eq!(
         openapi_discovery["paths"]["api/v1"]["serverRelativeUrl"],
@@ -135,6 +168,31 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         openapi_discovery["paths"]["apis/authorization/v1"]["serverRelativeUrl"],
         "/openapi/v3/apis/authorization/v1"
     );
+    assert_eq!(
+        openapi_discovery["paths"]["apis/snapshot/v1"]["serverRelativeUrl"],
+        "/openapi/v3/apis/snapshot/v1"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn openapi_snapshot_schema_includes_snapshot_resource_definitions() -> Result<(), DynError> {
+    let Some(ctx) = setup_or_skip().await? else {
+        return Ok(());
+    };
+
+    let client = ctx.http_client()?;
+    let schema = get_json(&client, &ctx.base_url, "/openapi/v3/apis/snapshot/v1").await?;
+
+    assert!(schema["paths"]["/apis/snapshot/v1/volumesnapshotclasses"].is_object());
+    assert!(schema["paths"]["/apis/snapshot/v1/volumesnapshotcontents"].is_object());
+    assert!(
+        schema["paths"]["/apis/snapshot/v1/namespaces/{namespace}/volumesnapshots"].is_object()
+    );
+    assert!(schema["components"]["schemas"]["VolumeSnapshot"].is_object());
+    assert!(schema["components"]["schemas"]["VolumeSnapshotContent"].is_object());
+    assert!(schema["components"]["schemas"]["VolumeSnapshotClass"].is_object());
 
     Ok(())
 }

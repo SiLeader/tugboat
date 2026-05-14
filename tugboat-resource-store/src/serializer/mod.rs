@@ -26,6 +26,9 @@ use tugboat_resources::manifests::core::v1::{
     PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
 };
 use tugboat_resources::manifests::meta::v1::TypeMeta;
+use tugboat_resources::manifests::snapshot::v1::{
+    VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotContent,
+};
 use tugboat_resources::{Resource, StaticResource};
 
 pub trait Serializable: Resource + Sized {
@@ -91,6 +94,9 @@ protobuf_serializable!(Secret);
 protobuf_serializable!(PersistentVolume);
 protobuf_serializable!(PersistentVolumeClaim);
 protobuf_serializable!(ReplicaSet);
+protobuf_serializable!(VolumeSnapshot);
+protobuf_serializable!(VolumeSnapshotContent);
+protobuf_serializable!(VolumeSnapshotClass);
 
 #[cfg(test)]
 mod tests {
@@ -111,6 +117,11 @@ mod tests {
         VolumeNodeAffinity,
     };
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
+    use tugboat_resources::manifests::snapshot::v1::{
+        VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotClassSpec, VolumeSnapshotContent,
+        VolumeSnapshotContentSource, VolumeSnapshotContentSpec, VolumeSnapshotSource,
+        VolumeSnapshotSpec,
+    };
     use tugboat_resources::resource_api;
 
     fn serializable_descriptor<T: StaticSerializable>() -> resource_api::ResourceApiDescriptor {
@@ -140,6 +151,9 @@ mod tests {
             serializable_descriptor::<PersistentVolume>(),
             serializable_descriptor::<PersistentVolumeClaim>(),
             serializable_descriptor::<ReplicaSet>(),
+            serializable_descriptor::<VolumeSnapshot>(),
+            serializable_descriptor::<VolumeSnapshotContent>(),
+            serializable_descriptor::<VolumeSnapshotClass>(),
         ]
     }
 
@@ -253,6 +267,81 @@ mod tests {
         assert_eq!(
             spec.allowed_topologies[0].match_label_expressions[0].key,
             "topology.tugboat.cloud/zone"
+        );
+    }
+
+    #[test]
+    fn can_round_trip_snapshot_resources() {
+        let snapshot = VolumeSnapshot {
+            object_meta: Some(ObjectMeta {
+                name: Some("snap-a".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(VolumeSnapshotSpec {
+                source: Some(VolumeSnapshotSource {
+                    persistent_volume_claim_name: Some("data".to_string()),
+                    ..Default::default()
+                }),
+                volume_snapshot_class_name: Some("fast".to_string()),
+            }),
+            ..Default::default()
+        };
+        let decoded_snapshot = VolumeSnapshot::deserialize(&snapshot.serialize().unwrap()).unwrap();
+        assert_eq!(
+            decoded_snapshot
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.source.as_ref())
+                .and_then(|source| source.persistent_volume_claim_name.as_deref()),
+            Some("data")
+        );
+
+        let content = VolumeSnapshotContent {
+            object_meta: Some(ObjectMeta {
+                name: Some("content-a".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(VolumeSnapshotContentSpec {
+                deletion_policy: "Retain".to_string(),
+                source: Some(VolumeSnapshotContentSource {
+                    snapshot_handle: Some("snap-handle".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let decoded_content =
+            VolumeSnapshotContent::deserialize(&content.serialize().unwrap()).unwrap();
+        assert_eq!(
+            decoded_content
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.source.as_ref())
+                .and_then(|source| source.snapshot_handle.as_deref()),
+            Some("snap-handle")
+        );
+
+        let class = VolumeSnapshotClass {
+            object_meta: Some(ObjectMeta {
+                name: Some("fast".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(VolumeSnapshotClassSpec {
+                driver: "csi.tugboat.cloud/fast".to_string(),
+                deletion_policy: "Delete".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let decoded_class = VolumeSnapshotClass::deserialize(&class.serialize().unwrap()).unwrap();
+        assert_eq!(
+            decoded_class
+                .spec
+                .as_ref()
+                .map(|spec| spec.deletion_policy.as_str()),
+            Some("Delete")
         );
     }
 }

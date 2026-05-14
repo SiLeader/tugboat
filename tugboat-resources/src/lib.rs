@@ -222,6 +222,9 @@ mod tests {
     };
     use crate::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
     use crate::manifests::meta::v1::{ObjectMeta, Time};
+    use crate::manifests::snapshot::v1::{
+        VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotContent,
+    };
     use crate::{ObjectMetaResource, ShipMigrationExt, resource_api};
     use serde_json::json;
 
@@ -264,6 +267,9 @@ mod tests {
         assert_static_descriptor!(ShipClass, resource_api::SHIP_CLASS);
         assert_static_descriptor!(StorageClass, resource_api::STORAGE_CLASS);
         assert_static_descriptor!(Lease, resource_api::LEASE);
+        assert_static_descriptor!(VolumeSnapshot, resource_api::VOLUME_SNAPSHOT);
+        assert_static_descriptor!(VolumeSnapshotContent, resource_api::VOLUME_SNAPSHOT_CONTENT);
+        assert_static_descriptor!(VolumeSnapshotClass, resource_api::VOLUME_SNAPSHOT_CLASS);
     }
 
     #[test]
