@@ -98,6 +98,7 @@ pub struct ProvisionedVolume {
     pub volume_id: String,
     pub capacity_bytes: i64,
     pub volume_context: HashMap<String, String>,
+    pub accessible_topology: Vec<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,6 +226,11 @@ impl TugboatCsiOperator {
             volume_id: volume.volume_id,
             capacity_bytes: volume.capacity_bytes,
             volume_context: volume.volume_context,
+            accessible_topology: volume
+                .accessible_topology
+                .into_iter()
+                .map(|topology| topology.segments)
+                .collect(),
         })
     }
 

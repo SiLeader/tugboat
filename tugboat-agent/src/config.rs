@@ -25,6 +25,8 @@ use tugboat_runtime_common::config::{ConfigLoadError, load_component_toml_config
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentConfig {
     pub node: NodeConfig,
+    #[serde(default)]
+    pub topology: TopologyConfig,
     pub runtime: RuntimeConfig,
     pub apiserver: ApiserverConfig,
     pub image: ImageConfig,
@@ -40,6 +42,14 @@ pub(crate) struct NodeConfig {
     pub runtime_class: Option<String>,
     #[serde(default = "default_network_probe_interval_seconds")]
     pub network_probe_interval_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub(crate) struct TopologyConfig {
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub zone: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +130,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.node.name, "node1");
+        assert_eq!(config.topology.region.as_deref(), Some("us-east"));
+        assert_eq!(config.topology.zone.as_deref(), Some("us-east-a"));
         assert_eq!(config.apiserver.url, "https://apiserver:8443");
         assert_eq!(config.csi.publish_dir, "/var/lib/tugboat-agent/csi");
     }

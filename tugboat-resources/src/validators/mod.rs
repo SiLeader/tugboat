@@ -14,11 +14,15 @@
 
 mod name;
 mod namespace;
+mod node_affinity;
 mod reclaim_policy;
+mod volume_binding_mode;
 
 pub use name::*;
 pub use namespace::*;
+pub use node_affinity::*;
 pub use reclaim_policy::*;
+pub use volume_binding_mode::*;
 
 pub trait Validator<T> {
     fn validate(&self, value: &T) -> bool;

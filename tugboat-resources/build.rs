@@ -73,6 +73,7 @@ fn main() {
                 "proto/core/v1/namespace.proto",
                 "proto/core/v1/network_class.proto",
                 "proto/core/v1/node.proto",
+                "proto/core/v1/selector.proto",
                 "proto/core/v1/persistent_volume.proto",
                 "proto/core/v1/persistent_volume_claim.proto",
                 "proto/core/v1/secret.proto",

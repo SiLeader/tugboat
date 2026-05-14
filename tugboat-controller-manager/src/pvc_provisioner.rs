@@ -211,6 +211,7 @@ impl PvcProvisionerReconciler {
                 csi_config.clone(),
                 volume_id.clone(),
                 provisioned_volume.volume_context.clone(),
+                provisioned_volume.accessible_topology.clone(),
             );
 
             match pv_api.create(persistent_volume).await {

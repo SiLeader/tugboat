@@ -22,8 +22,12 @@ pub mod validators;
 
 pub const NODE_ARCH_LABEL_KEY: &str = "tugboat.cloud/arch";
 pub const NODE_RUNTIME_CLASS_LABEL_KEY: &str = "tugboat.cloud/runtime-class";
+pub const NODE_REGION_LABEL_KEY: &str = "topology.tugboat.cloud/region";
+pub const NODE_ZONE_LABEL_KEY: &str = "topology.tugboat.cloud/zone";
+pub const NODE_HOSTNAME_LABEL_KEY: &str = "topology.tugboat.cloud/host";
 pub const SERVICE_ACCOUNT_NAME_ANNOTATION: &str = "tugboat.cloud/service-account.name";
 pub const SERVICE_ACCOUNT_TOKEN_SECRET_TYPE: &str = "tugboat.cloud/service-account-token";
+pub const SELECTED_NODE_ANNOTATION: &str = "volume.tugboat.cloud/selected-node";
 
 pub trait Resource {
     fn type_meta() -> TypeMeta;

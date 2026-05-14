@@ -17,6 +17,7 @@ syntax = "proto3";
 import "meta/v1/object_meta.proto";
 import "meta/v1/type_meta.proto";
 import "core/v1/secret.proto";
+import "core/v1/selector.proto";
 
 package tugboat.core.v1;
 
@@ -39,4 +40,6 @@ message StorageClassSpec {
   SecretReference node_stage_secret_ref = 10;
   SecretReference controller_create_secret_ref = 11;
   repeated string mount_options = 12;
+  optional string volume_binding_mode = 13;
+  repeated TopologySelectorTerm allowed_topologies = 14;
 }

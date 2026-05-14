@@ -48,6 +48,7 @@ pub async fn run() {
 
     let node_name = config.node.name.clone();
     let runtime_class = config.node.runtime_class.clone();
+    let topology = config.topology.clone();
     let network_probe_interval = config.node.network_probe_interval();
     let cni_config = config.cni.clone();
     let apiserver_ca_cert_path = config.apiserver.tls.ca_cert_path.clone();
@@ -60,12 +61,17 @@ pub async fn run() {
         eprintln!("tugboat-agent failed to configure tugboat client: {e}");
         std::process::exit(1);
     });
-    node_registration::ensure_node_exists(client.clone(), node_name.clone(), runtime_class)
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("tugboat-agent failed to ensure node resource exists: {e}");
-            std::process::exit(1);
-        });
+    node_registration::ensure_node_exists(
+        client.clone(),
+        node_name.clone(),
+        runtime_class.clone(),
+        &topology,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!("tugboat-agent failed to ensure node resource exists: {e}");
+        std::process::exit(1);
+    });
     let runtime_operator = RuntimeOperator::new(
         config.runtime,
         config.image.cache_dir,
@@ -80,15 +86,23 @@ pub async fn run() {
         std::process::exit(1);
     });
 
-    node_registration::publish_node_status(client.clone(), &node_name, &cni_config)
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("tugboat-agent failed to publish node CNI status: {e}");
-            std::process::exit(1);
-        });
+    node_registration::publish_node_status(
+        client.clone(),
+        &node_name,
+        runtime_class.as_deref(),
+        &topology,
+        &cni_config,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!("tugboat-agent failed to publish node CNI status: {e}");
+        std::process::exit(1);
+    });
     tokio::spawn(node_registration::refresh_node_status_loop(
         client.clone(),
         node_name.clone(),
+        runtime_class,
+        topology,
         cni_config,
         network_probe_interval,
     ));

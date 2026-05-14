@@ -19,6 +19,7 @@ import "meta/v1/object_meta.proto";
 import "meta/v1/time.proto";
 
 import "core/v1/secret.proto";
+import "core/v1/selector.proto";
 
 package tugboat.core.v1;
 
@@ -37,6 +38,11 @@ message PersistentVolumeSpec {
   CsiPersistentVolumeSource csi = 5;
   PersistentVolumeClaimReference claim_ref = 6;
   optional int64 capacity_bytes = 7;
+  VolumeNodeAffinity node_affinity = 8;
+}
+
+message VolumeNodeAffinity {
+  NodeSelector required = 1;
 }
 
 message PersistentVolumeClaimReference {

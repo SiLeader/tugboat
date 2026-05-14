@@ -19,7 +19,9 @@ fn default<T: Default + PartialEq>(t: &T) -> bool {
 pub mod core {
     pub mod v1 {
         use crate::validators::{
-            HasReclaimPolicy, NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator,
+            HasNodeAffinity, HasReclaimPolicy, HasVolumeBindingMode, NameValidator,
+            NamespaceProhibitedValidator, NodeAffinityValidator, ReclaimPolicyValidator,
+            VolumeBindingModeValidator,
         };
         use crate::{apply_resource, apply_validators, resource_api};
 
@@ -52,16 +54,37 @@ pub mod core {
         apply_validators!(NetworkClass, validators NameValidator);
         apply_validators!(ClusterNetworkClass, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(Node, validators NameValidator, NamespaceProhibitedValidator);
-        apply_validators!(PersistentVolume, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(
+            PersistentVolume,
+            validators NameValidator,
+            NamespaceProhibitedValidator,
+            NodeAffinityValidator
+        );
         apply_validators!(PersistentVolumeClaim, validators NameValidator);
         apply_validators!(Secret, validators NameValidator);
         apply_validators!(ServiceAccount, validators NameValidator);
         apply_validators!(RuntimeClass, validators NameValidator, NamespaceProhibitedValidator);
-        apply_validators!(StorageClass, validators NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator);
+        apply_validators!(
+            StorageClass,
+            validators NameValidator,
+            NamespaceProhibitedValidator,
+            ReclaimPolicyValidator,
+            VolumeBindingModeValidator
+        );
 
         impl HasReclaimPolicy for StorageClass {
             fn reclaim_policy_value(&self) -> Option<&str> {
                 self.spec.as_ref()?.reclaim_policy.as_deref()
+            }
+        }
+        impl HasVolumeBindingMode for StorageClass {
+            fn volume_binding_mode_value(&self) -> Option<&str> {
+                self.spec.as_ref()?.volume_binding_mode.as_deref()
+            }
+        }
+        impl HasNodeAffinity for PersistentVolume {
+            fn node_affinity_value(&self) -> Option<&VolumeNodeAffinity> {
+                self.spec.as_ref()?.node_affinity.as_ref()
             }
         }
         apply_validators!(Ship, validators NameValidator);
@@ -69,7 +92,11 @@ pub mod core {
 
         #[cfg(test)]
         mod tests {
-            use super::{ConfigMap, RuntimeClass};
+            use super::{
+                ConfigMap, NodeSelector, NodeSelectorRequirement, NodeSelectorTerm,
+                PersistentVolume, PersistentVolumeSpec, RuntimeClass, StorageClass,
+                StorageClassSpec, VolumeNodeAffinity,
+            };
             use crate::manifests::meta::v1::ObjectMeta;
             use crate::validators::Validatable;
 
@@ -139,6 +166,102 @@ pub mod core {
                 };
 
                 assert!(!rc.validate());
+            }
+
+            #[test]
+            fn storageclass_accepts_supported_volume_binding_modes() {
+                for mode in ["Immediate", "WaitForFirstConsumer"] {
+                    let storage_class = StorageClass {
+                        object_meta: Some(ObjectMeta {
+                            name: Some("fast".to_string()),
+                            ..Default::default()
+                        }),
+                        spec: Some(StorageClassSpec {
+                            provisioner: "example.csi.driver".to_string(),
+                            volume_binding_mode: Some(mode.to_string()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+
+                    assert!(storage_class.validate(), "mode={mode}");
+                }
+            }
+
+            #[test]
+            fn storageclass_rejects_invalid_volume_binding_mode() {
+                let storage_class = StorageClass {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("fast".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(StorageClassSpec {
+                        provisioner: "example.csi.driver".to_string(),
+                        volume_binding_mode: Some("Delayed".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(!storage_class.validate());
+            }
+
+            #[test]
+            fn persistent_volume_accepts_valid_node_affinity() {
+                let pv = PersistentVolume {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("pv-a".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(PersistentVolumeSpec {
+                        node_affinity: Some(VolumeNodeAffinity {
+                            required: Some(NodeSelector {
+                                node_selector_terms: vec![NodeSelectorTerm {
+                                    match_expressions: vec![NodeSelectorRequirement {
+                                        key: "topology.tugboat.cloud/zone".to_string(),
+                                        operator: "In".to_string(),
+                                        values: vec!["us-east-a".to_string()],
+                                    }],
+                                    ..Default::default()
+                                }],
+                            }),
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(pv.validate());
+            }
+
+            #[test]
+            fn persistent_volume_rejects_invalid_node_affinity_requirements() {
+                for (key, operator) in [("", "In"), ("topology.tugboat.cloud/zone", "Equals")] {
+                    let pv = PersistentVolume {
+                        object_meta: Some(ObjectMeta {
+                            name: Some("pv-a".to_string()),
+                            ..Default::default()
+                        }),
+                        spec: Some(PersistentVolumeSpec {
+                            node_affinity: Some(VolumeNodeAffinity {
+                                required: Some(NodeSelector {
+                                    node_selector_terms: vec![NodeSelectorTerm {
+                                        match_expressions: vec![NodeSelectorRequirement {
+                                            key: key.to_string(),
+                                            operator: operator.to_string(),
+                                            values: vec!["us-east-a".to_string()],
+                                        }],
+                                        ..Default::default()
+                                    }],
+                                }),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+
+                    assert!(!pv.validate(), "key={key} operator={operator}");
+                }
             }
         }
     }
