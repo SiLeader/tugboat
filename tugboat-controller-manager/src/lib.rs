@@ -11,6 +11,7 @@ use replicaset::ReplicaSetController;
 use service_account_token_controller::ServiceAccountTokenController;
 use tugboat_client::TugboatClient;
 use tugboat_csi_operator::TugboatCsiOperator;
+use volume_snapshot::VolumeSnapshotController;
 
 mod aggregated_clusterrole;
 mod base;
@@ -27,6 +28,7 @@ mod pv_cleanup;
 mod pvc_provisioner;
 mod replicaset;
 mod service_account_token_controller;
+mod volume_snapshot;
 mod workload;
 
 pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
@@ -47,6 +49,11 @@ pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
         config.clone(),
     ));
     tcm.add_controller(PvcProvisionerController::new(
+        client.clone(),
+        csi_operator.clone(),
+        config.clone(),
+    ));
+    tcm.add_controller(VolumeSnapshotController::new(
         client.clone(),
         csi_operator.clone(),
         config.clone(),

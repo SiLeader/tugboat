@@ -20,6 +20,22 @@ pub(crate) enum ControllerError {
     MissingReplicaSetSpec { namespace: String, name: String },
     #[error("PersistentVolumeClaim '{namespace}/{name}' is missing spec")]
     MissingPersistentVolumeClaimSpec { namespace: String, name: String },
+    #[error("VolumeSnapshot '{namespace}/{name}' is missing spec")]
+    MissingVolumeSnapshotSpec { namespace: String, name: String },
+    #[error("VolumeSnapshot '{namespace}/{name}' is missing spec.source")]
+    MissingVolumeSnapshotSource { namespace: String, name: String },
+    #[error("VolumeSnapshotContent '{name}' is missing spec")]
+    MissingVolumeSnapshotContentSpec { name: String },
+    #[error("VolumeSnapshotContent '{name}' is missing spec.source")]
+    MissingVolumeSnapshotContentSource { name: String },
+    #[error("VolumeSnapshotClass '{name}' is missing spec")]
+    MissingVolumeSnapshotClassSpec { name: String },
+    #[error("Snapshot source PersistentVolumeClaim '{namespace}/{name}' is unavailable: {reason}")]
+    SnapshotSourceUnavailable {
+        namespace: String,
+        name: String,
+        reason: String,
+    },
     #[error("PersistentVolume '{name}' is missing spec")]
     MissingPersistentVolumeSpec { name: String },
     #[error("PersistentVolume '{name}' does not have a CSI source")]

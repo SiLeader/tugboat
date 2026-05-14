@@ -6,14 +6,15 @@ use crate::proto::csi::v1::node_service_capability;
 use crate::proto::csi::v1::node_service_capability::rpc::Type as NodeServiceCapabilityType;
 use crate::proto::csi::v1::volume_capability::access_mode::Mode;
 use crate::proto::csi::v1::volume_capability::{AccessMode, AccessType, BlockVolume, MountVolume};
+use crate::proto::csi::v1::volume_content_source;
 use crate::proto::csi::v1::volume_usage::Unit as VolumeUsageProtoUnit;
 use crate::proto::csi::v1::{
     CapacityRange, ControllerExpandVolumeRequest, ControllerGetCapabilitiesRequest,
-    ControllerPublishVolumeRequest, ControllerUnpublishVolumeRequest, CreateVolumeRequest,
-    DeleteVolumeRequest, NodeExpandVolumeRequest, NodeGetCapabilitiesRequest,
-    NodeGetVolumeStatsRequest, NodePublishVolumeRequest, NodeStageVolumeRequest,
-    NodeUnpublishVolumeRequest, NodeUnstageVolumeRequest, Topology, TopologyRequirement,
-    VolumeCapability,
+    ControllerPublishVolumeRequest, ControllerUnpublishVolumeRequest, CreateSnapshotRequest,
+    CreateVolumeRequest, DeleteSnapshotRequest, DeleteVolumeRequest, ListSnapshotsRequest,
+    NodeExpandVolumeRequest, NodeGetCapabilitiesRequest, NodeGetVolumeStatsRequest,
+    NodePublishVolumeRequest, NodeStageVolumeRequest, NodeUnpublishVolumeRequest,
+    NodeUnstageVolumeRequest, Topology, TopologyRequirement, VolumeCapability, VolumeContentSource,
 };
 pub use error::Error;
 use hyper_util::rt::TokioIo;
@@ -92,6 +93,9 @@ pub enum ControllerCapability {
     PublishUnpublishVolume,
     PublishReadonly,
     ExpandVolume,
+    CreateDeleteSnapshot,
+    ListSnapshots,
+    CloneVolume,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +104,34 @@ pub struct ProvisionedVolume {
     pub capacity_bytes: i64,
     pub volume_context: HashMap<String, String>,
     pub accessible_topology: Vec<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionedSnapshot {
+    pub snapshot_id: String,
+    pub source_volume_id: String,
+    pub size_bytes: Option<i64>,
+    pub creation_time_seconds: i64,
+    pub creation_time_nanos: i32,
+    pub ready_to_use: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedSnapshots {
+    pub entries: Vec<ProvisionedSnapshot>,
+    pub next_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListSnapshotsPaging {
+    pub max_entries: i32,
+    pub starting_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CsiVolumeContentSource {
+    Snapshot { snapshot_id: String },
+    Volume { volume_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,9 +222,63 @@ impl TugboatCsiOperator {
         mount_flags: Vec<String>,
         accessibility_topologies: Vec<HashMap<String, String>>,
     ) -> Result<ProvisionedVolume, error::Error> {
+        self.create_volume_with_source(
+            socket_path,
+            name,
+            capacity_bytes,
+            parameters,
+            access_modes,
+            access_type,
+            secrets,
+            mount_flags,
+            accessibility_topologies,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_volume_with_source(
+        &self,
+        socket_path: &str,
+        name: String,
+        capacity_bytes: Option<i64>,
+        parameters: HashMap<String, String>,
+        access_modes: Vec<CsiAccessMode>,
+        access_type: CsiAccessType,
+        secrets: HashMap<String, String>,
+        mount_flags: Vec<String>,
+        accessibility_topologies: Vec<HashMap<String, String>>,
+        content_source: Option<CsiVolumeContentSource>,
+    ) -> Result<ProvisionedVolume, error::Error> {
         validate_volume_name(&name)?;
         validate_optional_capacity_bytes(capacity_bytes)?;
         validate_access_modes(&access_modes)?;
+
+        let volume_content_source = match content_source {
+            Some(CsiVolumeContentSource::Snapshot { snapshot_id }) => {
+                self.ensure_controller_capability(
+                    socket_path,
+                    ControllerCapability::CreateDeleteSnapshot,
+                )
+                .await?;
+                Some(VolumeContentSource {
+                    r#type: Some(volume_content_source::Type::Snapshot(
+                        volume_content_source::SnapshotSource { snapshot_id },
+                    )),
+                })
+            }
+            Some(CsiVolumeContentSource::Volume { volume_id }) => {
+                self.ensure_controller_capability(socket_path, ControllerCapability::CloneVolume)
+                    .await?;
+                Some(VolumeContentSource {
+                    r#type: Some(volume_content_source::Type::Volume(
+                        volume_content_source::VolumeSource { volume_id },
+                    )),
+                })
+            }
+            None => None,
+        };
 
         let req = CreateVolumeRequest {
             name,
@@ -208,7 +294,7 @@ impl TugboatCsiOperator {
                 .collect(),
             parameters,
             secrets,
-            volume_content_source: None,
+            volume_content_source,
             accessibility_requirements: topology_requirement(accessibility_topologies),
             mutable_parameters: Default::default(),
         };
@@ -252,6 +338,94 @@ impl TugboatCsiOperator {
             .map_err(map_controller_grpc_error)
     }
 
+    pub async fn create_snapshot(
+        &self,
+        socket_path: &str,
+        source_volume_id: String,
+        name: String,
+        parameters: HashMap<String, String>,
+        secrets: HashMap<String, String>,
+    ) -> Result<ProvisionedSnapshot, error::Error> {
+        validate_snapshot_name(&name)?;
+        validate_volume_id(&source_volume_id)?;
+        self.ensure_controller_capability(socket_path, ControllerCapability::CreateDeleteSnapshot)
+            .await?;
+
+        let req = CreateSnapshotRequest {
+            source_volume_id,
+            name,
+            secrets,
+            parameters,
+        };
+        let mut client = self.connect_controller_client(socket_path).await?;
+        let response = timeout(self.timeouts.rpc_call_timeout, client.create_snapshot(req))
+            .await
+            .map_err(|_| error::Error::RpcTimeout)?
+            .map_err(map_snapshot_grpc_error)?
+            .into_inner();
+        snapshot_from_proto(response.snapshot)
+    }
+
+    pub async fn delete_snapshot(
+        &self,
+        socket_path: &str,
+        snapshot_id: String,
+        secrets: HashMap<String, String>,
+    ) -> Result<(), error::Error> {
+        validate_snapshot_id(&snapshot_id)?;
+        self.ensure_controller_capability(socket_path, ControllerCapability::CreateDeleteSnapshot)
+            .await?;
+
+        let req = DeleteSnapshotRequest {
+            snapshot_id,
+            secrets,
+        };
+        let mut client = self.connect_controller_client(socket_path).await?;
+        timeout(self.timeouts.rpc_call_timeout, client.delete_snapshot(req))
+            .await
+            .map_err(|_| error::Error::RpcTimeout)?
+            .map(|_| ())
+            .map_err(map_snapshot_grpc_error)
+    }
+
+    pub async fn list_snapshots(
+        &self,
+        socket_path: &str,
+        snapshot_id: Option<String>,
+        source_volume_id: Option<String>,
+        paging: Option<ListSnapshotsPaging>,
+        secrets: HashMap<String, String>,
+    ) -> Result<ListedSnapshots, error::Error> {
+        self.ensure_controller_capability(socket_path, ControllerCapability::ListSnapshots)
+            .await?;
+        let paging = paging.unwrap_or(ListSnapshotsPaging {
+            max_entries: 0,
+            starting_token: String::new(),
+        });
+        let req = ListSnapshotsRequest {
+            max_entries: paging.max_entries,
+            starting_token: paging.starting_token,
+            source_volume_id: source_volume_id.unwrap_or_default(),
+            snapshot_id: snapshot_id.unwrap_or_default(),
+            secrets,
+        };
+        let mut client = self.connect_controller_client(socket_path).await?;
+        let response = timeout(self.timeouts.rpc_call_timeout, client.list_snapshots(req))
+            .await
+            .map_err(|_| error::Error::RpcTimeout)?
+            .map_err(map_snapshot_grpc_error)?
+            .into_inner();
+        let entries = response
+            .entries
+            .into_iter()
+            .filter_map(|entry| snapshot_from_proto(entry.snapshot).ok())
+            .collect();
+        Ok(ListedSnapshots {
+            entries,
+            next_token: response.next_token,
+        })
+    }
+
     pub async fn controller_capabilities(
         &self,
         socket_path: &str,
@@ -285,12 +459,34 @@ impl TugboatCsiOperator {
                         ControllerServiceCapabilityType::ExpandVolume => {
                             Some(ControllerCapability::ExpandVolume)
                         }
+                        ControllerServiceCapabilityType::CreateDeleteSnapshot => {
+                            Some(ControllerCapability::CreateDeleteSnapshot)
+                        }
+                        ControllerServiceCapabilityType::ListSnapshots => {
+                            Some(ControllerCapability::ListSnapshots)
+                        }
+                        ControllerServiceCapabilityType::CloneVolume => {
+                            Some(ControllerCapability::CloneVolume)
+                        }
                         _ => None,
                     }
                 }
                 None => None,
             })
             .collect())
+    }
+
+    async fn ensure_controller_capability(
+        &self,
+        socket_path: &str,
+        capability: ControllerCapability,
+    ) -> Result<(), error::Error> {
+        let capabilities = self.controller_capabilities(socket_path).await?;
+        if capabilities.contains(&capability) {
+            Ok(())
+        } else {
+            Err(error::Error::UnsupportedControllerCapability(capability))
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -753,6 +949,27 @@ fn validate_volume_name(name: &str) -> Result<(), error::Error> {
     Ok(())
 }
 
+fn validate_volume_id(volume_id: &str) -> Result<(), error::Error> {
+    if volume_id.trim().is_empty() {
+        return Err(error::Error::MissingVolumeId);
+    }
+    Ok(())
+}
+
+fn validate_snapshot_name(name: &str) -> Result<(), error::Error> {
+    if name.trim().is_empty() {
+        return Err(error::Error::InvalidSnapshotName(name.to_string()));
+    }
+    Ok(())
+}
+
+fn validate_snapshot_id(snapshot_id: &str) -> Result<(), error::Error> {
+    if snapshot_id.trim().is_empty() {
+        return Err(error::Error::MissingSnapshotId);
+    }
+    Ok(())
+}
+
 fn validate_access_modes(access_modes: &[CsiAccessMode]) -> Result<(), error::Error> {
     if access_modes.is_empty() {
         return Err(error::Error::MissingAccessModes);
@@ -792,6 +1009,34 @@ fn map_controller_grpc_error(error: tonic::Status) -> error::Error {
         Code::FailedPrecondition => error::Error::FailedPrecondition,
         _ => error::Error::Grpc(error),
     }
+}
+
+fn map_snapshot_grpc_error(error: tonic::Status) -> error::Error {
+    match error.code() {
+        Code::DeadlineExceeded => error::Error::RpcTimeout,
+        Code::AlreadyExists => error::Error::SnapshotAlreadyExists,
+        Code::NotFound => error::Error::SnapshotNotFound,
+        Code::FailedPrecondition => error::Error::FailedPrecondition,
+        _ => error::Error::Grpc(error),
+    }
+}
+
+fn snapshot_from_proto(
+    snapshot: Option<crate::proto::csi::v1::Snapshot>,
+) -> Result<ProvisionedSnapshot, error::Error> {
+    let snapshot = snapshot.ok_or(error::Error::MissingSnapshot)?;
+    if snapshot.snapshot_id.trim().is_empty() {
+        return Err(error::Error::MissingSnapshotId);
+    }
+    let creation_time = snapshot.creation_time.unwrap_or_default();
+    Ok(ProvisionedSnapshot {
+        snapshot_id: snapshot.snapshot_id,
+        source_volume_id: snapshot.source_volume_id,
+        size_bytes: (snapshot.size_bytes > 0).then_some(snapshot.size_bytes),
+        creation_time_seconds: creation_time.seconds,
+        creation_time_nanos: creation_time.nanos,
+        ready_to_use: snapshot.ready_to_use,
+    })
 }
 
 #[cfg(test)]

@@ -13,20 +13,36 @@
 // limitations under the License.
 
 use super::{
-    CsiAccessMode, CsiAccessType, NodeVolumeStats, TugboatCsiOperator, VolumeHealthCondition,
-    VolumeUsageStats, VolumeUsageUnit, normalize_socket_path, volume_capability,
+    ControllerCapability, CsiAccessMode, CsiAccessType, CsiVolumeContentSource, NodeVolumeStats,
+    TugboatCsiOperator, VolumeHealthCondition, VolumeUsageStats, VolumeUsageUnit,
+    normalize_socket_path, volume_capability,
 };
 use crate::error::Error;
+use crate::proto::csi::v1::controller_server::{Controller as CsiController, ControllerServer};
+use crate::proto::csi::v1::controller_service_capability;
+use crate::proto::csi::v1::controller_service_capability::rpc::Type as ControllerCapabilityType;
 use crate::proto::csi::v1::node_server::{Node, NodeServer};
 use crate::proto::csi::v1::volume_capability::AccessType;
+use crate::proto::csi::v1::volume_content_source;
 use crate::proto::csi::v1::volume_usage::Unit as VolumeUsageProtoUnit;
 use crate::proto::csi::v1::{
-    NodeExpandVolumeRequest, NodeExpandVolumeResponse, NodeGetCapabilitiesRequest,
-    NodeGetCapabilitiesResponse, NodeGetInfoRequest, NodeGetInfoResponse,
-    NodeGetVolumeStatsRequest, NodeGetVolumeStatsResponse, NodePublishVolumeRequest,
-    NodePublishVolumeResponse, NodeStageVolumeRequest, NodeStageVolumeResponse,
-    NodeUnpublishVolumeRequest, NodeUnpublishVolumeResponse, NodeUnstageVolumeRequest,
-    NodeUnstageVolumeResponse, VolumeCondition, VolumeUsage,
+    ControllerExpandVolumeRequest, ControllerExpandVolumeResponse,
+    ControllerGetCapabilitiesRequest, ControllerGetCapabilitiesResponse,
+    ControllerGetVolumeRequest, ControllerGetVolumeResponse, ControllerModifyVolumeRequest,
+    ControllerModifyVolumeResponse, ControllerPublishVolumeRequest,
+    ControllerPublishVolumeResponse, ControllerServiceCapability, ControllerUnpublishVolumeRequest,
+    ControllerUnpublishVolumeResponse, CreateSnapshotRequest, CreateSnapshotResponse,
+    CreateVolumeRequest, CreateVolumeResponse, DeleteSnapshotRequest, DeleteSnapshotResponse,
+    DeleteVolumeRequest, DeleteVolumeResponse, GetCapacityRequest, GetCapacityResponse,
+    GetSnapshotRequest, GetSnapshotResponse, ListSnapshotsRequest, ListSnapshotsResponse,
+    ListVolumesRequest, ListVolumesResponse, NodeExpandVolumeRequest, NodeExpandVolumeResponse,
+    NodeGetCapabilitiesRequest, NodeGetCapabilitiesResponse, NodeGetInfoRequest,
+    NodeGetInfoResponse, NodeGetVolumeStatsRequest, NodeGetVolumeStatsResponse,
+    NodePublishVolumeRequest, NodePublishVolumeResponse, NodeStageVolumeRequest,
+    NodeStageVolumeResponse, NodeUnpublishVolumeRequest, NodeUnpublishVolumeResponse,
+    NodeUnstageVolumeRequest, NodeUnstageVolumeResponse, Snapshot,
+    ValidateVolumeCapabilitiesRequest, ValidateVolumeCapabilitiesResponse, Volume, VolumeCondition,
+    VolumeUsage,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -43,6 +59,10 @@ enum RecordedCall {
     Expand(NodeExpandVolumeRequest),
     Unpublish(NodeUnpublishVolumeRequest),
     Unstage(NodeUnstageVolumeRequest),
+    CreateVolume(CreateVolumeRequest),
+    CreateSnapshot(CreateSnapshotRequest),
+    DeleteSnapshot(DeleteSnapshotRequest),
+    ListSnapshots(ListSnapshotsRequest),
 }
 
 #[derive(Clone)]
@@ -144,6 +164,189 @@ impl Node for FakeNodeService {
     }
 }
 
+#[derive(Clone)]
+struct FakeControllerService {
+    calls: Arc<Mutex<Vec<RecordedCall>>>,
+    capabilities: Vec<ControllerCapabilityType>,
+}
+
+#[tonic::async_trait]
+impl CsiController for FakeControllerService {
+    async fn create_volume(
+        &self,
+        request: Request<CreateVolumeRequest>,
+    ) -> Result<Response<CreateVolumeResponse>, Status> {
+        let request = request.into_inner();
+        self.calls
+            .lock()
+            .expect("lock should be available")
+            .push(RecordedCall::CreateVolume(request.clone()));
+        Ok(Response::new(CreateVolumeResponse {
+            volume: Some(Volume {
+                volume_id: "volume-created".to_string(),
+                capacity_bytes: request
+                    .capacity_range
+                    .as_ref()
+                    .map(|range| range.required_bytes)
+                    .unwrap_or_default(),
+                volume_context: HashMap::new(),
+                accessible_topology: Vec::new(),
+                content_source: None,
+            }),
+        }))
+    }
+
+    async fn delete_volume(
+        &self,
+        _request: Request<DeleteVolumeRequest>,
+    ) -> Result<Response<DeleteVolumeResponse>, Status> {
+        Ok(Response::new(DeleteVolumeResponse {}))
+    }
+
+    async fn controller_publish_volume(
+        &self,
+        _request: Request<ControllerPublishVolumeRequest>,
+    ) -> Result<Response<ControllerPublishVolumeResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn controller_unpublish_volume(
+        &self,
+        _request: Request<ControllerUnpublishVolumeRequest>,
+    ) -> Result<Response<ControllerUnpublishVolumeResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn validate_volume_capabilities(
+        &self,
+        _request: Request<ValidateVolumeCapabilitiesRequest>,
+    ) -> Result<Response<ValidateVolumeCapabilitiesResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn list_volumes(
+        &self,
+        _request: Request<ListVolumesRequest>,
+    ) -> Result<Response<ListVolumesResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn get_capacity(
+        &self,
+        _request: Request<GetCapacityRequest>,
+    ) -> Result<Response<GetCapacityResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn controller_get_capabilities(
+        &self,
+        _request: Request<ControllerGetCapabilitiesRequest>,
+    ) -> Result<Response<ControllerGetCapabilitiesResponse>, Status> {
+        Ok(Response::new(ControllerGetCapabilitiesResponse {
+            capabilities: self
+                .capabilities
+                .iter()
+                .map(|capability| ControllerServiceCapability {
+                    r#type: Some(controller_service_capability::Type::Rpc(
+                        controller_service_capability::Rpc {
+                            r#type: *capability as i32,
+                        },
+                    )),
+                })
+                .collect(),
+        }))
+    }
+
+    async fn create_snapshot(
+        &self,
+        request: Request<CreateSnapshotRequest>,
+    ) -> Result<Response<CreateSnapshotResponse>, Status> {
+        let request = request.into_inner();
+        self.calls
+            .lock()
+            .expect("lock should be available")
+            .push(RecordedCall::CreateSnapshot(request.clone()));
+        Ok(Response::new(CreateSnapshotResponse {
+            snapshot: Some(Snapshot {
+                size_bytes: 4096,
+                snapshot_id: "snapshot-created".to_string(),
+                source_volume_id: request.source_volume_id,
+                creation_time: Some(prost_types::Timestamp {
+                    seconds: 123,
+                    nanos: 456,
+                }),
+                ready_to_use: true,
+                group_snapshot_id: String::new(),
+            }),
+        }))
+    }
+
+    async fn delete_snapshot(
+        &self,
+        request: Request<DeleteSnapshotRequest>,
+    ) -> Result<Response<DeleteSnapshotResponse>, Status> {
+        self.calls
+            .lock()
+            .expect("lock should be available")
+            .push(RecordedCall::DeleteSnapshot(request.into_inner()));
+        Ok(Response::new(DeleteSnapshotResponse {}))
+    }
+
+    async fn list_snapshots(
+        &self,
+        request: Request<ListSnapshotsRequest>,
+    ) -> Result<Response<ListSnapshotsResponse>, Status> {
+        self.calls
+            .lock()
+            .expect("lock should be available")
+            .push(RecordedCall::ListSnapshots(request.into_inner()));
+        Ok(Response::new(ListSnapshotsResponse {
+            entries: vec![crate::proto::csi::v1::list_snapshots_response::Entry {
+                snapshot: Some(Snapshot {
+                    size_bytes: 1024,
+                    snapshot_id: "snapshot-listed".to_string(),
+                    source_volume_id: "volume-1".to_string(),
+                    creation_time: Some(prost_types::Timestamp {
+                        seconds: 100,
+                        nanos: 0,
+                    }),
+                    ready_to_use: true,
+                    group_snapshot_id: String::new(),
+                }),
+            }],
+            next_token: "next".to_string(),
+        }))
+    }
+
+    async fn get_snapshot(
+        &self,
+        _request: Request<GetSnapshotRequest>,
+    ) -> Result<Response<GetSnapshotResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn controller_expand_volume(
+        &self,
+        _request: Request<ControllerExpandVolumeRequest>,
+    ) -> Result<Response<ControllerExpandVolumeResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn controller_get_volume(
+        &self,
+        _request: Request<ControllerGetVolumeRequest>,
+    ) -> Result<Response<ControllerGetVolumeResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn controller_modify_volume(
+        &self,
+        _request: Request<ControllerModifyVolumeRequest>,
+    ) -> Result<Response<ControllerModifyVolumeResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+}
+
 async fn spawn_node_server_with_volume_stats(
     volume_stats_response: NodeGetVolumeStatsResponse,
     publish_delay: Option<Duration>,
@@ -179,6 +382,170 @@ async fn spawn_node_server_with_volume_stats(
 
 async fn spawn_node_server() -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
     spawn_node_server_with_volume_stats(NodeGetVolumeStatsResponse::default(), None, None).await
+}
+
+async fn spawn_controller_server(
+    capabilities: Vec<ControllerCapabilityType>,
+) -> (String, Arc<Mutex<Vec<RecordedCall>>>) {
+    let socket_path = std::env::temp_dir().join(format!(
+        "tugboat-csi-controller-{}.sock",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time should be monotonic")
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_file(&socket_path);
+    let listener = UnixListener::bind(&socket_path).expect("listener should bind");
+    let incoming = UnixListenerStream::new(listener);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let service = FakeControllerService {
+        calls: calls.clone(),
+        capabilities,
+    };
+    tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(ControllerServer::new(service))
+            .serve_with_incoming(incoming)
+            .await
+            .expect("server should run");
+    });
+    sleep(Duration::from_millis(50)).await;
+    (socket_path.display().to_string(), calls)
+}
+
+#[tokio::test]
+async fn create_snapshot_requires_controller_capability_and_sends_request() {
+    let operator = TugboatCsiOperator::default();
+    let (socket_path, calls) =
+        spawn_controller_server(vec![ControllerCapabilityType::CreateDeleteSnapshot]).await;
+
+    let snapshot = operator
+        .create_snapshot(
+            &socket_path,
+            "volume-1".to_string(),
+            "snapshot-1".to_string(),
+            HashMap::from([("policy".to_string(), "daily".to_string())]),
+            HashMap::from([("token".to_string(), "secret".to_string())]),
+        )
+        .await
+        .expect("snapshot creation should succeed");
+
+    assert_eq!(snapshot.snapshot_id, "snapshot-created");
+    assert_eq!(snapshot.source_volume_id, "volume-1");
+    assert_eq!(snapshot.size_bytes, Some(4096));
+    assert_eq!(snapshot.creation_time_seconds, 123);
+    assert!(snapshot.ready_to_use);
+
+    let calls = calls.lock().expect("lock should be available").clone();
+    let Some(RecordedCall::CreateSnapshot(request)) = calls.last() else {
+        panic!("last call should be create snapshot");
+    };
+    assert_eq!(request.source_volume_id, "volume-1");
+    assert_eq!(request.name, "snapshot-1");
+    assert_eq!(request.parameters.get("policy"), Some(&"daily".to_string()));
+    assert_eq!(request.secrets.get("token"), Some(&"secret".to_string()));
+}
+
+#[tokio::test]
+async fn create_snapshot_fails_before_rpc_without_capability() {
+    let operator = TugboatCsiOperator::default();
+    let (socket_path, calls) = spawn_controller_server(Vec::new()).await;
+
+    let err = operator
+        .create_snapshot(
+            &socket_path,
+            "volume-1".to_string(),
+            "snapshot-1".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .await
+        .expect_err("missing capability should fail");
+
+    assert!(matches!(
+        err,
+        Error::UnsupportedControllerCapability(ControllerCapability::CreateDeleteSnapshot)
+    ));
+    assert!(calls.lock().expect("lock should be available").is_empty());
+}
+
+#[tokio::test]
+async fn delete_and_list_snapshot_send_requests() {
+    let operator = TugboatCsiOperator::default();
+    let (socket_path, calls) = spawn_controller_server(vec![
+        ControllerCapabilityType::CreateDeleteSnapshot,
+        ControllerCapabilityType::ListSnapshots,
+    ])
+    .await;
+
+    operator
+        .delete_snapshot(
+            &socket_path,
+            "snapshot-1".to_string(),
+            HashMap::from([("token".to_string(), "secret".to_string())]),
+        )
+        .await
+        .expect("snapshot deletion should succeed");
+    let listed = operator
+        .list_snapshots(
+            &socket_path,
+            Some("snapshot-1".to_string()),
+            Some("volume-1".to_string()),
+            None,
+            HashMap::new(),
+        )
+        .await
+        .expect("list snapshots should succeed");
+
+    assert_eq!(listed.next_token, "next");
+    assert_eq!(listed.entries[0].snapshot_id, "snapshot-listed");
+    let calls = calls.lock().expect("lock should be available").clone();
+    let RecordedCall::DeleteSnapshot(delete_request) = &calls[0] else {
+        panic!("first call should be delete snapshot");
+    };
+    assert_eq!(delete_request.snapshot_id, "snapshot-1");
+    let RecordedCall::ListSnapshots(list_request) = &calls[1] else {
+        panic!("second call should be list snapshots");
+    };
+    assert_eq!(list_request.snapshot_id, "snapshot-1");
+    assert_eq!(list_request.source_volume_id, "volume-1");
+}
+
+#[tokio::test]
+async fn create_volume_with_snapshot_source_sets_content_source() {
+    let operator = TugboatCsiOperator::default();
+    let (socket_path, calls) =
+        spawn_controller_server(vec![ControllerCapabilityType::CreateDeleteSnapshot]).await;
+
+    operator
+        .create_volume_with_source(
+            &socket_path,
+            "volume-from-snapshot".to_string(),
+            Some(1024),
+            HashMap::new(),
+            vec![CsiAccessMode::ReadWriteOnce],
+            CsiAccessType::Filesystem,
+            HashMap::new(),
+            Vec::new(),
+            Vec::new(),
+            Some(CsiVolumeContentSource::Snapshot {
+                snapshot_id: "snapshot-1".to_string(),
+            }),
+        )
+        .await
+        .expect("volume creation from snapshot should succeed");
+
+    let calls = calls.lock().expect("lock should be available").clone();
+    let Some(RecordedCall::CreateVolume(request)) = calls.last() else {
+        panic!("last call should be create volume");
+    };
+    assert!(matches!(
+        request
+            .volume_content_source
+            .as_ref()
+            .and_then(|source| source.r#type.as_ref()),
+        Some(volume_content_source::Type::Snapshot(source)) if source.snapshot_id == "snapshot-1"
+    ));
 }
 
 #[test]
