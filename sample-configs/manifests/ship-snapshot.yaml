@@ -1,0 +1,8 @@
+apiVersion: snapshot.tugboat.cloud/v1
+kind: ShipSnapshot
+metadata:
+  name: ship-backup
+  namespace: demo
+spec:
+  shipName: demo-ship
+  includeVolumes: true

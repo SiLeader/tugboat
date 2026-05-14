@@ -270,8 +270,77 @@ Control-plane storage support includes `PersistentVolume`, `PersistentVolumeClai
 CSI provisioning, managed PV cleanup, capacity-aware provisioning/expansion, filesystem claims, and CSI secret /
 `fsType` propagation in `tugboat-controller-manager`. Node-side support also includes controller-publish-context
 handling, live `NodeExpandVolume` (without Ship recreate) when the driver advertises it, and `NodeGetVolumeStats`-backed
-PV/PVC condition updates for CSI health and usage. The main remaining gaps are scheduler awareness of storage
-constraints, richer recovery beyond persisted publish state, and snapshot/clone style workflows.
+PV/PVC condition updates for CSI health and usage. The main remaining gap is richer recovery beyond persisted publish state.
+
+### Topology-aware scheduling
+
+Tugboat supports topology-aware scheduling to ensure Ships are placed on nodes that have access to the required
+resources, such as storage. This is achieved through well-known labels like `topology.tugboat.cloud/region` and
+`topology.tugboat.cloud/zone`.
+
+Example manifest for a Ship with node affinity:
+
+```yaml
+apiVersion: v1
+kind: Ship
+metadata:
+  name: topology-aware-ship
+spec:
+  image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+  shipClass: lightweight
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: topology.tugboat.cloud/zone
+                operator: In
+                values:
+                  - zone-a
+```
+
+See [topology-aware scheduling](docs/topology-aware-scheduling.md) for more details.
+
+### Volume snapshots and clones
+
+Volume snapshots allow you to create a point-in-time copy of a volume. These snapshots can then be used to
+provision new volumes (restore) or to create clones of existing volumes.
+
+Example `VolumeSnapshot` manifest:
+
+```yaml
+apiVersion: snapshot.tugboat.cloud/v1
+kind: VolumeSnapshot
+metadata:
+  name: my-snapshot
+  namespace: default
+spec:
+  volumeSnapshotClassName: csi-hostpath-snapclass
+  source:
+    persistentVolumeClaimName: data-disk
+```
+
+See [volume snapshots](docs/volume-snapshots.md) for more details.
+
+### Ship snapshots
+
+Ship snapshots capture the entire state of a VM, including its memory and the state of its volumes. This
+allows for full backup and restoration of a VM instance.
+
+Example `ShipSnapshot` manifest:
+
+```yaml
+apiVersion: snapshot.tugboat.cloud/v1
+kind: ShipSnapshot
+metadata:
+  name: my-ship-snapshot
+  namespace: default
+spec:
+  shipName: my-ship
+  includeVolumes: true
+```
+
+See [ship snapshots](docs/ship-snapshots.md) for more details.
 
 ### CNI status and Flannel validation
 
@@ -466,10 +535,9 @@ spec:
 
 ### Planned enhancements
 
-- **Topology-aware scheduling and snapshot-style workflows** — optimize Ship placement based on data locality and support
-  incremental backup/restore of stateful workloads
 - **CRD (Custom Resource Definition)** — allow users to define their own resource types without modifying Tugboat core
 - **High availability design** — apiserver horizontal scaling and scheduler lease-based leader election
+- **Topology-aware scheduling and snapshots** — shipped; see [topology-aware scheduling](docs/topology-aware-scheduling.md), [volume snapshots](docs/volume-snapshots.md), and [ship snapshots](docs/ship-snapshots.md)
 
 ## Roadmap
 
@@ -490,7 +558,7 @@ spec:
     - [x] Reconcile on Ship Modified events
     - [x] Reconcile on Ship Deleted events
     - [x] Storage (CSI publish/stage, controller publish context, and live expansion)
-    - [ ] Topology-aware scheduling and snapshot-style workflows
+    - [x] Topology-aware scheduling and snapshot-style workflows
 - [x] Secret
 - [x] Namespace resource definition and API (`core/v1`)
 - [x] tugboat-controller-manager

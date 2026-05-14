@@ -1,6 +1,8 @@
 [cloud_hypervisor]
-executable = "/usr/local/bin/cloud-hypervisor"
+executable = "/usr/bin/cloud-hypervisor"
 disk_image_location = "/var/lib/tugboat-agent/images"
+snapshot_dir = "/var/lib/tugboat-agent/snapshots"
+
 
 # TODO: replace this with the real vmlinux path for this host.
 [cloud_hypervisor.boot]

@@ -1,0 +1,9 @@
+apiVersion: snapshot.tugboat.cloud/v1
+kind: VolumeSnapshot
+metadata:
+  name: data-snapshot
+  namespace: demo
+spec:
+  volumeSnapshotClassName: csi-hostpath-snapclass
+  source:
+    persistentVolumeClaimName: data-disk

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Ship
+metadata:
+  name: restored-ship
+  namespace: demo
+spec:
+  image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+  shipClass: small
+  restoreFromSnapshot: ship-backup

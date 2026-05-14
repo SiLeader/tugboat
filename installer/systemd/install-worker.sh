@@ -411,7 +411,7 @@ install_service_account_token() {
 
 render_configs() {
     install -d -m 0755 -- /etc/tugboat/agent /etc/tugboat/runtime
-    install -d -m 0755 -- /var/lib/tugboat-agent/images /var/lib/tugboat-agent/csi
+    install -d -m 0755 -- /var/lib/tugboat-agent/images /var/lib/tugboat-agent/csi /var/lib/tugboat-agent/snapshots
 
     APISERVER_CLIENT_TLS_CONFIG=""
     if [[ -n "${CA_CERT}" ]]; then

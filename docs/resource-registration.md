@@ -16,6 +16,7 @@ tests. Do not add a second metadata table for a new resource.
 | `apps/v1` | namespaced | `Deployment`, `ReplicaSet`, `Fleet` |
 | `authorization/v1` | mixed | `ClusterRole`, `ClusterRoleBinding`, `Role`, `RoleBinding` |
 | `coordination/v1` | namespaced | `Lease` |
+| `snapshot.tugboat.cloud/v1` | mixed | `VolumeSnapshot`, `VolumeSnapshotContent`, `VolumeSnapshotClass`, `ShipSnapshot` |
 
 ## Adding a Resource
 
@@ -28,6 +29,24 @@ tests. Do not add a second metadata table for a new resource.
 7. Add protobuf serialization in `tugboat-resource-store/src/serializer/mod.rs` with `protobuf_serializable!`.
 8. If the resource is controller-owned, add its controller separately and keep status updates behind the status subresource when the descriptor exposes one.
 9. Update public docs and sample manifests when the resource is user-facing.
+
+## Namespaced and Cluster-scoped Pairs
+
+Some resources follow a pair pattern where a namespaced user-facing resource binds to a cluster-scoped provider-facing resource. A classic example is `VolumeSnapshot` (namespaced) and `VolumeSnapshotContent` (cluster-scoped), similar to `PersistentVolumeClaim` and `PersistentVolume`.
+
+When adding such pairs:
+- Use `spec.source` in the namespaced resource to reference the cluster-scoped resource (static binding).
+- Use `spec.claimRef` in the cluster-scoped resource to reference the namespaced resource (back-binding).
+- Ensure validators check for cross-namespace references and enforce that cluster-scoped resources reject namespace metadata.
+
+## Cross-group Type Reuse
+
+If shared types (like `LabelSelector` or `Condition`) are introduced in a common file like `tugboat-resources/proto/core/v1/selector.proto`, they can be reused across different API groups.
+
+- Import the shared proto file in your group-specific proto: `import "core/v1/selector.proto";`
+- Use the fully qualified type name if necessary.
+- Ensure the shared proto is included in `tugboat-resources/build.rs` before the groups that depend on it.
+- This allows for a consistent API contract across different resource groups (e.g., sharing selectors between `apps/v1` and `snapshot.tugboat.cloud/v1`).
 
 ## Status Subresources
 
