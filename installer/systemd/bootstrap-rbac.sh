@@ -333,6 +333,7 @@ def cluster_roles():
                 "volumesnapshotclasses",
                 "shipsnapshots",
             ], read),
+            rule(["snapshot"], ["shipsnapshots/status"], status),
             rule(["core"], ["ships"], ["get", "list", "watch", "patch", "update"]),
             rule(["core"], ["ships/status"], status),
             rule(["core"], ["serviceaccounts/token"], ["create"]),

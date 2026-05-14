@@ -108,7 +108,26 @@ impl<'a> CloudHypervisorVm<'a> {
             format!("size={}", self.args.memory.size),
         ];
 
-        args.extend(self.boot_args()?);
+        if let Some(restore_handle) = &self.args.restore_handle {
+            let source_id = self.args.restore_source_id.as_deref().unwrap_or(&self.args.id);
+            let ship_dir = tugboat_runtime_common::snapshot::ship_snapshot_dir(
+                &self.config.snapshot_dir_path(),
+                source_id,
+            )
+            .map_err(|e| crate::Error::Validation(e.to_string()))?;
+            let snapshot_dir = ship_dir.join(restore_handle);
+            if !snapshot_dir.exists() {
+                return Err(crate::Error::Validation(format!(
+                    "Restore requested but snapshot directory not found: {}",
+                    snapshot_dir.display()
+                )));
+            }
+            args.push("--restore".into());
+            args.push(snapshot_dir.to_string_lossy().into_owned());
+        } else {
+            args.extend(self.boot_args()?);
+        }
+
         args.push("--disk".into());
         args.push(format!("path={}", boot_disk.0));
 
@@ -157,6 +176,8 @@ impl RunVm for CloudHypervisorVm<'_> {
 
         if let Some(incoming) = &self.args.incoming {
             self.run_for_incoming_migration(&args, incoming.port).await
+        } else if self.args.restore_handle.is_some() {
+            self.run_for_restore(&args).await
         } else {
             let err = Command::new(&self.config.executable)
                 .args(&args)
@@ -168,6 +189,40 @@ impl RunVm for CloudHypervisorVm<'_> {
 }
 
 impl CloudHypervisorVm<'_> {
+    async fn run_for_restore(&self, args: &[String]) -> crate::Result<()> {
+        info!("Starting Cloud Hypervisor to restore from snapshot");
+
+        let mut child = tokio::process::Command::new(&self.config.executable)
+            .args(args)
+            .spawn()?;
+
+        let socket_path = self.config.get_api_socket_path(&self.args.id);
+        let mut client =
+            match wait_for_api_socket(&socket_path, &mut child, Duration::from_secs(30)).await {
+                Ok(client) => client,
+                Err(e) => {
+                    warn!("API socket wait failed, killing cloud-hypervisor: {e}");
+                    let _ = child.kill().await;
+                    return Err(e);
+                }
+            };
+
+        info!("Resuming restored VM");
+        if let Err(e) = client.put("/api/v1/vm.resume", None).await {
+            warn!("vm.resume call failed, killing cloud-hypervisor: {e}");
+            let _ = child.kill().await;
+            return Err(e);
+        }
+
+        let status = child.wait().await?;
+        if !status.success() {
+            return Err(crate::Error::Api(format!(
+                "cloud-hypervisor exited with {status} after restore completed"
+            )));
+        }
+        Ok(())
+    }
+
     async fn run_for_incoming_migration(&self, args: &[String], port: u16) -> crate::Result<()> {
         info!("Starting Cloud Hypervisor to receive live migration on port {port}");
 
@@ -299,6 +354,8 @@ mod tests {
                 enabled: uefi_enabled,
             },
             incoming: None,
+            restore_handle: None,
+            restore_source_id: None,
             user: Default::default(),
         }
     }

@@ -37,6 +37,7 @@ use tugboat_resources::manifests::core::v1::{Ship, ShipSnapshot};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedSnapshotRestore {
     pub(crate) snapshot_name: String,
+    pub(crate) source_ship_id: String,
     pub(crate) handle: String,
     pub(crate) runtime: String,
 }
@@ -92,8 +93,18 @@ pub(crate) fn resolve_restore_snapshot(
                 "ShipSnapshot '{snapshot_name}' is Ready but has no status.runtime yet"
             ))
         })?;
+    let source_ship_id = status
+        .source_ship_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ReconcileError::Validation(format!(
+                "ShipSnapshot '{snapshot_name}' is Ready but has no status.sourceShipId yet"
+            ))
+        })?;
     Ok(ResolvedSnapshotRestore {
         snapshot_name: snapshot_name.to_string(),
+        source_ship_id: source_ship_id.to_string(),
         handle: handle.to_string(),
         runtime: runtime.to_string(),
     })
@@ -126,6 +137,7 @@ mod tests {
                 phase: "Ready".to_string(),
                 handle: Some(handle.to_string()),
                 runtime: Some(runtime.to_string()),
+                source_ship_id: Some("source-uid".to_string()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -151,6 +163,7 @@ mod tests {
         let snap = ready_snapshot("snap-handle", "qemu");
         let resolved = resolve_restore_snapshot("snap-a", Some(&snap)).unwrap();
         assert_eq!(resolved.snapshot_name, "snap-a");
+        assert_eq!(resolved.source_ship_id, "source-uid");
         assert_eq!(resolved.handle, "snap-handle");
         assert_eq!(resolved.runtime, "qemu");
     }

@@ -87,8 +87,8 @@ impl RunVm for QemuVm<'_> {
         let qmp_uds = self.config.get_uds_url(&self.args.id);
         let qmp_opt = format!("{qmp_uds},server=on,wait=off");
         debug!("QEMU UDS = {qmp_uds}");
-        let err = Command::new(&self.config.executables.qemu)
-            .args(["-machine", "q35"])
+        let mut cmd = Command::new(&self.config.executables.qemu);
+        cmd.args(["-machine", "q35"])
             .args(["-nographic"])
             .args(["-qmp", qmp_opt.as_str()])
             .args_if(self.config.kvm.enabled, &["-enable-kvm"])
@@ -98,9 +98,11 @@ impl RunVm for QemuVm<'_> {
             .qemu_args(&self.args.volumes)
             .qemu_args(&img)
             .qemu_args(&self.args.incoming)
+            .qemu_args(&self.args.restore_handle)
             .qemu_args_with_arg_if(self.args.uefi.enabled, &self.config.uefi, &self)
-            .debug_command()
-            .exec();
+            .debug_command();
+
+        let err = cmd.exec();
         Err(crate::Error::Io(err))
     }
 }
@@ -203,6 +205,16 @@ impl QemuArgs<Option<VmIncomingMigrationConfig>> for Command {
         if let Some(config) = value {
             let incoming = format!("tcp:0.0.0.0:{}", config.port);
             self.args(["-incoming", incoming.as_str()])
+        } else {
+            self
+        }
+    }
+}
+
+impl QemuArgs<Option<String>> for Command {
+    fn qemu_args(&mut self, value: &Option<String>) -> &mut Self {
+        if let Some(handle) = value {
+            self.args(["-loadvm", handle])
         } else {
             self
         }

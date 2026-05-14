@@ -190,7 +190,7 @@ impl<'a> SnapshotStateMachine<'a> {
 
         match self.context.snapshot_create(&ship_id, mode).await {
             Ok(response) => {
-                self.write_ready(namespace, name, snapshot, response)
+                self.write_ready(namespace, name, snapshot, ship_id, response)
                     .await?;
                 Ok(SnapshotAction::Ready)
             }
@@ -224,6 +224,7 @@ impl<'a> SnapshotStateMachine<'a> {
             creation_time: Some(Time::now()),
             handle: None,
             runtime: None,
+            source_ship_id: None,
             volume_snapshots: existing_volumes,
             error: None,
             size_bytes: None,
@@ -237,6 +238,7 @@ impl<'a> SnapshotStateMachine<'a> {
         namespace: &str,
         name: &str,
         snapshot: &ShipSnapshot,
+        ship_id: String,
         response: VmSnapshotCreateResponse,
     ) -> Result<(), ReconcileError> {
         let existing_volumes = snapshot
@@ -249,6 +251,7 @@ impl<'a> SnapshotStateMachine<'a> {
             creation_time: Some(Time::now()),
             handle: Some(response.handle),
             runtime: Some(response.runtime),
+            source_ship_id: Some(ship_id),
             volume_snapshots: existing_volumes,
             error: None,
             size_bytes: response.size_bytes.and_then(|v| i64::try_from(v).ok()),
@@ -273,6 +276,7 @@ impl<'a> SnapshotStateMachine<'a> {
             creation_time: Some(Time::now()),
             handle: None,
             runtime: None,
+            source_ship_id: None,
             volume_snapshots: Vec::new(),
             error: Some(message.to_string()),
             size_bytes: None,

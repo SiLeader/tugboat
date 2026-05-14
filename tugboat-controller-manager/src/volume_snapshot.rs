@@ -255,6 +255,18 @@ impl VolumeSnapshotReconciler {
     ) -> Result<Action, ControllerError> {
         let (namespace, name, uid) = snapshot_identity(&snapshot)?;
         let content_api: Api<VolumeSnapshotContent> = Api::all(self.client.clone());
+
+        // Optimize: try deterministic name if UID is available
+        if let Some(uid_str) = uid.as_deref() {
+            let content_name = deterministic_content_name(Some(uid_str), &namespace, &name);
+            match content_api.delete(&content_name).await {
+                Ok(_) => return Ok(Action::await_change()),
+                Err(tugboat_client::Error::Api(status)) if status.code == 404 => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        // Fallback: list and match if deterministic name didn't work or UID was missing
         for content in content_api.list().await? {
             let Some(spec) = content.spec.as_ref() else {
                 continue;

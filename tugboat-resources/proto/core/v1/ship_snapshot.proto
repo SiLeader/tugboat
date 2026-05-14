@@ -46,6 +46,7 @@ message ShipSnapshotStatus {
   optional meta.v1.Time creation_time = 2;
   optional string handle = 3; // runtime-specific snapshot handle
   optional string runtime = 4; // qemu | cloud-hypervisor
+  optional string source_ship_id = 9; // UID of the ship that was snapshotted
   repeated ShipSnapshotVolumeRef volume_snapshots = 5;
   optional string error = 6;
   optional int64 size_bytes = 7;

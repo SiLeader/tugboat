@@ -152,6 +152,15 @@ fn validate_handle(handle: &str) -> Result<(), SnapshotValidationError> {
     if handle.is_empty() {
         return Err(SnapshotValidationError::new("handle", "must not be empty"));
     }
+    if !handle
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(SnapshotValidationError::new(
+            "handle",
+            "must contain only alphanumeric, '-', '_', or '.'",
+        ));
+    }
     if handle.starts_with('.') {
         return Err(SnapshotValidationError::new(
             "handle",
@@ -162,12 +171,6 @@ fn validate_handle(handle: &str) -> Result<(), SnapshotValidationError> {
         return Err(SnapshotValidationError::new(
             "handle",
             "must not contain '..'",
-        ));
-    }
-    if handle.contains('/') {
-        return Err(SnapshotValidationError::new(
-            "handle",
-            "must not contain '/'",
         ));
     }
     Ok(())
