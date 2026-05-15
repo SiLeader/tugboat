@@ -60,7 +60,10 @@ pub async fn run_with_config_file(path: impl AsRef<std::path::Path>) {
         csi_operator.clone(),
         config.clone(),
     ));
-    tcm.add_controller(ShipSnapshotVolumesController::new(client.clone()));
+    tcm.add_controller(ShipSnapshotVolumesController::new(
+        client.clone(),
+        config.clone(),
+    ));
     tcm.add_controller(FleetController::new(client.clone()));
     tcm.add_controller(DeploymentController::new(client.clone()));
     tcm.add_controller(ReplicaSetController::new(client.clone()));

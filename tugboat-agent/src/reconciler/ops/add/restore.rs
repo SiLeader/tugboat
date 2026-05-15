@@ -21,11 +21,6 @@
 //!    it is `Ready`.
 //! 2. Capture its runtime-specific `status.handle` so the create path
 //!    can issue a runtime restore instead of a fresh `add`.
-//!
-//! Step 2's hookup into [`RuntimeOperator::create`] is intentionally
-//! left as a follow-up — the field is plumbed end-to-end but the
-//! actual VM boot still goes through the normal path. The agent emits
-//! a Ship condition so operators can see the snapshot was resolved.
 
 #![allow(dead_code)]
 

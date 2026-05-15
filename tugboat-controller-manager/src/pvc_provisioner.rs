@@ -687,7 +687,7 @@ impl PvcProvisionerReconciler {
                         &format!("VolumeSnapshot '{}' is not ready yet.", data_source.name),
                     )
                     .await?;
-                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
                 };
                 if snapshot_status.ready_to_use != Some(true) {
                     self.apply_data_source_condition(
@@ -698,7 +698,7 @@ impl PvcProvisionerReconciler {
                         &format!("VolumeSnapshot '{}' is not ready yet.", data_source.name),
                     )
                     .await?;
-                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
                 }
                 if let (Some(requested), Some(restore_size)) = (
                     requested_capacity_bytes,
@@ -735,7 +735,7 @@ impl PvcProvisionerReconciler {
                         ),
                     )
                     .await?;
-                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
                 };
                 let content_api: Api<VolumeSnapshotContent> = Api::all(self.client.clone());
                 let Some(content) = content_api.get(content_name).await? else {
@@ -784,7 +784,7 @@ impl PvcProvisionerReconciler {
                         ),
                     )
                     .await?;
-                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
                 };
                 Ok(DataSourceResolution::Ready(Some(
                     CsiVolumeContentSource::Snapshot {

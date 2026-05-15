@@ -19,6 +19,7 @@
 //! `ShipSnapshot.status.volume_snapshots`.
 
 use crate::base::TugboatController;
+use crate::config::ControllerManagerConfig;
 use crate::error::ControllerError;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
@@ -34,6 +35,7 @@ use tugboat_resources::{ObjectMetaResource, Resource};
 #[derive(Clone)]
 struct ShipSnapshotVolumesReconciler {
     client: TugboatClient,
+    config: ControllerManagerConfig,
 }
 
 pub(crate) struct ShipSnapshotVolumesController {
@@ -42,10 +44,10 @@ pub(crate) struct ShipSnapshotVolumesController {
 }
 
 impl ShipSnapshotVolumesController {
-    pub(crate) fn new(client: TugboatClient) -> Self {
+    pub(crate) fn new(client: TugboatClient, config: ControllerManagerConfig) -> Self {
         Self {
             controller: Controller::new(Api::all(client.clone())),
-            reconciler: ShipSnapshotVolumesReconciler { client },
+            reconciler: ShipSnapshotVolumesReconciler { client, config },
         }
     }
 }
@@ -76,6 +78,10 @@ impl Reconciler<ShipSnapshot> for ShipSnapshotVolumesReconciler {
 }
 
 impl ShipSnapshotVolumesReconciler {
+    fn requeue_action(&self) -> Action {
+        Action::requeue(self.config.csi.requeue_interval())
+    }
+
     async fn reconcile_applied(&self, snapshot: ShipSnapshot) -> Result<Action, ControllerError> {
         if snapshot.deletion_timestamp().is_some() {
             return Ok(Action::await_change());
@@ -137,6 +143,10 @@ impl ShipSnapshotVolumesReconciler {
 
         if status_volume_refs_changed(snapshot.status.as_ref(), &refs) {
             patch_status_volume_refs(&self.client, &namespace, &name, &snapshot, refs).await?;
+            return Ok(self.requeue_action());
+        }
+        if refs.iter().any(|vol| vol.ready_to_use != Some(true)) {
+            return Ok(self.requeue_action());
         }
         Ok(Action::await_change())
     }
