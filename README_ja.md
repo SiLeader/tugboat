@@ -526,11 +526,11 @@ spec:
   automountServiceAccountToken: true
 ```
 
-### 今後の拡張予定
+### 実装状況と今後の拡張予定
 
-- **CRD (Custom Resource Definition)** — Tugboat のコアを変更することなく、ユーザーが独自のリソース型を定義可能にする
-- **高可用性（HA）設計** — apiserver の水平スケーリングとスケジューラの Lease ベースのリーダー選挙
-- **Topology-aware scheduling と snapshot** — リリース済み。詳細は [topology-aware scheduling](docs/topology-aware-scheduling.md)、[volume snapshots](docs/volume-snapshots.md)、[ship snapshots](docs/ship-snapshots.md) を参照してください。
+- **CRD (Custom Resource Definition)** — 予定。Tugboat のコアを変更することなく、ユーザーが独自のリソース型を定義可能にする
+- **高可用性（HA）** — apiserver は水平スケーリングしやすい stateless 構成で、scheduler の Lease ベース leader election は実装済み
+- **Topology-aware scheduling と snapshot** — 実装済み。詳細は [topology-aware scheduling](docs/topology-aware-scheduling.md)、[volume snapshots](docs/volume-snapshots.md)、[ship snapshots](docs/ship-snapshots.md) を参照してください。
 
 ## Roadmap
 
@@ -607,6 +607,13 @@ spec:
     - [x] CSI hostpath プロビジョナーインストーラー (`install-csi-hostpath.sh`)
     - [x] `uninstall.sh` — Tugboat の全ユニット・バイナリ・設定ファイルを停止・削除
     - [x] シナリオスクリプト付き Docker 分離テスト環境 (`installer/systemd/test/`)
+- [x] Snapshot
+    - [x] `VolumeSnapshot`、`VolumeSnapshotContent`、`VolumeSnapshotClass` のリソース定義とAPI (`snapshot/v1`)
+    - [x] `ShipSnapshot` リソース定義とAPI (`snapshot/v1`)
+    - [x] CSI snapshot create/delete と status 反映を行う VolumeSnapshot controller
+    - [x] ShipSnapshot の volume fanout と agent による runtime snapshot reconcile
+    - [x] QEMU と Cloud Hypervisor の runtime snapshot create/delete/restore/list
+    - [x] `spec.dataSource` による PVC restore / clone
 - [ ] CRD
 
 ## インストール
