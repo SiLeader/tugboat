@@ -10,8 +10,8 @@ Tugboat is a Kubernetes-inspired VM orchestration system. The API server stores 
 | `tugboat-resource-store` | etcd-backed CRUD and watch storage, plus protobuf serialization. |
 | `tugboat-apiserver` | Actix Web REST API, discovery, status subresources, authn (JWT, OIDC, Certificates), authz (RBAC), RBAC bootstrap, audit logging, and route registration. |
 | `tugboat-client` | HTTP client, watch stream handling, reflector support, and controller runtime modules. |
-| `tugboat-controller-manager` | Workload, storage, network status, namespace defaulting, and service account token controllers. |
-| `tugboat-scheduler` | Scheduling cycle and filter/score plugins for assigning `Ship`s to nodes. |
+| `tugboat-controller-manager` | Workload, storage, network status, namespace defaulting, service account token, and snapshot controllers. |
+| `tugboat-scheduler` | Scheduling cycle and filter/score plugins (VolumeTopology, NodeAffinity, ShipAffinity, ShipAntiAffinity, TopologySpread, ImageLocality). |
 | `tugboat-agent` | Node registration, assigned-`Ship` reconciliation, CNI/CSI orchestration, volume materialization, migration, and runtime operation calls. |
 | `tugboat-vm-runtime-interface` | Stable runtime command JSON contract and logical request validation shared by runtime backends and the agent. |
 | `tugboat-runtime-common` | Runtime config loading, process/signal helpers, path validation, and common pre-exec setup. |
@@ -56,6 +56,16 @@ Resource metadata is centralized in `tugboat-resources/src/resource_api.rs`. The
 
 Endpoint files remain per resource under `tugboat-apiserver/src/endpoints/v1_{group}/`, but the route registry is descriptor-driven. Adding a new resource should follow [resource-registration.md](./resource-registration.md).
 
+### API Groups
+
+The following API groups and versions are currently supported:
+
+- `core/v1`: Core resources (Ship, Node, Secret, ConfigMap, etc.)
+- `apps/v1`: Workload resources (Deployment, ReplicaSet, Fleet)
+- `authorization/v1`: RBAC resources (Role, ClusterRole, etc.)
+- `coordination/v1`: Lease resources
+- `snapshot/v1`: Snapshot resources (VolumeSnapshot, VolumeSnapshotContent, VolumeSnapshotClass, ShipSnapshot)
+
 ## Controller Boundary
 
 Controller-manager controllers share the `base.rs` controller trait and `error.rs` error handling. Workload-specific common logic lives under:
@@ -68,7 +78,8 @@ Controller-manager controllers share the `base.rs` controller trait and `error.r
 - `replicaset/status.rs`: observed state aggregation
 - `replicaset/template_update.rs`: template update and hotplug-aware decisions
 
-Controllers with external side effects remain explicit modules: `pvc_provisioner.rs`, `pv_cleanup.rs`, `network_class_status.rs`, `namespace_default_service_account.rs`, `service_account_token_controller.rs`, and `aggregated_clusterrole.rs`.
+Controllers with external side effects remain explicit modules: `pvc_provisioner.rs`, `pv_cleanup.rs`, `network_class_status.rs`, `namespace_default_service_account.rs`, `service_account_token_controller.rs`, `aggregated_clusterrole.rs`, `volume_snapshot_controller.rs`, and `ship_snapshot_volumes_controller.rs`.
+
 
 ## Agent Boundary
 
@@ -78,6 +89,7 @@ The agent reconciler is organized around operation entry points under `tugboat-a
 - `modify.rs` with `modify/plan.rs`: spec diffing and modify execution
 - `migration.rs` with `migration/preflight.rs`: migration state transitions, source/target flow, timeout handling, and preflight checks
 - `hotplug.rs`: agent-side hotplug execution using runtime-interface validation
+- `snapshot.rs`: runtime snapshot and volume snapshot capture
 - `delete.rs`: runtime, network, and storage cleanup
 - `secret_resolver.rs` and `volume_provisioner.rs`: support boundaries for storage and secret materialization
 

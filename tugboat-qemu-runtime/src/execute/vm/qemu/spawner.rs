@@ -41,6 +41,8 @@ pub struct QemuVmConfig {
     pub disk_image_location: String,
     pub kvm: QemuVmConfigKvm,
     pub uefi: Option<QemuVmConfigUefi>,
+    #[serde(default)]
+    pub snapshot_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,5 +69,14 @@ impl QemuVmConfig {
 
     pub fn get_uds_url(&self, id: &str) -> String {
         format!("unix:{}", self.get_uds_path(id))
+    }
+
+    pub fn snapshot_dir_path(&self) -> std::path::PathBuf {
+        self.snapshot_dir
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(tugboat_runtime_common::snapshot::DEFAULT_SNAPSHOT_DIR)
+            })
     }
 }

@@ -63,6 +63,7 @@ mod tests {
                 initramfs: None,
                 firmware: None,
             },
+            snapshot_dir: None,
         }
     }
 }

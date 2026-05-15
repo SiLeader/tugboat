@@ -30,10 +30,13 @@ fn main() {
         ".tugboat.apps.v1",
         ".tugboat.authorization.v1",
         ".tugboat.core.v1",
+        ".tugboat.snapshot.v1",
         ".tugboat.coordination.v1",
         ".tugboat.meta.v1.ObjectMeta",
         ".tugboat.meta.v1.ObjectReference",
         ".tugboat.meta.v1.OwnerReference",
+        ".tugboat.meta.v1.LabelSelector",
+        ".tugboat.meta.v1.LabelSelectorRequirement",
         ".tugboat.meta.v1.TypeMeta",
     ];
 
@@ -73,6 +76,7 @@ fn main() {
                 "proto/core/v1/namespace.proto",
                 "proto/core/v1/network_class.proto",
                 "proto/core/v1/node.proto",
+                "proto/core/v1/selector.proto",
                 "proto/core/v1/persistent_volume.proto",
                 "proto/core/v1/persistent_volume_claim.proto",
                 "proto/core/v1/secret.proto",
@@ -80,7 +84,12 @@ fn main() {
                 "proto/core/v1/storage_class.proto",
                 "proto/core/v1/ship.proto",
                 "proto/core/v1/ship_class.proto",
+                "proto/core/v1/ship_snapshot.proto",
                 "proto/core/v1/service_account.proto",
+                // snapshot/v1
+                "proto/snapshot/v1/volume_snapshot.proto",
+                "proto/snapshot/v1/volume_snapshot_content.proto",
+                "proto/snapshot/v1/volume_snapshot_class.proto",
                 // meta/v1
                 "proto/meta/v1/object_meta.proto",
                 "proto/meta/v1/object_reference.proto",

@@ -32,4 +32,7 @@ pub(crate) enum RuntimeError {
     ShutdownTimeout(String),
     #[error("Runtime operator error: {0}")]
     RuntimeOperator(#[from] tugboat_vm_runtime_interface::operator::Error),
+    #[error("{0}")]
+    #[allow(dead_code)]
+    Other(String),
 }

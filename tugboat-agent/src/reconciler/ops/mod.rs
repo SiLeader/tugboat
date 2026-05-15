@@ -19,6 +19,7 @@ pub(crate) mod hotplug;
 pub(crate) mod migration;
 pub(crate) mod modify;
 pub(crate) mod secret_resolver;
+pub(crate) mod snapshot;
 pub(crate) mod volume_provisioner;
 
 /// Migration phase strings shared between the add and modify reconcile paths.
@@ -162,6 +163,9 @@ mod tests {
             target_node_name: None,
             service_account_name: None,
             automount_service_account_token: None,
+            affinity: None,
+            topology_spread_constraints: Vec::new(),
+            restore_from_snapshot: None,
         }
     }
 

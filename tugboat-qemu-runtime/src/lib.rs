@@ -15,7 +15,9 @@
 use crate::cmd::start;
 use crate::execute::vm::QemuVmConfig;
 use clap::{Parser, Subcommand};
-use cmd::{create, hotplug, migrate, migrate_cancel, migration_status, run, status, stop};
+use cmd::{
+    create, hotplug, migrate, migrate_cancel, migration_status, run, snapshot, status, stop,
+};
 use nix::errno::Errno;
 use serde::Deserialize;
 use thiserror::Error;
@@ -72,6 +74,10 @@ enum SubCommand {
     MigrateCancel(migrate_cancel::MigrateCancelArgs),
     Start(start::StartArgs),
     Stop(stop::StopArgs),
+    SnapshotCreate(snapshot::SnapshotCreateArgs),
+    SnapshotDelete(snapshot::SnapshotDeleteArgs),
+    SnapshotRestore(snapshot::SnapshotRestoreArgs),
+    SnapshotList(snapshot::SnapshotListArgs),
 }
 
 #[derive(Deserialize)]
@@ -114,6 +120,18 @@ pub fn run() {
                 }
                 (SubCommand::Start(start_args), _) => start::start(start_args).await,
                 (SubCommand::Stop(stop_args), qemu) => stop::stop(qemu, stop_args).await,
+                (SubCommand::SnapshotCreate(snapshot_args), qemu) => {
+                    snapshot::snapshot_create(qemu, snapshot_args).await
+                }
+                (SubCommand::SnapshotDelete(snapshot_args), qemu) => {
+                    snapshot::snapshot_delete(qemu, snapshot_args).await
+                }
+                (SubCommand::SnapshotRestore(snapshot_args), qemu) => {
+                    snapshot::snapshot_restore(qemu, snapshot_args).await
+                }
+                (SubCommand::SnapshotList(snapshot_args), qemu) => {
+                    snapshot::snapshot_list(qemu, snapshot_args).await
+                }
             }
         })?;
 

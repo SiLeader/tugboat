@@ -8,15 +8,19 @@ use crate::provisioning::{
     reclaim_policy_from_storage_class, requested_capacity_bytes, storage_class_csi_config,
     storage_class_provisioner,
 };
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 use tugboat_client::runtime::{Action, Controller, ReconcileEvent, Reconciler};
 use tugboat_client::{Api, TugboatClient};
-use tugboat_csi_operator::TugboatCsiOperator;
-use tugboat_resources::ObjectMetaResource;
+use tugboat_csi_operator::{ControllerCapability, CsiVolumeContentSource, TugboatCsiOperator};
 use tugboat_resources::manifests::core::v1::{
-    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimStatus, StorageClass,
+    Node, PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimCondition,
+    PersistentVolumeClaimStatus, StorageClass,
 };
+use tugboat_resources::manifests::meta::v1::Time;
+use tugboat_resources::manifests::snapshot::v1::{VolumeSnapshot, VolumeSnapshotContent};
+use tugboat_resources::{ObjectMetaResource, SELECTED_NODE_ANNOTATION};
 
 #[derive(Clone)]
 struct PvcProvisionerReconciler {
@@ -28,6 +32,18 @@ struct PvcProvisionerReconciler {
 pub(crate) struct PvcProvisionerController {
     controller: Controller<PersistentVolumeClaim>,
     reconciler: PvcProvisionerReconciler,
+}
+
+#[derive(Default)]
+struct WffcAccessibilityTopologies {
+    waiting: bool,
+    requeue: bool,
+    topologies: Vec<HashMap<String, String>>,
+}
+
+enum DataSourceResolution {
+    Ready(Option<CsiVolumeContentSource>),
+    Pending(Action),
 }
 
 impl PvcProvisionerController {
@@ -80,6 +96,92 @@ impl PvcProvisionerReconciler {
         Action::requeue(self.config.csi.requeue_interval())
     }
 
+    async fn wffc_accessibility_topologies(
+        &self,
+        pvc: &PersistentVolumeClaim,
+        storage_class: &StorageClass,
+        namespace: &str,
+        name: &str,
+    ) -> Result<WffcAccessibilityTopologies, ControllerError> {
+        let Some(storage_class_spec) = storage_class.spec.as_ref() else {
+            return Ok(WffcAccessibilityTopologies::default());
+        };
+        if storage_class_spec.volume_binding_mode.as_deref() != Some("WaitForFirstConsumer") {
+            return Ok(WffcAccessibilityTopologies::default());
+        }
+        if pvc
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.volume_name.as_deref())
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Ok(WffcAccessibilityTopologies::default());
+        }
+
+        let Some(selected_node) = pvc
+            .object_meta
+            .as_ref()
+            .and_then(|meta| meta.annotations.get(SELECTED_NODE_ANNOTATION))
+            .map(String::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(WffcAccessibilityTopologies {
+                waiting: true,
+                requeue: false,
+                topologies: Vec::new(),
+            });
+        };
+
+        let node_api: Api<Node> = Api::all(self.client.clone());
+        let Some(node) = node_api.get(selected_node).await? else {
+            tracing::warn!(
+                "PersistentVolumeClaim '{}/{}' selected node '{}' is not available yet",
+                namespace,
+                name,
+                selected_node
+            );
+            return Ok(WffcAccessibilityTopologies {
+                waiting: true,
+                requeue: true,
+                topologies: Vec::new(),
+            });
+        };
+        let Some(labels) = node.object_meta.as_ref().map(|meta| &meta.labels) else {
+            return Ok(WffcAccessibilityTopologies::default());
+        };
+        let topology = selected_topology_labels(labels, storage_class);
+        Ok(WffcAccessibilityTopologies {
+            waiting: false,
+            requeue: false,
+            topologies: if topology.is_empty() {
+                Vec::new()
+            } else {
+                vec![topology]
+            },
+        })
+    }
+
+    async fn apply_waiting_for_first_consumer(
+        &self,
+        pvc: &PersistentVolumeClaim,
+        namespace: &str,
+        name: &str,
+    ) -> Result<(), ControllerError> {
+        let mut updated = pvc.clone();
+        let changed = apply_pvc_status(&mut updated, "Pending", None, false)
+            | upsert_pvc_condition(
+                &mut updated,
+                "WaitingForFirstConsumer",
+                "Waiting for the scheduler to select a node before provisioning.",
+            );
+        if changed {
+            let pvc_api: Api<PersistentVolumeClaim> =
+                Api::namespaced(self.client.clone(), namespace);
+            pvc_api.replace_status(name, updated).await?;
+        }
+        Ok(())
+    }
+
     async fn reconcile_applied(
         &self,
         pvc: PersistentVolumeClaim,
@@ -121,10 +223,36 @@ impl PvcProvisionerReconciler {
         let Some(provisioner_config) = provisioner_config(&self.config, &provisioner) else {
             return Ok(Action::await_change());
         };
+        let accessibility_topologies = self
+            .wffc_accessibility_topologies(&pvc, &storage_class, &namespace, &name)
+            .await?;
+        if accessibility_topologies.waiting {
+            self.apply_waiting_for_first_consumer(&pvc, &namespace, &name)
+                .await?;
+            return Ok(if accessibility_topologies.requeue {
+                self.requeue_action()
+            } else {
+                Action::await_change()
+            });
+        }
         let reclaim_policy = reclaim_policy_from_storage_class(&storage_class)?;
         let access_modes = claim_access_modes(&namespace, &name, &spec.access_modes)?;
         let access_type = claim_access_type(&namespace, &name, spec.volume_mode.as_deref())?;
         let requested_capacity_bytes = requested_capacity_bytes(&namespace, &name, spec)?;
+        let volume_content_source = match self
+            .resolve_data_source(
+                &pvc,
+                &namespace,
+                &name,
+                &provisioner,
+                &provisioner_config.socket_path,
+                requested_capacity_bytes,
+            )
+            .await?
+        {
+            DataSourceResolution::Ready(source) => source,
+            DataSourceResolution::Pending(action) => return Ok(action),
+        };
         let controller_create_secrets = load_secret_reference(
             &self.client,
             csi_config.controller_create_secret_ref.as_ref(),
@@ -157,7 +285,7 @@ impl PvcProvisionerReconciler {
         } else {
             let provisioned_volume = match self
                 .csi_operator
-                .create_volume(
+                .create_volume_with_source(
                     &provisioner_config.socket_path,
                     pv_name.clone(),
                     requested_capacity_bytes,
@@ -166,6 +294,8 @@ impl PvcProvisionerReconciler {
                     access_type,
                     controller_create_secrets.clone(),
                     csi_config.mount_options.clone(),
+                    accessibility_topologies.topologies,
+                    volume_content_source.clone(),
                 )
                 .await
             {
@@ -197,6 +327,14 @@ impl PvcProvisionerReconciler {
             };
             let volume_id = provisioned_volume.volume_id.clone();
             provisioned_volume_id = Some(volume_id.clone());
+            let pv_capacity_bytes = match (&volume_content_source, requested_capacity_bytes) {
+                (Some(CsiVolumeContentSource::Snapshot { .. }), Some(requested))
+                    if provisioned_volume.capacity_bytes < requested =>
+                {
+                    requested
+                }
+                _ => provisioned_volume.capacity_bytes,
+            };
 
             let persistent_volume = build_persistent_volume(
                 &pv_name,
@@ -207,10 +345,11 @@ impl PvcProvisionerReconciler {
                 reclaim_policy,
                 spec.access_modes.clone(),
                 spec.volume_mode.clone(),
-                Some(provisioned_volume.capacity_bytes),
+                Some(pv_capacity_bytes),
                 csi_config.clone(),
                 volume_id.clone(),
                 provisioned_volume.volume_context.clone(),
+                provisioned_volume.accessible_topology.clone(),
             );
 
             match pv_api.create(persistent_volume).await {
@@ -494,6 +633,316 @@ impl PvcProvisionerReconciler {
         Ok(Action::await_change())
     }
 
+    async fn resolve_data_source(
+        &self,
+        pvc: &PersistentVolumeClaim,
+        namespace: &str,
+        name: &str,
+        target_driver: &str,
+        socket_path: &str,
+        requested_capacity_bytes: Option<i64>,
+    ) -> Result<DataSourceResolution, ControllerError> {
+        let Some(data_source) = pvc.spec.as_ref().and_then(|spec| spec.data_source.as_ref()) else {
+            return Ok(DataSourceResolution::Ready(None));
+        };
+
+        match data_source.kind.as_str() {
+            "VolumeSnapshot" => {
+                if !self
+                    .controller_supports(socket_path, ControllerCapability::CreateDeleteSnapshot)
+                    .await?
+                {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "SnapshotNotSupported",
+                        "CSI driver does not advertise CREATE_DELETE_SNAPSHOT; snapshot restore is not supported.",
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                }
+                let snapshot_api: Api<VolumeSnapshot> =
+                    Api::namespaced(self.client.clone(), namespace);
+                let Some(snapshot) = snapshot_api.get(&data_source.name).await? else {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "WaitingForSnapshot",
+                        &format!(
+                            "VolumeSnapshot '{}' is not available yet.",
+                            data_source.name
+                        ),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
+                };
+                let Some(snapshot_status) = snapshot.status.as_ref() else {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "WaitingForSnapshot",
+                        &format!("VolumeSnapshot '{}' is not ready yet.", data_source.name),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
+                };
+                if snapshot_status.ready_to_use != Some(true) {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "WaitingForSnapshot",
+                        &format!("VolumeSnapshot '{}' is not ready yet.", data_source.name),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
+                }
+                if let (Some(requested), Some(restore_size)) = (
+                    requested_capacity_bytes,
+                    snapshot_status
+                        .restore_size_bytes
+                        .filter(|value| *value > 0),
+                ) && requested < restore_size
+                {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "SnapshotRestoreSizeExceeded",
+                        &format!(
+                            "Requested capacity {requested} is smaller than snapshot restore size {restore_size}."
+                        ),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                }
+                let Some(content_name) = snapshot_status
+                    .bound_volume_snapshot_content_name
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                else {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "WaitingForSnapshot",
+                        &format!(
+                            "VolumeSnapshot '{}' is ready but is not bound to content yet.",
+                            data_source.name
+                        ),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
+                };
+                let content_api: Api<VolumeSnapshotContent> = Api::all(self.client.clone());
+                let Some(content) = content_api.get(content_name).await? else {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "WaitingForSnapshot",
+                        &format!("VolumeSnapshotContent '{content_name}' is not available yet."),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
+                };
+                let content_spec = content.spec.as_ref().ok_or_else(|| {
+                    ControllerError::MissingVolumeSnapshotContentSpec {
+                        name: content_name.to_string(),
+                    }
+                })?;
+                if content_spec.driver != target_driver {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "SnapshotDriverMismatch",
+                        &format!(
+                            "VolumeSnapshotContent '{content_name}' uses driver '{}' but target StorageClass uses driver '{}'.",
+                            content_spec.driver, target_driver
+                        ),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                }
+                let Some(snapshot_id) = content
+                    .status
+                    .as_ref()
+                    .and_then(|status| status.snapshot_handle.as_deref())
+                    .filter(|value| !value.is_empty())
+                else {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "WaitingForSnapshot",
+                        &format!(
+                            "VolumeSnapshotContent '{content_name}' has no snapshot handle yet."
+                        ),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(self.requeue_action()));
+                };
+                Ok(DataSourceResolution::Ready(Some(
+                    CsiVolumeContentSource::Snapshot {
+                        snapshot_id: snapshot_id.to_string(),
+                    },
+                )))
+            }
+            "PersistentVolumeClaim" => {
+                if !self
+                    .controller_supports(socket_path, ControllerCapability::CloneVolume)
+                    .await?
+                {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "CloneNotSupported",
+                        "CSI driver does not advertise CLONE_VOLUME; PVC clone is not supported.",
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                }
+                let (source_driver, volume_id) = match self
+                    .resolve_source_claim_volume(namespace, &data_source.name)
+                    .await
+                {
+                    Ok(resolved) => resolved,
+                    Err(ControllerError::SnapshotSourceUnavailable { reason, .. }) => {
+                        self.apply_data_source_condition(
+                            pvc,
+                            namespace,
+                            name,
+                            "WaitingForSourcePVC",
+                            &format!(
+                                "PersistentVolumeClaim '{}' cannot be cloned yet: {reason}.",
+                                data_source.name
+                            ),
+                        )
+                        .await?;
+                        return Ok(DataSourceResolution::Pending(Action::await_change()));
+                    }
+                    Err(err) => return Err(err),
+                };
+                if source_driver != target_driver {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "CloneSourceDriverMismatch",
+                        &format!(
+                            "Source PersistentVolumeClaim '{}' uses driver '{}' but target StorageClass uses driver '{}'.",
+                            data_source.name, source_driver, target_driver
+                        ),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(Action::await_change()));
+                }
+                Ok(DataSourceResolution::Ready(Some(
+                    CsiVolumeContentSource::Volume { volume_id },
+                )))
+            }
+            _ => Ok(DataSourceResolution::Ready(None)),
+        }
+    }
+
+    async fn controller_supports(
+        &self,
+        socket_path: &str,
+        capability: ControllerCapability,
+    ) -> Result<bool, ControllerError> {
+        Ok(self
+            .csi_operator
+            .controller_capabilities(socket_path)
+            .await?
+            .contains(&capability))
+    }
+
+    async fn apply_data_source_condition(
+        &self,
+        pvc: &PersistentVolumeClaim,
+        namespace: &str,
+        name: &str,
+        condition_type: &str,
+        message: &str,
+    ) -> Result<(), ControllerError> {
+        let mut updated = pvc.clone();
+        let changed = apply_pvc_status(&mut updated, "Pending", None, false)
+            | upsert_pvc_condition(&mut updated, condition_type, message);
+        if changed {
+            let pvc_api: Api<PersistentVolumeClaim> =
+                Api::namespaced(self.client.clone(), namespace);
+            pvc_api.replace_status(name, updated).await?;
+        }
+        Ok(())
+    }
+
+    async fn resolve_source_claim_volume(
+        &self,
+        namespace: &str,
+        source_claim_name: &str,
+    ) -> Result<(String, String), ControllerError> {
+        let pvc_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
+        let Some(source_pvc) = pvc_api.get(source_claim_name).await? else {
+            return Err(ControllerError::SnapshotSourceUnavailable {
+                namespace: namespace.to_string(),
+                name: source_claim_name.to_string(),
+                reason: "source PersistentVolumeClaim is not available".to_string(),
+            });
+        };
+        if source_pvc
+            .status
+            .as_ref()
+            .and_then(|status| status.phase.as_deref())
+            != Some("Bound")
+        {
+            return Err(ControllerError::SnapshotSourceUnavailable {
+                namespace: namespace.to_string(),
+                name: source_claim_name.to_string(),
+                reason: "source PersistentVolumeClaim is not Bound".to_string(),
+            });
+        }
+        let pv_name = source_pvc
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.volume_name.as_deref())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| ControllerError::SnapshotSourceUnavailable {
+                namespace: namespace.to_string(),
+                name: source_claim_name.to_string(),
+                reason: "source PersistentVolumeClaim has no bound volumeName".to_string(),
+            })?
+            .to_string();
+        let pv_api: Api<PersistentVolume> = Api::all(self.client.clone());
+        let Some(source_pv) = pv_api.get(&pv_name).await? else {
+            return Err(ControllerError::SnapshotSourceUnavailable {
+                namespace: namespace.to_string(),
+                name: source_claim_name.to_string(),
+                reason: format!("source PersistentVolume '{pv_name}' is not available"),
+            });
+        };
+        let pv_spec = source_pv.spec.as_ref().ok_or_else(|| {
+            ControllerError::MissingPersistentVolumeSpec {
+                name: pv_name.clone(),
+            }
+        })?;
+        let csi =
+            pv_spec
+                .csi
+                .as_ref()
+                .ok_or_else(|| ControllerError::MissingPersistentVolumeCsi {
+                    name: pv_name.clone(),
+                })?;
+        if csi.volume_handle.is_empty() {
+            return Err(ControllerError::MissingVolumeHandle { name: pv_name });
+        }
+        Ok((csi.driver.clone(), csi.volume_handle.clone()))
+    }
+
     async fn cleanup_orphaned_volume(
         &self,
         socket_path: &str,
@@ -594,6 +1043,64 @@ fn apply_pvc_status(
         changed = true;
     }
     changed
+}
+
+fn upsert_pvc_condition(
+    pvc: &mut PersistentVolumeClaim,
+    condition_type: &str,
+    message: &str,
+) -> bool {
+    let status = pvc
+        .status
+        .get_or_insert_with(PersistentVolumeClaimStatus::default);
+    if let Some(existing) = status
+        .conditions
+        .iter_mut()
+        .find(|condition| condition.status == condition_type)
+    {
+        if existing.message == message {
+            return false;
+        }
+        existing.message = message.to_string();
+        existing.timestamp = Some(Time::now());
+        return true;
+    }
+    status.conditions.push(PersistentVolumeClaimCondition {
+        status: condition_type.to_string(),
+        message: message.to_string(),
+        timestamp: Some(Time::now()),
+    });
+    true
+}
+
+fn selected_topology_labels(
+    labels: &HashMap<String, String>,
+    storage_class: &StorageClass,
+) -> HashMap<String, String> {
+    let allowed_keys = storage_class
+        .spec
+        .as_ref()
+        .map(|spec| {
+            spec.allowed_topologies
+                .iter()
+                .flat_map(|term| term.match_label_expressions.iter())
+                .map(|requirement| requirement.key.clone())
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+
+    if allowed_keys.is_empty() {
+        return labels
+            .iter()
+            .filter(|(key, _)| key.starts_with("topology."))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+    }
+
+    allowed_keys
+        .into_iter()
+        .filter_map(|key| labels.get(&key).map(|value| (key, value.clone())))
+        .collect()
 }
 
 fn apply_pv_status(

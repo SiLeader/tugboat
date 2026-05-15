@@ -2,6 +2,10 @@
 name = "${NODE_NAME}"
 network_probe_interval_seconds = 30
 
+# [topology]
+# region = "us-east"
+# zone = "us-east-a"
+
 [runtime]
 executable = "/usr/local/bin/${RUNTIME_BINARY}"
 args = ["--config", "/etc/tugboat/runtime/${RUNTIME_CONFIG_FILE}"]

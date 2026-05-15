@@ -353,9 +353,11 @@ mod tests {
             all_network_classes: network_classes,
             all_runtime_classes: Vec::new(),
             all_ships: Vec::new(),
+            all_nodes: Vec::new(),
             all_ship_classes: Vec::new(),
             all_persistent_volume_claims: Vec::new(),
             all_persistent_volumes: Vec::new(),
+            all_storage_classes: Vec::new(),
         }
     }
 

@@ -15,6 +15,10 @@
 use crate::hotplug::VmHotplugRequest;
 use crate::migrate::{VmMigrateCancelRequest, VmMigrateRequest, VmMigrationStatusResponse};
 use crate::run::VmRunRequest;
+use crate::snapshot::{
+    VmSnapshotCreateRequest, VmSnapshotCreateResponse, VmSnapshotDeleteRequest,
+    VmSnapshotListRequest, VmSnapshotListResponse, VmSnapshotRestoreRequest,
+};
 use crate::status::VmStatusResponse;
 use crate::stop::VmStopRequest;
 use serde::Serialize;
@@ -145,6 +149,54 @@ impl VmRuntimeOperator {
             .output()
             .await?;
         handle_output(output)
+    }
+
+    pub async fn snapshot_create(
+        &self,
+        args: VmSnapshotCreateRequest,
+    ) -> Result<VmSnapshotCreateResponse, Error> {
+        let child = self.call("snapshot-create", &args).await?;
+        let output = timeout(COMMAND_RESPONSE_TIMEOUT, child.wait_with_output())
+            .await
+            .map_err(|_| Error::Timeout)??;
+        if output.status.success() {
+            Ok(serde_json::from_slice(&output.stdout)?)
+        } else {
+            Err(Error::CommandFailed(
+                output.status,
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ))
+        }
+    }
+
+    pub async fn snapshot_delete(&self, args: VmSnapshotDeleteRequest) -> Result<(), Error> {
+        let child = self.call("snapshot-delete", &args).await?;
+        handle_command_response(child).await
+    }
+
+    pub async fn snapshot_restore(&self, args: VmSnapshotRestoreRequest) -> Result<(), Error> {
+        let child = self.call("snapshot-restore", &args).await?;
+        handle_command_response(child).await
+    }
+
+    pub async fn snapshot_list(
+        &self,
+        args: VmSnapshotListRequest,
+    ) -> Result<VmSnapshotListResponse, Error> {
+        let child = self.call("snapshot-list", &args).await?;
+        let output = timeout(COMMAND_RESPONSE_TIMEOUT, child.wait_with_output())
+            .await
+            .map_err(|_| Error::Timeout)??;
+        if output.status.success() {
+            Ok(serde_json::from_slice(&output.stdout)?)
+        } else {
+            Err(Error::CommandFailed(
+                output.status,
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ))
+        }
     }
 
     pub async fn migration_status(&self, id: &str) -> Result<VmMigrationStatusResponse, Error> {

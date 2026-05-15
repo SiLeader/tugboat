@@ -18,6 +18,7 @@ use crate::endpoints::v1_apps::openapi_apps_v1;
 use crate::endpoints::v1_authorization::openapi_authorization_v1;
 use crate::endpoints::v1_coordination::openapi_coordination_v1;
 use crate::endpoints::v1_core::openapi_core_v1;
+use crate::endpoints::v1_snapshot::openapi_snapshot_v1;
 use serde::Deserialize;
 use utoipa::ToSchema;
 use utoipa_actix_web::service_config::ServiceConfig;
@@ -32,6 +33,7 @@ mod v1_apps;
 mod v1_authorization;
 mod v1_coordination;
 mod v1_core;
+mod v1_snapshot;
 mod watch_utils;
 
 pub mod openapi;
@@ -43,6 +45,7 @@ pub fn register_openapi_endpoints(config: &mut actix_web::web::ServiceConfig) {
         .service(openapi_apps_v1)
         .service(openapi_core_v1)
         .service(openapi_coordination_v1)
+        .service(openapi_snapshot_v1)
         .service(openid::jwks)
         .service(openid::openid_configuration);
 }

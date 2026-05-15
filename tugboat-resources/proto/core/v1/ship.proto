@@ -19,6 +19,7 @@ import "meta/v1/time.proto";
 import "meta/v1/type_meta.proto";
 
 import "core/v1/network_class.proto";
+import "core/v1/selector.proto";
 
 package tugboat.core.v1;
 
@@ -43,6 +44,56 @@ message ShipSpec {
   optional string runtime_class = 11;
   optional string service_account_name = 12;
   optional bool automount_service_account_token = 13;
+  optional Affinity affinity = 14;
+  repeated TopologySpreadConstraint topology_spread_constraints = 15;
+  // Name of a ShipSnapshot (same namespace) to boot from instead of
+  // the normal add path. Immutable once the Ship reaches a running
+  // state.
+  optional string restore_from_snapshot = 16;
+}
+
+message Affinity {
+  optional NodeAffinity node_affinity = 1;
+  optional ShipAffinity ship_affinity = 2;
+  optional ShipAntiAffinity ship_anti_affinity = 3;
+}
+
+message NodeAffinity {
+  optional NodeSelector required_during_scheduling = 1;
+  repeated PreferredSchedulingTerm preferred_during_scheduling = 2;
+}
+
+message PreferredSchedulingTerm {
+  int32 weight = 1;
+  NodeSelectorTerm preference = 2;
+}
+
+message ShipAffinity {
+  repeated ShipAffinityTerm required_during_scheduling = 1;
+  repeated WeightedShipAffinityTerm preferred_during_scheduling = 2;
+}
+
+message ShipAntiAffinity {
+  repeated ShipAffinityTerm required_during_scheduling = 1;
+  repeated WeightedShipAffinityTerm preferred_during_scheduling = 2;
+}
+
+message ShipAffinityTerm {
+  optional meta.v1.LabelSelector label_selector = 1;
+  repeated string namespaces = 2;
+  string topology_key = 3;
+}
+
+message WeightedShipAffinityTerm {
+  int32 weight = 1;
+  ShipAffinityTerm ship_affinity_term = 2;
+}
+
+message TopologySpreadConstraint {
+  int32 max_skew = 1;
+  string topology_key = 2;
+  string when_unsatisfiable = 3;
+  optional meta.v1.LabelSelector label_selector = 4;
 }
 
 message ShipVolumeClaimReference {

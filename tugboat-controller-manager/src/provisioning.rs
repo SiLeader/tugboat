@@ -7,9 +7,10 @@ use tugboat_client::{Api, TugboatClient};
 use tugboat_csi_operator::{CsiAccessMode, CsiAccessType};
 use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::{
-    CsiPersistentVolumeSource, PersistentVolume, PersistentVolumeClaim,
-    PersistentVolumeClaimReference, PersistentVolumeSpec, PersistentVolumeStatus, Secret,
-    SecretReference, StorageClass, StorageClassSpec,
+    CsiPersistentVolumeSource, NodeSelector, NodeSelectorRequirement, NodeSelectorTerm,
+    PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimReference, PersistentVolumeSpec,
+    PersistentVolumeStatus, Secret, SecretReference, StorageClass, StorageClassSpec,
+    VolumeNodeAffinity,
 };
 use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
@@ -298,8 +299,10 @@ pub(crate) fn build_persistent_volume(
     csi_config: StorageClassCsiConfig,
     volume_handle: String,
     volume_attributes: HashMap<String, String>,
+    accessible_topology: Vec<HashMap<String, String>>,
 ) -> PersistentVolume {
     let normalized_capacity_bytes = normalize_capacity_bytes(capacity_bytes);
+    let node_affinity = accessible_topology_to_node_affinity(accessible_topology);
     PersistentVolume {
         object_meta: Some(ObjectMeta {
             name: Some(pv_name.to_string()),
@@ -321,6 +324,7 @@ pub(crate) fn build_persistent_volume(
             storage_class_name: Some(storage_class_name),
             volume_mode,
             capacity_bytes: normalized_capacity_bytes,
+            node_affinity,
             csi: Some(CsiPersistentVolumeSource {
                 driver: provisioner,
                 controller_create_secret_ref: csi_config.controller_create_secret_ref,
@@ -349,6 +353,36 @@ pub(crate) fn build_persistent_volume(
         }),
         ..Default::default()
     }
+}
+
+pub(crate) fn accessible_topology_to_node_affinity(
+    accessible_topology: Vec<HashMap<String, String>>,
+) -> Option<VolumeNodeAffinity> {
+    let node_selector_terms = accessible_topology
+        .into_iter()
+        .filter(|segments| !segments.is_empty())
+        .map(|segments| NodeSelectorTerm {
+            match_expressions: segments
+                .into_iter()
+                .map(|(key, value)| NodeSelectorRequirement {
+                    key,
+                    operator: "In".to_string(),
+                    values: vec![value],
+                })
+                .collect(),
+            match_fields: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+
+    if node_selector_terms.is_empty() {
+        return None;
+    }
+
+    Some(VolumeNodeAffinity {
+        required: Some(NodeSelector {
+            node_selector_terms,
+        }),
+    })
 }
 
 pub(crate) async fn load_secret_reference(
@@ -516,6 +550,7 @@ mod tests {
             StorageClassCsiConfig::default(),
             "volume-1".to_string(),
             HashMap::new(),
+            Vec::new(),
         );
 
         assert!(is_managed_pv(&pv));
@@ -546,6 +581,7 @@ mod tests {
             StorageClassCsiConfig::default(),
             "volume-1".to_string(),
             HashMap::new(),
+            Vec::new(),
         );
 
         assert!(!should_delete_backing_volume(&pv).unwrap());
@@ -612,6 +648,7 @@ mod tests {
             },
             "volume-2".to_string(),
             HashMap::new(),
+            Vec::new(),
         );
 
         let csi = pv
@@ -626,6 +663,60 @@ mod tests {
                 .map(|r| (&r.namespace, &r.name)),
             Some((&"kube-system".to_string(), &"provisioner".to_string()))
         );
+    }
+
+    #[test]
+    fn built_pv_maps_accessible_topology_to_node_affinity() {
+        let pv = build_persistent_volume(
+            "pv-3",
+            "default",
+            "claim-c",
+            "fast".to_string(),
+            "example.csi.driver".to_string(),
+            "Delete".to_string(),
+            vec!["ReadWriteOnce".to_string()],
+            Some("Block".to_string()),
+            Some(1024),
+            StorageClassCsiConfig::default(),
+            "volume-3".to_string(),
+            HashMap::new(),
+            vec![
+                HashMap::from([
+                    (
+                        "topology.tugboat.cloud/region".to_string(),
+                        "us-east".to_string(),
+                    ),
+                    (
+                        "topology.tugboat.cloud/zone".to_string(),
+                        "us-east-a".to_string(),
+                    ),
+                ]),
+                HashMap::from([(
+                    "topology.tugboat.cloud/zone".to_string(),
+                    "us-east-b".to_string(),
+                )]),
+            ],
+        );
+
+        let terms = &pv
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.node_affinity.as_ref())
+            .and_then(|affinity| affinity.required.as_ref())
+            .expect("node affinity should exist")
+            .node_selector_terms;
+
+        assert_eq!(terms.len(), 2);
+        assert!(terms[0].match_expressions.iter().any(|requirement| {
+            requirement.key == "topology.tugboat.cloud/region"
+                && requirement.operator == "In"
+                && requirement.values == vec!["us-east".to_string()]
+        }));
+        assert!(terms[1].match_expressions.iter().any(|requirement| {
+            requirement.key == "topology.tugboat.cloud/zone"
+                && requirement.operator == "In"
+                && requirement.values == vec!["us-east-b".to_string()]
+        }));
     }
 }
 

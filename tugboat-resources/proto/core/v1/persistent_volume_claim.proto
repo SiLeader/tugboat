@@ -35,6 +35,13 @@ message PersistentVolumeClaimSpec {
   optional string volume_mode = 3;
   optional string volume_name = 4;
   optional int64 requested_capacity_bytes = 5;
+  optional TypedLocalObjectReference data_source = 6;
+}
+
+message TypedLocalObjectReference {
+  string api_group = 1;
+  string kind = 2;
+  string name = 3;
 }
 
 message PersistentVolumeClaimStatus {

@@ -22,8 +22,12 @@ pub mod validators;
 
 pub const NODE_ARCH_LABEL_KEY: &str = "tugboat.cloud/arch";
 pub const NODE_RUNTIME_CLASS_LABEL_KEY: &str = "tugboat.cloud/runtime-class";
+pub const NODE_REGION_LABEL_KEY: &str = "topology.tugboat.cloud/region";
+pub const NODE_ZONE_LABEL_KEY: &str = "topology.tugboat.cloud/zone";
+pub const NODE_HOSTNAME_LABEL_KEY: &str = "topology.tugboat.cloud/host";
 pub const SERVICE_ACCOUNT_NAME_ANNOTATION: &str = "tugboat.cloud/service-account.name";
 pub const SERVICE_ACCOUNT_TOKEN_SECRET_TYPE: &str = "tugboat.cloud/service-account-token";
+pub const SELECTED_NODE_ANNOTATION: &str = "volume.tugboat.cloud/selected-node";
 
 pub trait Resource {
     fn type_meta() -> TypeMeta;
@@ -218,6 +222,9 @@ mod tests {
     };
     use crate::manifests::core::v1::{Ship, ShipMigrationStatus, ShipSpec, ShipStatus};
     use crate::manifests::meta::v1::{ObjectMeta, Time};
+    use crate::manifests::snapshot::v1::{
+        VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotContent,
+    };
     use crate::{ObjectMetaResource, ShipMigrationExt, resource_api};
     use serde_json::json;
 
@@ -260,6 +267,9 @@ mod tests {
         assert_static_descriptor!(ShipClass, resource_api::SHIP_CLASS);
         assert_static_descriptor!(StorageClass, resource_api::STORAGE_CLASS);
         assert_static_descriptor!(Lease, resource_api::LEASE);
+        assert_static_descriptor!(VolumeSnapshot, resource_api::VOLUME_SNAPSHOT);
+        assert_static_descriptor!(VolumeSnapshotContent, resource_api::VOLUME_SNAPSHOT_CONTENT);
+        assert_static_descriptor!(VolumeSnapshotClass, resource_api::VOLUME_SNAPSHOT_CLASS);
     }
 
     #[test]

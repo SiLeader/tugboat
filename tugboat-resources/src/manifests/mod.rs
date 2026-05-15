@@ -19,7 +19,9 @@ fn default<T: Default + PartialEq>(t: &T) -> bool {
 pub mod core {
     pub mod v1 {
         use crate::validators::{
-            HasReclaimPolicy, NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator,
+            HasNodeAffinity, HasReclaimPolicy, HasVolumeBindingMode, NameValidator,
+            NamespaceProhibitedValidator, NodeAffinityValidator, ReclaimPolicyValidator,
+            ShipSchedulingValidator, Validator, VolumeBindingModeValidator,
         };
         use crate::{apply_resource, apply_validators, resource_api};
 
@@ -46,30 +48,118 @@ pub mod core {
         apply_resource!(StorageClass, resource_api::STORAGE_CLASS, cluster);
         apply_resource!(Ship, resource_api::SHIP, namespaced);
         apply_resource!(ShipClass, resource_api::SHIP_CLASS, cluster);
+        apply_resource!(ShipSnapshot, resource_api::SHIP_SNAPSHOT, namespaced);
 
         apply_validators!(ConfigMap, validators NameValidator);
         apply_validators!(Namespace, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(NetworkClass, validators NameValidator);
         apply_validators!(ClusterNetworkClass, validators NameValidator, NamespaceProhibitedValidator);
         apply_validators!(Node, validators NameValidator, NamespaceProhibitedValidator);
-        apply_validators!(PersistentVolume, validators NameValidator, NamespaceProhibitedValidator);
-        apply_validators!(PersistentVolumeClaim, validators NameValidator);
+        apply_validators!(
+            PersistentVolume,
+            validators NameValidator,
+            NamespaceProhibitedValidator,
+            NodeAffinityValidator
+        );
+        apply_validators!(
+            PersistentVolumeClaim,
+            validators NameValidator,
+            PersistentVolumeClaimDataSourceValidator
+        );
         apply_validators!(Secret, validators NameValidator);
         apply_validators!(ServiceAccount, validators NameValidator);
         apply_validators!(RuntimeClass, validators NameValidator, NamespaceProhibitedValidator);
-        apply_validators!(StorageClass, validators NameValidator, NamespaceProhibitedValidator, ReclaimPolicyValidator);
+        apply_validators!(
+            StorageClass,
+            validators NameValidator,
+            NamespaceProhibitedValidator,
+            ReclaimPolicyValidator,
+            VolumeBindingModeValidator
+        );
 
         impl HasReclaimPolicy for StorageClass {
             fn reclaim_policy_value(&self) -> Option<&str> {
                 self.spec.as_ref()?.reclaim_policy.as_deref()
             }
         }
-        apply_validators!(Ship, validators NameValidator);
+        impl HasVolumeBindingMode for StorageClass {
+            fn volume_binding_mode_value(&self) -> Option<&str> {
+                self.spec.as_ref()?.volume_binding_mode.as_deref()
+            }
+        }
+        impl HasNodeAffinity for PersistentVolume {
+            fn node_affinity_value(&self) -> Option<&VolumeNodeAffinity> {
+                self.spec.as_ref()?.node_affinity.as_ref()
+            }
+        }
+        pub struct PersistentVolumeClaimDataSourceValidator;
+        impl Validator<PersistentVolumeClaim> for PersistentVolumeClaimDataSourceValidator {
+            fn validate(&self, value: &PersistentVolumeClaim) -> bool {
+                let Some(data_source) = value
+                    .spec
+                    .as_ref()
+                    .and_then(|spec| spec.data_source.as_ref())
+                else {
+                    return true;
+                };
+                if data_source.name.is_empty() {
+                    return false;
+                }
+                match data_source.kind.as_str() {
+                    "VolumeSnapshot" => data_source.api_group == "snapshot",
+                    "PersistentVolumeClaim" => data_source.api_group.is_empty(),
+                    _ => false,
+                }
+            }
+        }
+        apply_validators!(Ship, validators NameValidator, ShipSchedulingValidator);
         apply_validators!(ShipClass, validators NameValidator, NamespaceProhibitedValidator);
+        apply_validators!(
+            ShipSnapshot,
+            validators NameValidator,
+            ShipSnapshotSpecValidator,
+            ShipSnapshotStatusValidator
+        );
+
+        pub struct ShipSnapshotSpecValidator;
+        impl Validator<ShipSnapshot> for ShipSnapshotSpecValidator {
+            fn validate(&self, value: &ShipSnapshot) -> bool {
+                let Some(spec) = value.spec.as_ref() else {
+                    return false;
+                };
+                if spec.ship_name.trim().is_empty() {
+                    return false;
+                }
+                match spec.mode.as_deref() {
+                    None | Some("Online") | Some("Offline") => {}
+                    _ => return false,
+                }
+                true
+            }
+        }
+
+        pub struct ShipSnapshotStatusValidator;
+        impl Validator<ShipSnapshot> for ShipSnapshotStatusValidator {
+            fn validate(&self, value: &ShipSnapshot) -> bool {
+                let Some(status) = value.status.as_ref() else {
+                    return true;
+                };
+                matches!(
+                    status.phase.as_str(),
+                    "Pending" | "Capturing" | "Ready" | "Failed"
+                )
+            }
+        }
 
         #[cfg(test)]
         mod tests {
-            use super::{ConfigMap, RuntimeClass};
+            use super::{
+                ConfigMap, NodeSelector, NodeSelectorRequirement, NodeSelectorTerm,
+                PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimSpec,
+                PersistentVolumeSpec, RuntimeClass, ShipSnapshot, ShipSnapshotSpec,
+                ShipSnapshotStatus, StorageClass, StorageClassSpec, TypedLocalObjectReference,
+                VolumeNodeAffinity,
+            };
             use crate::manifests::meta::v1::ObjectMeta;
             use crate::validators::Validatable;
 
@@ -140,6 +230,217 @@ pub mod core {
 
                 assert!(!rc.validate());
             }
+
+            #[test]
+            fn storageclass_accepts_supported_volume_binding_modes() {
+                for mode in ["Immediate", "WaitForFirstConsumer"] {
+                    let storage_class = StorageClass {
+                        object_meta: Some(ObjectMeta {
+                            name: Some("fast".to_string()),
+                            ..Default::default()
+                        }),
+                        spec: Some(StorageClassSpec {
+                            provisioner: "example.csi.driver".to_string(),
+                            volume_binding_mode: Some(mode.to_string()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+
+                    assert!(storage_class.validate(), "mode={mode}");
+                }
+            }
+
+            #[test]
+            fn storageclass_rejects_invalid_volume_binding_mode() {
+                let storage_class = StorageClass {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("fast".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(StorageClassSpec {
+                        provisioner: "example.csi.driver".to_string(),
+                        volume_binding_mode: Some("Delayed".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(!storage_class.validate());
+            }
+
+            #[test]
+            fn persistent_volume_accepts_valid_node_affinity() {
+                let pv = PersistentVolume {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("pv-a".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(PersistentVolumeSpec {
+                        node_affinity: Some(VolumeNodeAffinity {
+                            required: Some(NodeSelector {
+                                node_selector_terms: vec![NodeSelectorTerm {
+                                    match_expressions: vec![NodeSelectorRequirement {
+                                        key: "topology.tugboat.cloud/zone".to_string(),
+                                        operator: "In".to_string(),
+                                        values: vec!["us-east-a".to_string()],
+                                    }],
+                                    ..Default::default()
+                                }],
+                            }),
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+
+                assert!(pv.validate());
+            }
+
+            #[test]
+            fn persistent_volume_rejects_invalid_node_affinity_requirements() {
+                for (key, operator) in [("", "In"), ("topology.tugboat.cloud/zone", "Equals")] {
+                    let pv = PersistentVolume {
+                        object_meta: Some(ObjectMeta {
+                            name: Some("pv-a".to_string()),
+                            ..Default::default()
+                        }),
+                        spec: Some(PersistentVolumeSpec {
+                            node_affinity: Some(VolumeNodeAffinity {
+                                required: Some(NodeSelector {
+                                    node_selector_terms: vec![NodeSelectorTerm {
+                                        match_expressions: vec![NodeSelectorRequirement {
+                                            key: key.to_string(),
+                                            operator: operator.to_string(),
+                                            values: vec!["us-east-a".to_string()],
+                                        }],
+                                        ..Default::default()
+                                    }],
+                                }),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+
+                    assert!(!pv.validate(), "key={key} operator={operator}");
+                }
+            }
+
+            #[test]
+            fn persistent_volume_claim_accepts_supported_data_sources() {
+                for (kind, api_group) in [
+                    ("VolumeSnapshot", "snapshot"),
+                    ("PersistentVolumeClaim", ""),
+                ] {
+                    let pvc = PersistentVolumeClaim {
+                        object_meta: Some(ObjectMeta {
+                            name: Some("restore-target".to_string()),
+                            namespace: Some("default".to_string()),
+                            ..Default::default()
+                        }),
+                        spec: Some(PersistentVolumeClaimSpec {
+                            data_source: Some(TypedLocalObjectReference {
+                                api_group: api_group.to_string(),
+                                kind: kind.to_string(),
+                                name: "source".to_string(),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+
+                    assert!(pvc.validate(), "kind={kind}");
+                }
+            }
+
+            #[test]
+            fn persistent_volume_claim_rejects_unsupported_data_sources() {
+                for (kind, api_group, name) in [
+                    ("VolumeSnapshot", "", "snap-a"),
+                    ("PersistentVolumeClaim", "snapshot", "pvc-a"),
+                    ("ConfigMap", "", "config"),
+                    ("VolumeSnapshot", "snapshot", ""),
+                ] {
+                    let pvc = PersistentVolumeClaim {
+                        object_meta: Some(ObjectMeta {
+                            name: Some("restore-target".to_string()),
+                            namespace: Some("default".to_string()),
+                            ..Default::default()
+                        }),
+                        spec: Some(PersistentVolumeClaimSpec {
+                            data_source: Some(TypedLocalObjectReference {
+                                api_group: api_group.to_string(),
+                                kind: kind.to_string(),
+                                name: name.to_string(),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+
+                    assert!(
+                        !pvc.validate(),
+                        "kind={kind} api_group={api_group} name={name}"
+                    );
+                }
+            }
+
+            fn ship_snapshot_with_spec(
+                name: &str,
+                ship_name: &str,
+                mode: Option<&str>,
+            ) -> ShipSnapshot {
+                ShipSnapshot {
+                    object_meta: Some(ObjectMeta {
+                        name: Some(name.to_string()),
+                        namespace: Some("default".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(ShipSnapshotSpec {
+                        ship_name: ship_name.to_string(),
+                        mode: mode.map(str::to_string),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            }
+
+            #[test]
+            fn ship_snapshot_accepts_valid_modes() {
+                for mode in [None, Some("Online"), Some("Offline")] {
+                    let snap = ship_snapshot_with_spec("snap-a", "ship-a", mode);
+                    assert!(snap.validate(), "mode={mode:?}");
+                }
+            }
+
+            #[test]
+            fn ship_snapshot_rejects_unknown_mode() {
+                let snap = ship_snapshot_with_spec("snap-a", "ship-a", Some("Fast"));
+                assert!(!snap.validate());
+            }
+
+            #[test]
+            fn ship_snapshot_rejects_empty_ship_name() {
+                let snap = ship_snapshot_with_spec("snap-a", "  ", None);
+                assert!(!snap.validate());
+            }
+
+            #[test]
+            fn ship_snapshot_status_phase_must_be_known() {
+                let mut snap = ship_snapshot_with_spec("snap-a", "ship-a", None);
+                snap.status = Some(ShipSnapshotStatus {
+                    phase: "Ready".to_string(),
+                    ..Default::default()
+                });
+                assert!(snap.validate());
+
+                snap.status = Some(ShipSnapshotStatus {
+                    phase: "Bogus".to_string(),
+                    ..Default::default()
+                });
+                assert!(!snap.validate());
+            }
         }
     }
 }
@@ -202,6 +503,204 @@ pub mod coordination {
         apply_resource!(Lease, resource_api::LEASE, namespaced);
 
         apply_validators!(Lease, validators NameValidator);
+    }
+}
+
+pub mod snapshot {
+    pub mod v1 {
+        use crate::validators::{NameValidator, NamespaceProhibitedValidator, Validator};
+        use crate::{apply_resource, apply_validators, resource_api};
+
+        include!(concat!(env!("OUT_DIR"), "/tugboat.snapshot.v1.rs"));
+
+        apply_resource!(VolumeSnapshot, resource_api::VOLUME_SNAPSHOT, namespaced);
+        apply_resource!(
+            VolumeSnapshotContent,
+            resource_api::VOLUME_SNAPSHOT_CONTENT,
+            cluster
+        );
+        apply_resource!(
+            VolumeSnapshotClass,
+            resource_api::VOLUME_SNAPSHOT_CLASS,
+            cluster
+        );
+
+        apply_validators!(
+            VolumeSnapshot,
+            validators NameValidator,
+            VolumeSnapshotSourceValidator
+        );
+        apply_validators!(
+            VolumeSnapshotContent,
+            validators NameValidator,
+            NamespaceProhibitedValidator,
+            VolumeSnapshotContentSpecValidator
+        );
+        apply_validators!(
+            VolumeSnapshotClass,
+            validators NameValidator,
+            NamespaceProhibitedValidator,
+            VolumeSnapshotClassSpecValidator
+        );
+
+        pub struct VolumeSnapshotSourceValidator;
+        impl Validator<VolumeSnapshot> for VolumeSnapshotSourceValidator {
+            fn validate(&self, value: &VolumeSnapshot) -> bool {
+                let Some(source) = value.spec.as_ref().and_then(|spec| spec.source.as_ref()) else {
+                    return false;
+                };
+                exactly_one_set(
+                    source.persistent_volume_claim_name.as_ref(),
+                    source.volume_snapshot_content_name.as_ref(),
+                )
+            }
+        }
+
+        pub struct VolumeSnapshotContentSpecValidator;
+        impl Validator<VolumeSnapshotContent> for VolumeSnapshotContentSpecValidator {
+            fn validate(&self, value: &VolumeSnapshotContent) -> bool {
+                let Some(spec) = value.spec.as_ref() else {
+                    return false;
+                };
+                if !valid_deletion_policy(&spec.deletion_policy) {
+                    return false;
+                }
+                let Some(source) = spec.source.as_ref() else {
+                    return false;
+                };
+                exactly_one_set(
+                    source.volume_handle.as_ref(),
+                    source.snapshot_handle.as_ref(),
+                )
+            }
+        }
+
+        pub struct VolumeSnapshotClassSpecValidator;
+        impl Validator<VolumeSnapshotClass> for VolumeSnapshotClassSpecValidator {
+            fn validate(&self, value: &VolumeSnapshotClass) -> bool {
+                value
+                    .spec
+                    .as_ref()
+                    .is_some_and(|spec| valid_deletion_policy(&spec.deletion_policy))
+            }
+        }
+
+        fn exactly_one_set(left: Option<&String>, right: Option<&String>) -> bool {
+            left.is_some() ^ right.is_some()
+        }
+
+        fn valid_deletion_policy(value: &str) -> bool {
+            matches!(value, "Retain" | "Delete")
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::{
+                VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotClassSpec,
+                VolumeSnapshotContent, VolumeSnapshotContentSource, VolumeSnapshotContentSpec,
+                VolumeSnapshotSource,
+            };
+            use crate::manifests::meta::v1::ObjectMeta;
+            use crate::validators::Validatable;
+
+            #[test]
+            fn volume_snapshot_requires_exactly_one_source() {
+                for (pvc, content, valid) in [
+                    (Some("claim-a"), None, true),
+                    (None, Some("content-a"), true),
+                    (None, None, false),
+                    (Some("claim-a"), Some("content-a"), false),
+                ] {
+                    let snapshot = VolumeSnapshot {
+                        object_meta: Some(ObjectMeta {
+                            name: Some("snap-a".to_string()),
+                            namespace: Some("default".to_string()),
+                            ..Default::default()
+                        }),
+                        spec: Some(super::VolumeSnapshotSpec {
+                            source: Some(VolumeSnapshotSource {
+                                persistent_volume_claim_name: pvc.map(str::to_string),
+                                volume_snapshot_content_name: content.map(str::to_string),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+
+                    assert_eq!(
+                        snapshot.validate(),
+                        valid,
+                        "pvc={pvc:?} content={content:?}"
+                    );
+                }
+            }
+
+            #[test]
+            fn volume_snapshot_content_validates_source_policy_and_namespace() {
+                let content = VolumeSnapshotContent {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("content-a".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(VolumeSnapshotContentSpec {
+                        deletion_policy: "Delete".to_string(),
+                        source: Some(VolumeSnapshotContentSource {
+                            volume_handle: Some("vol-a".to_string()),
+                            snapshot_handle: None,
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                assert!(content.validate());
+
+                let mut both_sources = content.clone();
+                both_sources.spec.as_mut().unwrap().source = Some(VolumeSnapshotContentSource {
+                    volume_handle: Some("vol-a".to_string()),
+                    snapshot_handle: Some("snap-a".to_string()),
+                });
+                assert!(!both_sources.validate());
+
+                let mut invalid_policy = content.clone();
+                invalid_policy.spec.as_mut().unwrap().deletion_policy = "Archive".to_string();
+                assert!(!invalid_policy.validate());
+
+                let mut namespaced = content;
+                namespaced.object_meta.as_mut().unwrap().namespace = Some("default".to_string());
+                assert!(!namespaced.validate());
+            }
+
+            #[test]
+            fn volume_snapshot_class_validates_policy_and_namespace() {
+                for policy in ["Retain", "Delete"] {
+                    let class = VolumeSnapshotClass {
+                        object_meta: Some(ObjectMeta {
+                            name: Some("snapclass".to_string()),
+                            ..Default::default()
+                        }),
+                        spec: Some(VolumeSnapshotClassSpec {
+                            deletion_policy: policy.to_string(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+                    assert!(class.validate(), "policy={policy}");
+                }
+
+                let invalid = VolumeSnapshotClass {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("snapclass".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(VolumeSnapshotClassSpec {
+                        deletion_policy: "Archive".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                assert!(!invalid.validate());
+            }
+        }
     }
 }
 

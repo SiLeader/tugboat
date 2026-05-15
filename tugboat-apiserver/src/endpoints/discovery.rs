@@ -266,4 +266,51 @@ mod tests {
                 .any(|verb| verb == "watch")
         );
     }
+
+    #[actix_web::test]
+    async fn snapshot_discovery_lists_resources_and_status_subresources() {
+        let app =
+            actix_test::init_service(App::new().service(handle_api_group_version_resources)).await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/apis/snapshot/v1")
+            .to_request();
+        let resp: Value = actix_test::call_and_read_body_json(&app, req).await;
+        let resources = resp["resources"].as_array().unwrap();
+
+        for (name, kind, namespaced) in [
+            ("volumesnapshots", "VolumeSnapshot", true),
+            ("volumesnapshotcontents", "VolumeSnapshotContent", false),
+            ("volumesnapshotclasses", "VolumeSnapshotClass", false),
+            ("shipsnapshots", "ShipSnapshot", true),
+        ] {
+            let resource = resources
+                .iter()
+                .find(|resource| resource["name"] == name)
+                .unwrap_or_else(|| panic!("missing resource {name}"));
+            assert_eq!(resource["kind"], kind);
+            assert_eq!(resource["namespaced"], namespaced);
+            for verb in [
+                "create", "delete", "get", "list", "patch", "update", "watch",
+            ] {
+                assert!(
+                    resource["verbs"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|v| v == verb),
+                    "{name} missing {verb}"
+                );
+            }
+
+            let status_name = format!("{name}/status");
+            let status = resources
+                .iter()
+                .find(|resource| resource["name"] == status_name)
+                .unwrap_or_else(|| panic!("missing resource {status_name}"));
+            assert_eq!(status["kind"], kind);
+            assert_eq!(status["namespaced"], namespaced);
+            assert_eq!(status["verbs"], serde_json::json!(["patch", "update"]));
+        }
+    }
 }

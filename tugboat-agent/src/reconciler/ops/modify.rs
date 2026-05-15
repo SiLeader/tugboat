@@ -629,6 +629,9 @@ mod tests {
             runtime_class: None,
             service_account_name: None,
             automount_service_account_token: None,
+            affinity: None,
+            topology_spread_constraints: Vec::new(),
+            restore_from_snapshot: None,
         }
     }
 

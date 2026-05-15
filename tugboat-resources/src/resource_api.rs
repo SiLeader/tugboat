@@ -165,6 +165,24 @@ const PERSISTENT_VOLUME_CLAIM_OPS: ResourceOperations = ResourceOperations {
     ..NAMESPACED_DEFAULT_OPS
 };
 
+const SNAPSHOT_RESOURCE_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
+    update: true,
+    delete: true,
+    status_patch: true,
+    status_update: true,
+    ..NAMESPACED_DEFAULT_OPS
+};
+
+const CLUSTER_SNAPSHOT_RESOURCE_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
+    update: true,
+    delete: true,
+    status_patch: true,
+    status_update: true,
+    ..CLUSTER_DEFAULT_OPS
+};
+
 const SECRET_OPS: ResourceOperations = ResourceOperations {
     patch: true,
     update: true,
@@ -353,6 +371,16 @@ descriptor!(
     CLUSTER_DEFAULT_OPS
 );
 descriptor!(
+    SHIP_SNAPSHOT,
+    "snapshot",
+    "v1",
+    "ShipSnapshot",
+    "shipsnapshots",
+    "shipsnapshot",
+    Namespaced,
+    SNAPSHOT_RESOURCE_OPS
+);
+descriptor!(
     DEPLOYMENT,
     "apps",
     "v1",
@@ -432,6 +460,36 @@ descriptor!(
     Namespaced,
     LEASE_OPS
 );
+descriptor!(
+    VOLUME_SNAPSHOT,
+    "snapshot",
+    "v1",
+    "VolumeSnapshot",
+    "volumesnapshots",
+    "volumesnapshot",
+    Namespaced,
+    SNAPSHOT_RESOURCE_OPS
+);
+descriptor!(
+    VOLUME_SNAPSHOT_CONTENT,
+    "snapshot",
+    "v1",
+    "VolumeSnapshotContent",
+    "volumesnapshotcontents",
+    "volumesnapshotcontent",
+    Cluster,
+    CLUSTER_SNAPSHOT_RESOURCE_OPS
+);
+descriptor!(
+    VOLUME_SNAPSHOT_CLASS,
+    "snapshot",
+    "v1",
+    "VolumeSnapshotClass",
+    "volumesnapshotclasses",
+    "volumesnapshotclass",
+    Cluster,
+    CLUSTER_SNAPSHOT_RESOURCE_OPS
+);
 
 pub const ALL_RESOURCE_DESCRIPTORS: &[ResourceApiDescriptor] = &[
     CLUSTER_ROLE,
@@ -455,6 +513,10 @@ pub const ALL_RESOURCE_DESCRIPTORS: &[ResourceApiDescriptor] = &[
     SHIP_CLASS,
     STORAGE_CLASS,
     LEASE,
+    VOLUME_SNAPSHOT,
+    VOLUME_SNAPSHOT_CONTENT,
+    VOLUME_SNAPSHOT_CLASS,
+    SHIP_SNAPSHOT,
 ];
 
 pub fn all_resource_descriptors() -> &'static [ResourceApiDescriptor] {

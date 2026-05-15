@@ -1,0 +1,56 @@
+// Copyright 2025- SiLeader (Cerussite).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+import "meta/v1/object_meta.proto";
+import "meta/v1/time.proto";
+import "meta/v1/type_meta.proto";
+
+package tugboat.snapshot.v1;
+
+message VolumeSnapshotContent {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+  VolumeSnapshotContentSpec spec = 3;
+  optional VolumeSnapshotContentStatus status = 4;
+}
+
+message VolumeSnapshotContentSpec {
+  string driver = 1;
+  string deletion_policy = 2;
+  VolumeSnapshotRef volume_snapshot_ref = 3;
+  VolumeSnapshotContentSource source = 4;
+  optional string volume_snapshot_class_name = 5;
+  optional string source_volume_handle = 6;
+}
+
+message VolumeSnapshotRef {
+  string name = 1;
+  string namespace = 2;
+  string uid = 3;
+}
+
+message VolumeSnapshotContentSource {
+  optional string volume_handle = 1;
+  optional string snapshot_handle = 2;
+}
+
+message VolumeSnapshotContentStatus {
+  optional string snapshot_handle = 1;
+  optional meta.v1.Time creation_time = 2;
+  optional bool ready_to_use = 3;
+  optional int64 restore_size_bytes = 4;
+  optional string error = 5;
+}

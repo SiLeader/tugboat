@@ -33,6 +33,10 @@ pub struct VmRunRequest {
     #[serde(default)]
     pub incoming: Option<VmIncomingMigrationConfig>,
     #[serde(default)]
+    pub restore_handle: Option<String>,
+    #[serde(default)]
+    pub restore_source_id: Option<String>,
+    #[serde(default)]
     pub user: VmExecUser,
 }
 

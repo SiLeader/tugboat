@@ -31,6 +31,8 @@ pub(crate) struct RuntimeCreateRequest<'a> {
     pub ship_spec: &'a ShipSpec,
     pub ship_class: ShipClass,
     pub incoming_port: Option<u16>,
+    pub restore_handle: Option<String>,
+    pub restore_source_id: Option<String>,
     pub networks: Vec<VmNetworkConfig>,
     pub volumes: Vec<VmVolumeConfig>,
     pub fingerprints: ShipFingerprints,
@@ -57,6 +59,8 @@ impl RuntimeOperator {
             ship_spec,
             ship_class,
             incoming_port,
+            restore_handle,
+            restore_source_id,
             networks,
             volumes,
             fingerprints,
@@ -96,6 +100,8 @@ impl RuntimeOperator {
             networks,
             incoming: incoming_port
                 .map(|port| tugboat_vm_runtime_interface::run::VmIncomingMigrationConfig { port }),
+            restore_handle,
+            restore_source_id,
             user: Default::default(),
             uefi: VmUefiConfig {
                 enabled: ship_spec.uefi.map(|u| u.enabled).unwrap_or(false),

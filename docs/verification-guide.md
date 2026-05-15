@@ -885,3 +885,74 @@ Verify that requests are recorded in the audit log.
 # 3. Check /var/log/tugboat/audit.log
 tail -f /var/log/tugboat/audit.log | jq .
 ```
+
+## 11. Advanced Verification Scenarios
+
+These scenarios cover newer features like topology-aware scheduling and snapshots.
+
+### 11.1 Topology Pinning
+
+Verify that a Ship is correctly scheduled to a node matching the storage topology.
+
+1. **Label Nodes**: Label two nodes with distinct zones.
+   ```bash
+   # (Pseudo-commands, use kubectl or curl to patch node labels)
+   label node node-a topology.tugboat.cloud/zone=zone-a
+   label node node-b topology.tugboat.cloud/zone=zone-b
+   ```
+2. **Create StorageClass**: Use `WaitForFirstConsumer` and restrict to `zone-a`.
+   ```yaml
+   apiVersion: v1
+   kind: StorageClass
+   metadata:
+     name: topology-aware-hostpath
+   spec:
+     provisioner: hostpath.csi.k8s.io
+     volumeBindingMode: WaitForFirstConsumer
+     allowedTopologies:
+       - matchLabelExpressions:
+           - key: topology.tugboat.cloud/zone
+             values: ["zone-a"]
+   ```
+3. **Create PVC and Ship**: Create a PVC using this class and a Ship referencing it.
+4. **Verify**: Confirm the Ship lands on `node-a` and the provisioned PV has `nodeAffinity` for `zone-a`.
+
+### 11.2 VolumeSnapshot Round-trip
+
+Verify that you can capture a snapshot of a volume and restore it.
+
+1. **Create Source**: Create a PVC, bind it to a Ship, and write some data to it.
+2. **Snapshot**: Create a `VolumeSnapshot` for the PVC.
+   ```yaml
+   apiVersion: snapshot/v1
+   kind: VolumeSnapshot
+   metadata:
+     name: data-snapshot
+     namespace: demo
+   spec:
+     source:
+       persistentVolumeClaimName: data-disk
+   ```
+3. **Wait for Ready**: Confirm `status.readyToUse` is `true`.
+4. **Restore**: Create a new PVC with `dataSource` pointing to the snapshot.
+5. **Verify**: Bind the new PVC to a new Ship and verify the data is present.
+
+### 11.3 ShipSnapshot Online + Restore
+
+Verify that you can capture the full state of a running VM and restore it.
+
+1. **Start Ship**: Boot a Ship and ensure it's in `Running` state.
+2. **Snapshot**: Create a `ShipSnapshot` with `includeVolumes: true`.
+   ```yaml
+   apiVersion: snapshot/v1
+   kind: ShipSnapshot
+   metadata:
+     name: ship-full-backup
+     namespace: demo
+   spec:
+     shipName: demo-ship
+     includeVolumes: true
+   ```
+3. **Delete Ship**: Delete the original Ship.
+4. **Restore**: Create a new Ship with `restoreFromSnapshot: ship-full-backup`.
+5. **Verify**: Confirm the new Ship resumes from the snapshot state (including memory state if supported by the runtime).

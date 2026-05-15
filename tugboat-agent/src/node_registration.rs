@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config::TopologyConfig;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -20,11 +21,14 @@ use tracing::{debug, info, warn};
 use tugboat_client::{Api, TugboatClient};
 use tugboat_cni_operator::CniOperatorConfig;
 use tugboat_resources::manifests::core::v1::{
-    Node, NodeCniPluginStatus, NodeCondition, NodeOvercommitSpec, NodeResource, NodeSpec,
-    NodeStatus,
+    Node, NodeCniPluginStatus, NodeCondition, NodeImageStatus, NodeOvercommitSpec, NodeResource,
+    NodeSpec, NodeStatus,
 };
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
-use tugboat_resources::{NODE_ARCH_LABEL_KEY, NODE_RUNTIME_CLASS_LABEL_KEY};
+use tugboat_resources::{
+    NODE_ARCH_LABEL_KEY, NODE_HOSTNAME_LABEL_KEY, NODE_REGION_LABEL_KEY,
+    NODE_RUNTIME_CLASS_LABEL_KEY, NODE_ZONE_LABEL_KEY,
+};
 
 const PROC_CPUINFO_PATH: &str = "/proc/cpuinfo";
 const PROC_MEMINFO_PATH: &str = "/proc/meminfo";
@@ -59,18 +63,19 @@ pub(crate) async fn ensure_node_exists(
     client: TugboatClient,
     node_name: String,
     runtime_class: Option<String>,
+    topology: &TopologyConfig,
 ) -> Result<(), NodeRegistrationError> {
     let api: Api<Node> = Api::all(client.clone());
     let desired_runtime_class = normalized_runtime_class(runtime_class.as_deref());
 
     if let Some(mut node) = api.get(&node_name).await? {
-        ensure_node_labels(&api, &node_name, &mut node, desired_runtime_class).await?;
+        ensure_node_labels(&api, &node_name, &mut node, desired_runtime_class, topology).await?;
         info!("Node resource '{node_name}' already exists. Skipping registration.");
         return Ok(());
     }
 
     let capacity = detect_node_capacity()?;
-    let node = build_node(node_name.clone(), capacity, desired_runtime_class);
+    let node = build_node(node_name.clone(), capacity, desired_runtime_class, topology);
 
     match api.create(node).await {
         Ok(_) => {
@@ -96,15 +101,25 @@ pub(crate) async fn ensure_node_exists(
 pub(crate) async fn publish_node_status(
     client: TugboatClient,
     node_name: &str,
+    runtime_class: Option<&str>,
+    topology: &TopologyConfig,
     cni: &CniOperatorConfig,
+    image_cache_dir: &str,
 ) -> Result<(), NodeRegistrationError> {
     let api: Api<Node> = Api::all(client);
     let Some(mut node) = api.get(node_name).await? else {
         return Err(NodeRegistrationError::NodeMissing(node_name.to_string()));
     };
 
-    ensure_node_architecture_label(&api, node_name, &mut node).await?;
-    node.status = Some(build_node_status(cni)?);
+    ensure_node_labels(
+        &api,
+        node_name,
+        &mut node,
+        normalized_runtime_class(runtime_class),
+        topology,
+    )
+    .await?;
+    node.status = Some(build_node_status(cni, image_cache_dir)?);
     api.replace_status(node_name, node).await?;
     debug!("Published CNI status for node '{node_name}'");
     Ok(())
@@ -113,7 +128,10 @@ pub(crate) async fn publish_node_status(
 pub(crate) async fn refresh_node_status_loop(
     client: TugboatClient,
     node_name: String,
+    runtime_class: Option<String>,
+    topology: TopologyConfig,
     cni: CniOperatorConfig,
+    image_cache_dir: String,
     interval: Duration,
 ) {
     info!(
@@ -123,7 +141,16 @@ pub(crate) async fn refresh_node_status_loop(
     );
 
     loop {
-        if let Err(err) = publish_node_status(client.clone(), &node_name, &cni).await {
+        if let Err(err) = publish_node_status(
+            client.clone(),
+            &node_name,
+            normalized_runtime_class(runtime_class.as_deref()),
+            &topology,
+            &cni,
+            &image_cache_dir,
+        )
+        .await
+        {
             warn!(
                 "Failed to publish CNI capability for node '{}': {}",
                 node_name, err
@@ -133,17 +160,16 @@ pub(crate) async fn refresh_node_status_loop(
     }
 }
 
-fn build_node(node_name: String, capacity: NodeCapacity, runtime_class: Option<&str>) -> Node {
-    let mut labels = HashMap::from([(
-        NODE_ARCH_LABEL_KEY.to_string(),
-        normalized_host_architecture().to_string(),
-    )]);
-    if let Some(runtime_class) = runtime_class {
-        labels.insert(
-            NODE_RUNTIME_CLASS_LABEL_KEY.to_string(),
-            runtime_class.to_string(),
-        );
-    }
+fn build_node(
+    node_name: String,
+    capacity: NodeCapacity,
+    runtime_class: Option<&str>,
+    topology: &TopologyConfig,
+) -> Node {
+    let labels = desired_managed_labels(&node_name, runtime_class, topology)
+        .into_iter()
+        .filter_map(|(key, value)| value.map(|value| (key, value)))
+        .collect();
 
     Node {
         type_meta: None,
@@ -169,70 +195,39 @@ fn build_node(node_name: String, capacity: NodeCapacity, runtime_class: Option<&
     }
 }
 
-async fn ensure_node_architecture_label(
-    api: &Api<Node>,
-    node_name: &str,
-    node: &mut Node,
-) -> Result<(), NodeRegistrationError> {
-    let current_arch = node
-        .object_meta
-        .as_ref()
-        .and_then(|meta| meta.labels.get(NODE_ARCH_LABEL_KEY))
-        .map(String::as_str);
-    let desired_arch = normalized_host_architecture();
-
-    if current_arch == Some(desired_arch) {
-        return Ok(());
-    }
-
-    let patch = serde_json::json!({
-        "metadata": {
-            "labels": {
-                NODE_ARCH_LABEL_KEY: desired_arch,
-            }
-        }
-    });
-    api.patch(node_name, patch).await?;
-
-    let meta = node.object_meta.get_or_insert_with(ObjectMeta::default);
-    meta.labels
-        .insert(NODE_ARCH_LABEL_KEY.to_string(), desired_arch.to_string());
-
-    Ok(())
-}
-
 async fn ensure_node_labels(
     api: &Api<Node>,
     node_name: &str,
     node: &mut Node,
     runtime_class: Option<&str>,
+    topology: &TopologyConfig,
 ) -> Result<(), NodeRegistrationError> {
-    let current_arch = node
+    let desired_labels = desired_managed_labels(node_name, runtime_class, topology);
+    let current_labels = node
         .object_meta
         .as_ref()
-        .and_then(|meta| meta.labels.get(NODE_ARCH_LABEL_KEY))
-        .map(String::as_str);
-    let desired_arch = normalized_host_architecture();
-    let current_runtime_class = node
-        .object_meta
-        .as_ref()
-        .and_then(|meta| meta.labels.get(NODE_RUNTIME_CLASS_LABEL_KEY))
-        .map(String::as_str);
+        .map(|meta| &meta.labels)
+        .cloned()
+        .unwrap_or_default();
+    let labels_changed = desired_labels.iter().any(|(key, desired_value)| {
+        current_labels.get(key).map(String::as_str) != desired_value.as_deref()
+    });
 
-    if current_arch == Some(desired_arch) && current_runtime_class == runtime_class {
+    if !labels_changed {
         return Ok(());
     }
 
-    let mut labels = serde_json::Map::from_iter([(
-        NODE_ARCH_LABEL_KEY.to_string(),
-        serde_json::Value::String(desired_arch.to_string()),
-    )]);
-    labels.insert(
-        NODE_RUNTIME_CLASS_LABEL_KEY.to_string(),
-        runtime_class.map_or(serde_json::Value::Null, |runtime_class| {
-            serde_json::Value::String(runtime_class.to_string())
-        }),
-    );
+    let labels = desired_labels
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.clone(),
+                value.as_ref().map_or(serde_json::Value::Null, |value| {
+                    serde_json::Value::String(value.clone())
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
 
     let patch = serde_json::json!({
         "metadata": {
@@ -242,27 +237,55 @@ async fn ensure_node_labels(
     api.patch(node_name, patch).await?;
 
     let meta = node.object_meta.get_or_insert_with(ObjectMeta::default);
-    meta.labels
-        .insert(NODE_ARCH_LABEL_KEY.to_string(), desired_arch.to_string());
-    match runtime_class {
-        Some(runtime_class) => {
-            meta.labels.insert(
-                NODE_RUNTIME_CLASS_LABEL_KEY.to_string(),
-                runtime_class.to_string(),
-            );
-        }
-        None => {
-            meta.labels.remove(NODE_RUNTIME_CLASS_LABEL_KEY);
+    for (key, value) in desired_labels {
+        match value {
+            Some(value) => {
+                meta.labels.insert(key, value);
+            }
+            None => {
+                meta.labels.remove(&key);
+            }
         }
     }
 
     Ok(())
 }
 
+fn desired_managed_labels(
+    node_name: &str,
+    runtime_class: Option<&str>,
+    topology: &TopologyConfig,
+) -> HashMap<String, Option<String>> {
+    HashMap::from([
+        (
+            NODE_ARCH_LABEL_KEY.to_string(),
+            Some(normalized_host_architecture().to_string()),
+        ),
+        (
+            NODE_RUNTIME_CLASS_LABEL_KEY.to_string(),
+            runtime_class.map(ToString::to_string),
+        ),
+        (
+            NODE_REGION_LABEL_KEY.to_string(),
+            normalized_optional_string(topology.region.as_deref()).map(ToString::to_string),
+        ),
+        (
+            NODE_ZONE_LABEL_KEY.to_string(),
+            normalized_optional_string(topology.zone.as_deref()).map(ToString::to_string),
+        ),
+        (
+            NODE_HOSTNAME_LABEL_KEY.to_string(),
+            Some(node_name.to_string()),
+        ),
+    ])
+}
+
 fn normalized_runtime_class(runtime_class: Option<&str>) -> Option<&str> {
-    runtime_class
-        .map(str::trim)
-        .filter(|runtime_class| !runtime_class.is_empty())
+    normalized_optional_string(runtime_class)
+}
+
+fn normalized_optional_string(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 pub(crate) fn normalized_host_architecture() -> &'static str {
@@ -273,9 +296,13 @@ pub(crate) fn normalized_host_architecture() -> &'static str {
     }
 }
 
-fn build_node_status(cni: &CniOperatorConfig) -> Result<NodeStatus, io::Error> {
+fn build_node_status(
+    cni: &CniOperatorConfig,
+    image_cache_dir: &str,
+) -> Result<NodeStatus, io::Error> {
     build_node_status_with_flannel_paths(
         cni,
+        Path::new(image_cache_dir),
         Path::new(DEFAULT_FLANNEL_SUBNET_FILE),
         Path::new(DEFAULT_FLANNEL_DATA_DIR),
     )
@@ -283,6 +310,7 @@ fn build_node_status(cni: &CniOperatorConfig) -> Result<NodeStatus, io::Error> {
 
 fn build_node_status_with_flannel_paths(
     cni: &CniOperatorConfig,
+    image_cache_dir: &Path,
     flannel_subnet_file: &Path,
     flannel_data_dir: &Path,
 ) -> Result<NodeStatus, io::Error> {
@@ -331,7 +359,37 @@ fn build_node_status_with_flannel_paths(
     Ok(NodeStatus {
         conditions: vec![condition],
         cni_plugins,
+        images: probe_cached_images(image_cache_dir)?,
     })
+}
+
+fn probe_cached_images(image_cache_dir: &Path) -> Result<Vec<NodeImageStatus>, io::Error> {
+    let mut images = Vec::new();
+    if !image_cache_dir.try_exists()? {
+        return Ok(images);
+    }
+    for entry in std::fs::read_dir(image_cache_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let reference_path = entry.path().join("reference");
+        if !reference_path.try_exists()? {
+            continue;
+        }
+        let image = std::fs::read_to_string(&reference_path)?.trim().to_string();
+        if image.is_empty() {
+            continue;
+        }
+        let disk_path = entry.path().join("disk.qcow2");
+        let size_bytes = std::fs::metadata(disk_path)
+            .ok()
+            .and_then(|metadata| i64::try_from(metadata.len()).ok())
+            .filter(|size| *size > 0);
+        images.push(NodeImageStatus { image, size_bytes });
+    }
+    images.sort_by(|a, b| a.image.cmp(&b.image));
+    Ok(images)
 }
 
 fn probe_plugin_binary(bin_dir: &str, plugin: &str) -> Result<NodeCniPluginStatus, io::Error> {
@@ -573,6 +631,7 @@ mod tests {
 
     #[test]
     fn build_node_sets_runtime_class_label_when_configured() {
+        let topology = TopologyConfig::default();
         let node = build_node(
             "node-a".to_string(),
             NodeCapacity {
@@ -580,6 +639,7 @@ mod tests {
                 memory: 8192,
             },
             Some("qemu"),
+            &topology,
         );
         let labels = &node.object_meta.as_ref().unwrap().labels;
 
@@ -595,6 +655,7 @@ mod tests {
 
     #[test]
     fn build_node_omits_runtime_class_label_when_not_configured() {
+        let topology = TopologyConfig::default();
         let node = build_node(
             "node-a".to_string(),
             NodeCapacity {
@@ -602,6 +663,7 @@ mod tests {
                 memory: 8192,
             },
             None,
+            &topology,
         );
         let labels = &node.object_meta.as_ref().unwrap().labels;
 
@@ -618,6 +680,50 @@ mod tests {
         assert_eq!(normalized_runtime_class(Some("")), None);
         assert_eq!(normalized_runtime_class(Some("   ")), None);
         assert_eq!(normalized_runtime_class(Some(" kata ")), Some("kata"));
+    }
+
+    #[test]
+    fn build_node_sets_configured_topology_labels() {
+        let topology = TopologyConfig {
+            region: Some(" us-east ".to_string()),
+            zone: Some("us-east-a".to_string()),
+        };
+        let node = build_node(
+            "node-a".to_string(),
+            NodeCapacity {
+                cpu: 4,
+                memory: 8192,
+            },
+            None,
+            &topology,
+        );
+        let labels = &node.object_meta.as_ref().unwrap().labels;
+
+        assert_eq!(
+            labels.get(NODE_REGION_LABEL_KEY).map(String::as_str),
+            Some("us-east")
+        );
+        assert_eq!(
+            labels.get(NODE_ZONE_LABEL_KEY).map(String::as_str),
+            Some("us-east-a")
+        );
+        assert_eq!(
+            labels.get(NODE_HOSTNAME_LABEL_KEY).map(String::as_str),
+            Some("node-a")
+        );
+    }
+
+    #[test]
+    fn desired_managed_labels_marks_unconfigured_optional_keys_for_removal() {
+        let topology = TopologyConfig::default();
+        let labels = desired_managed_labels("node-a", None, &topology);
+
+        assert_eq!(labels.get(NODE_REGION_LABEL_KEY), Some(&None::<String>));
+        assert_eq!(labels.get(NODE_ZONE_LABEL_KEY), Some(&None::<String>));
+        assert_eq!(
+            labels.get(NODE_HOSTNAME_LABEL_KEY),
+            Some(&Some("node-a".to_string()))
+        );
     }
 
     #[test]
@@ -660,6 +766,7 @@ mod tests {
 
     #[test]
     fn build_node_sets_overcommit_to_one() {
+        let topology = TopologyConfig::default();
         let node = build_node(
             "node1".to_string(),
             NodeCapacity {
@@ -667,6 +774,7 @@ mod tests {
                 memory: 8_589_934_592,
             },
             None,
+            &topology,
         );
 
         let spec = node.spec.expect("spec should exist");
@@ -696,7 +804,9 @@ mod tests {
         std::fs::create_dir_all(&data_dir).unwrap();
         std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
 
-        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let images = base.join("images");
+        let status =
+            build_node_status_with_flannel_paths(&config, &images, &subnet, &data_dir).unwrap();
         let condition = status.conditions.first().expect("condition should exist");
 
         assert_eq!(condition.r#type, "CniReady");
@@ -721,7 +831,9 @@ mod tests {
         std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
 
         let config = test_cni_config(&bin);
-        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let images = base.join("images");
+        let status =
+            build_node_status_with_flannel_paths(&config, &images, &subnet, &data_dir).unwrap();
 
         let flannel = status
             .cni_plugins
@@ -751,7 +863,9 @@ mod tests {
         std::fs::write(&subnet, "FLANNEL_NETWORK=not-a-cidr").unwrap();
 
         let config = test_cni_config(&bin);
-        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let images = base.join("images");
+        let status =
+            build_node_status_with_flannel_paths(&config, &images, &subnet, &data_dir).unwrap();
 
         let flannel = status
             .cni_plugins
@@ -777,7 +891,9 @@ mod tests {
         std::fs::write(&subnet, "FLANNEL_NETWORK=10.244.0.0/16").unwrap();
 
         let config = test_cni_config(&bin);
-        let status = build_node_status_with_flannel_paths(&config, &subnet, &data_dir).unwrap();
+        let images = base.join("images");
+        let status =
+            build_node_status_with_flannel_paths(&config, &images, &subnet, &data_dir).unwrap();
 
         let flannel = status
             .cni_plugins

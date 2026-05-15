@@ -264,9 +264,74 @@ Ship volume の名前が使われます。そのため、CSI の `Filesystem` cl
 control plane 側では、`PersistentVolume`、`PersistentVolumeClaim`、`StorageClass` の API に加えて、
 `tugboat-controller-manager` による CSI の動的プロビジョニング、管理対象 PV の cleanup、容量指定付きの provision/expand、
 `Filesystem` claim、CSI secret / `fsType` の引き回しまで実装済みです。node 側も controller publish context、稼働中の Ship
-を停止させない live `NodeExpandVolume`、`NodeGetVolumeStats` による CSI health / usage の PV/PVC condition
-反映まで対応しました。残る大きな課題は、scheduler の storage 制約考慮、永続 state 以上の recovery、snapshot / clone
-系ワークフローです。
+を停止させない live `NodeExpandVolume`、`NodeGetVolumeStats`による CSI health / usage の PV/PVC condition
+反映まで対応しました。残る大きな課題は、永続 state 以上の recovery です。
+
+### Topology-aware scheduling
+
+Tugboat は topology-aware scheduling をサポートしており、Ship をストレージなどの必要なリソースにアクセス可能なノードに配置することを保証します。これは、`topology.tugboat.cloud/region` や `topology.tugboat.cloud/zone` といった既知のラベルを通じて実現されます。
+
+Node affinity を持つ Ship のマニフェスト例:
+
+```yaml
+apiVersion: v1
+kind: Ship
+metadata:
+  name: topology-aware-ship
+spec:
+  image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
+  shipClass: lightweight
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: topology.tugboat.cloud/zone
+                operator: In
+                values:
+                  - zone-a
+```
+
+詳細は [topology-aware scheduling](docs/topology-aware-scheduling.md) を参照してください。
+
+### ボリュームスナップショットとクローン
+
+ボリュームスナップショットを使用すると、ボリュームの特定の時点のコピーを作成できます。これらのスナップショットは、新しいボリュームのプロビジョニング（復元）や、既存のボリュームのクローン作成に使用できます。
+
+`VolumeSnapshot` のマニフェスト例:
+
+```yaml
+apiVersion: snapshot/v1
+kind: VolumeSnapshot
+metadata:
+  name: my-snapshot
+  namespace: default
+spec:
+  volumeSnapshotClassName: csi-hostpath-snapclass
+  source:
+    persistentVolumeClaimName: data-disk
+```
+
+詳細は [volume snapshots](docs/volume-snapshots.md) を参照してください。
+
+### Ship スナップショット
+
+Ship スナップショットは、メモリの状態やボリュームの状態を含む VM 全体の状態をキャプチャします。これにより、VM インスタンスの完全なバックアップと復元が可能になります。
+
+`ShipSnapshot` のマニフェスト例:
+
+```yaml
+apiVersion: snapshot/v1
+kind: ShipSnapshot
+metadata:
+  name: my-ship-snapshot
+  namespace: default
+spec:
+  shipName: my-ship
+  includeVolumes: true
+```
+
+詳細は [ship snapshots](docs/ship-snapshots.md) を参照してください。
 
 ### CNI status と Flannel 検証
 
@@ -463,9 +528,9 @@ spec:
 
 ### 今後の拡張予定
 
-- **Topology-aware scheduling と snapshot 系ワークフロー** — データの局所性に基づいた Ship の配置最適化と、ステートフルなワークロードの増分バックアップ・復元をサポート
 - **CRD (Custom Resource Definition)** — Tugboat のコアを変更することなく、ユーザーが独自のリソース型を定義可能にする
 - **高可用性（HA）設計** — apiserver の水平スケーリングとスケジューラの Lease ベースのリーダー選挙
+- **Topology-aware scheduling と snapshot** — リリース済み。詳細は [topology-aware scheduling](docs/topology-aware-scheduling.md)、[volume snapshots](docs/volume-snapshots.md)、[ship snapshots](docs/ship-snapshots.md) を参照してください。
 
 ## Roadmap
 
@@ -486,7 +551,7 @@ spec:
     - [x] Ship Modifiedイベントのreconcile
     - [x] Ship Deletedイベントのreconcile
     - [x] ストレージ (CSI publish/stage, controller publish context, および live expansion)
-    - [ ] Topology-aware scheduling と snapshot 系ワークフロー
+    - [x] Topology-aware scheduling と snapshot 系ワークフロー
 - [x] Secret
 - [x] Namespace リソース定義とAPI (`core/v1`)
 - [x] tugboat-controller-manager

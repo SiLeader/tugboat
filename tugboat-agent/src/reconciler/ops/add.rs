@@ -26,8 +26,10 @@ use tugboat_resources::manifests::meta::v1::Time;
 mod cleanup;
 mod migration_target;
 mod recovery;
+mod restore;
 mod volumes;
 use recovery::{RecoveredRuntimeAction, recovered_runtime_action, runtime_fingerprints_for_ship};
+use restore::{requested_restore_snapshot, resolve_restore_snapshot};
 
 impl ShipReconciler {
     pub(crate) async fn reconcile_added(&self, ship: Ship) -> Result<(), ReconcileError> {
@@ -67,6 +69,32 @@ impl ShipReconciler {
             .namespace
             .clone()
             .unwrap_or("default".to_string());
+
+        let (restore_handle, restore_source_id) =
+            if let Some(snap_name) = requested_restore_snapshot(&ship) {
+                let api: Api<tugboat_resources::manifests::core::v1::ShipSnapshot> =
+                    Api::namespaced(self.client.clone(), &namespace);
+                let snapshot = api.get(snap_name).await?;
+                let resolved = resolve_restore_snapshot(snap_name, snapshot.as_ref())?;
+                info!(
+                    "Resolved restore intent for ship '{}' from snapshot '{}' (handle={})",
+                    ship_id, snap_name, resolved.handle
+                );
+                {
+                    let api: Api<Ship> = Api::namespaced(self.client.clone(), &namespace);
+                    let mut status_ship = ship.clone();
+                    status_ship.append_status(ShipCondition {
+                        status: "SnapshotResolved".to_string(),
+                        message: format!("Resolved snapshot '{snap_name}' for restore"),
+                        timestamp: Some(Time::now()),
+                    });
+                    api.replace_status(name, status_ship).await?;
+                }
+                (Some(resolved.handle), Some(resolved.source_ship_id))
+            } else {
+                (None, None)
+            };
+
         let runtime_fingerprints = runtime_fingerprints_for_ship(ship_spec, &self.node_name)?;
 
         if self.runtime_operator.is_present(ship_id).await? {
@@ -233,6 +261,8 @@ impl ShipReconciler {
                             ship_spec,
                             ship_class: class,
                             incoming_port,
+                            restore_handle,
+                            restore_source_id,
                             networks: networks.iter().map(|n| n.vm.clone()).collect(),
                             volumes,
                             fingerprints: runtime_fingerprints.clone(),

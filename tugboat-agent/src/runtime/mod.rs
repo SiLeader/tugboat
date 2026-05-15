@@ -18,6 +18,7 @@ pub(crate) mod error;
 mod hotplug;
 mod inner;
 mod migration;
+mod snapshot;
 mod start;
 mod status;
 

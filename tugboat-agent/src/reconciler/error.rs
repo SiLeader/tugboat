@@ -199,6 +199,8 @@ pub(crate) enum ReconcileError {
     Cni(#[from] tugboat_cni_operator::Error),
     #[error("CSI error: {0}")]
     Csi(#[from] crate::csi::CsiError),
+    #[error("Validation error: {0}")]
+    Validation(String),
 }
 
 impl Display for NetworkClassRefForError {

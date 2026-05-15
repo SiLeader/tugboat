@@ -23,9 +23,13 @@ use tugboat_resources::manifests::authorization::v1::{
 use tugboat_resources::manifests::coordination::v1::Lease;
 use tugboat_resources::manifests::core::v1::{
     ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, PersistentVolume,
-    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
+    PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, ShipSnapshot,
+    StorageClass,
 };
 use tugboat_resources::manifests::meta::v1::TypeMeta;
+use tugboat_resources::manifests::snapshot::v1::{
+    VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotContent,
+};
 use tugboat_resources::{Resource, StaticResource};
 
 pub trait Serializable: Resource + Sized {
@@ -86,11 +90,15 @@ protobuf_serializable!(RuntimeClass);
 protobuf_serializable!(ServiceAccount);
 protobuf_serializable!(Ship);
 protobuf_serializable!(ShipClass);
+protobuf_serializable!(ShipSnapshot);
 protobuf_serializable!(StorageClass);
 protobuf_serializable!(Secret);
 protobuf_serializable!(PersistentVolume);
 protobuf_serializable!(PersistentVolumeClaim);
 protobuf_serializable!(ReplicaSet);
+protobuf_serializable!(VolumeSnapshot);
+protobuf_serializable!(VolumeSnapshotContent);
+protobuf_serializable!(VolumeSnapshotClass);
 
 #[cfg(test)]
 mod tests {
@@ -103,12 +111,19 @@ mod tests {
         ClusterRole, ClusterRoleBinding, Role, RoleBinding,
     };
     use tugboat_resources::manifests::coordination::v1::Lease;
-    use tugboat_resources::manifests::core::v1::ConfigMap;
     use tugboat_resources::manifests::core::v1::{
-        ClusterNetworkClass, Namespace, NetworkClass, Node, PersistentVolume,
-        PersistentVolumeClaim, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, StorageClass,
+        ClusterNetworkClass, ConfigMap, Namespace, NetworkClass, Node, NodeSelector,
+        NodeSelectorRequirement, NodeSelectorTerm, PersistentVolume, PersistentVolumeClaim,
+        PersistentVolumeSpec, RuntimeClass, Secret, ServiceAccount, Ship, ShipClass, ShipSnapshot,
+        StorageClass, StorageClassSpec, TopologySelectorLabelRequirement, TopologySelectorTerm,
+        VolumeNodeAffinity,
     };
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
+    use tugboat_resources::manifests::snapshot::v1::{
+        VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotClassSpec, VolumeSnapshotContent,
+        VolumeSnapshotContentSource, VolumeSnapshotContentSpec, VolumeSnapshotSource,
+        VolumeSnapshotSpec,
+    };
     use tugboat_resources::resource_api;
 
     fn serializable_descriptor<T: StaticSerializable>() -> resource_api::ResourceApiDescriptor {
@@ -133,11 +148,15 @@ mod tests {
             serializable_descriptor::<ServiceAccount>(),
             serializable_descriptor::<Ship>(),
             serializable_descriptor::<ShipClass>(),
+            serializable_descriptor::<ShipSnapshot>(),
             serializable_descriptor::<StorageClass>(),
             serializable_descriptor::<Secret>(),
             serializable_descriptor::<PersistentVolume>(),
             serializable_descriptor::<PersistentVolumeClaim>(),
             serializable_descriptor::<ReplicaSet>(),
+            serializable_descriptor::<VolumeSnapshot>(),
+            serializable_descriptor::<VolumeSnapshotContent>(),
+            serializable_descriptor::<VolumeSnapshotClass>(),
         ]
     }
 
@@ -175,5 +194,157 @@ mod tests {
             Some("settings")
         );
         assert_eq!(decoded.data.get("key").map(String::as_str), Some("value"));
+    }
+
+    #[test]
+    fn can_round_trip_persistent_volume_node_affinity() {
+        let pv = PersistentVolume {
+            object_meta: Some(ObjectMeta {
+                name: Some("pv-a".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(PersistentVolumeSpec {
+                node_affinity: Some(VolumeNodeAffinity {
+                    required: Some(NodeSelector {
+                        node_selector_terms: vec![NodeSelectorTerm {
+                            match_expressions: vec![NodeSelectorRequirement {
+                                key: "topology.tugboat.cloud/zone".to_string(),
+                                operator: "In".to_string(),
+                                values: vec!["us-east-a".to_string()],
+                            }],
+                            ..Default::default()
+                        }],
+                    }),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let encoded = pv.serialize().unwrap();
+        let decoded = PersistentVolume::deserialize(&encoded).unwrap();
+        let requirement = decoded
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.node_affinity.as_ref())
+            .and_then(|affinity| affinity.required.as_ref())
+            .and_then(|selector| selector.node_selector_terms.first())
+            .and_then(|term| term.match_expressions.first())
+            .expect("node affinity requirement should round-trip");
+
+        assert_eq!(requirement.key, "topology.tugboat.cloud/zone");
+        assert_eq!(requirement.operator, "In");
+        assert_eq!(requirement.values, vec!["us-east-a".to_string()]);
+    }
+
+    #[test]
+    fn can_round_trip_storage_class_topology_fields() {
+        let storage_class = StorageClass {
+            object_meta: Some(ObjectMeta {
+                name: Some("fast".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(StorageClassSpec {
+                provisioner: "example.csi.driver".to_string(),
+                volume_binding_mode: Some("WaitForFirstConsumer".to_string()),
+                allowed_topologies: vec![TopologySelectorTerm {
+                    match_label_expressions: vec![TopologySelectorLabelRequirement {
+                        key: "topology.tugboat.cloud/zone".to_string(),
+                        values: vec!["us-east-a".to_string()],
+                    }],
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let encoded = storage_class.serialize().unwrap();
+        let decoded = StorageClass::deserialize(&encoded).unwrap();
+        let spec = decoded.spec.expect("spec should round-trip");
+
+        assert_eq!(
+            spec.volume_binding_mode.as_deref(),
+            Some("WaitForFirstConsumer")
+        );
+        assert_eq!(spec.allowed_topologies.len(), 1);
+        assert_eq!(
+            spec.allowed_topologies[0].match_label_expressions[0].key,
+            "topology.tugboat.cloud/zone"
+        );
+    }
+
+    #[test]
+    fn can_round_trip_snapshot_resources() {
+        let snapshot = VolumeSnapshot {
+            object_meta: Some(ObjectMeta {
+                name: Some("snap-a".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(VolumeSnapshotSpec {
+                source: Some(VolumeSnapshotSource {
+                    persistent_volume_claim_name: Some("data".to_string()),
+                    ..Default::default()
+                }),
+                volume_snapshot_class_name: Some("fast".to_string()),
+            }),
+            ..Default::default()
+        };
+        let decoded_snapshot = VolumeSnapshot::deserialize(&snapshot.serialize().unwrap()).unwrap();
+        assert_eq!(
+            decoded_snapshot
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.source.as_ref())
+                .and_then(|source| source.persistent_volume_claim_name.as_deref()),
+            Some("data")
+        );
+
+        let content = VolumeSnapshotContent {
+            object_meta: Some(ObjectMeta {
+                name: Some("content-a".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(VolumeSnapshotContentSpec {
+                deletion_policy: "Retain".to_string(),
+                source: Some(VolumeSnapshotContentSource {
+                    snapshot_handle: Some("snap-handle".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let decoded_content =
+            VolumeSnapshotContent::deserialize(&content.serialize().unwrap()).unwrap();
+        assert_eq!(
+            decoded_content
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.source.as_ref())
+                .and_then(|source| source.snapshot_handle.as_deref()),
+            Some("snap-handle")
+        );
+
+        let class = VolumeSnapshotClass {
+            object_meta: Some(ObjectMeta {
+                name: Some("fast".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(VolumeSnapshotClassSpec {
+                driver: "csi.tugboat.cloud/fast".to_string(),
+                deletion_policy: "Delete".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let decoded_class = VolumeSnapshotClass::deserialize(&class.serialize().unwrap()).unwrap();
+        assert_eq!(
+            decoded_class
+                .spec
+                .as_ref()
+                .map(|spec| spec.deletion_policy.as_str()),
+            Some("Delete")
+        );
     }
 }

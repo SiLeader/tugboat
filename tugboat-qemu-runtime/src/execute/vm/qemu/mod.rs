@@ -87,8 +87,8 @@ impl RunVm for QemuVm<'_> {
         let qmp_uds = self.config.get_uds_url(&self.args.id);
         let qmp_opt = format!("{qmp_uds},server=on,wait=off");
         debug!("QEMU UDS = {qmp_uds}");
-        let err = Command::new(&self.config.executables.qemu)
-            .args(["-machine", "q35"])
+        let mut cmd = Command::new(&self.config.executables.qemu);
+        cmd.args(["-machine", "q35"])
             .args(["-nographic"])
             .args(["-qmp", qmp_opt.as_str()])
             .args_if(self.config.kvm.enabled, &["-enable-kvm"])
@@ -98,9 +98,11 @@ impl RunVm for QemuVm<'_> {
             .qemu_args(&self.args.volumes)
             .qemu_args(&img)
             .qemu_args(&self.args.incoming)
+            .qemu_args(&self.args.restore_handle)
             .qemu_args_with_arg_if(self.args.uefi.enabled, &self.config.uefi, &self)
-            .debug_command()
-            .exec();
+            .debug_command();
+
+        let err = cmd.exec();
         Err(crate::Error::Io(err))
     }
 }
@@ -209,6 +211,16 @@ impl QemuArgs<Option<VmIncomingMigrationConfig>> for Command {
     }
 }
 
+impl QemuArgs<Option<String>> for Command {
+    fn qemu_args(&mut self, value: &Option<String>) -> &mut Self {
+        if let Some(handle) = value {
+            self.args(["-loadvm", handle])
+        } else {
+            self
+        }
+    }
+}
+
 impl QemuArgsWithArgIf<Option<QemuVmConfigUefi>, QemuVm<'_>> for Command {
     fn qemu_args_with_arg_if(
         &mut self,
@@ -254,9 +266,58 @@ impl DebugCommand for Command {
 
 #[cfg(test)]
 mod tests {
-    use super::QemuArgs;
+    use super::spawner::{QemuVmConfigExecutables, QemuVmConfigKvm};
+    use super::{QemuArgs, QemuVm, QemuVmConfig, QemuVmConfigUefi};
+    use std::path::{Path, PathBuf};
     use std::process::Command;
-    use tugboat_vm_runtime_interface::run::VmVolumeConfig;
+    use tugboat_vm_runtime_interface::run::{
+        VmCpuConfig, VmExecUser, VmMemoryConfig, VmRunRequest, VmUefiConfig, VmVolumeConfig,
+    };
+
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tugboat-qemu-runtime-{name}-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    fn test_config(disk_dir: &Path) -> QemuVmConfig {
+        QemuVmConfig {
+            executables: QemuVmConfigExecutables {
+                qemu: "qemu-system-x86_64".to_string(),
+            },
+            disk_image_location: disk_dir.to_string_lossy().into_owned(),
+            kvm: QemuVmConfigKvm { enabled: false },
+            uefi: None::<QemuVmConfigUefi>,
+            snapshot_dir: None,
+        }
+    }
+
+    fn run_request(
+        id: &str,
+        image: &Path,
+        restore_handle: Option<&str>,
+        restore_source_id: Option<&str>,
+    ) -> VmRunRequest {
+        VmRunRequest {
+            image: image.to_string_lossy().into_owned(),
+            cpu: VmCpuConfig {
+                architecture: "x86_64".to_string(),
+                cores: 1,
+            },
+            memory: VmMemoryConfig {
+                size: 512 * 1024 * 1024,
+            },
+            id: id.to_string(),
+            networks: Vec::new(),
+            volumes: Vec::new(),
+            uefi: VmUefiConfig { enabled: false },
+            incoming: None,
+            restore_handle: restore_handle.map(str::to_string),
+            restore_source_id: restore_source_id.map(str::to_string),
+            user: VmExecUser::default(),
+        }
+    }
 
     #[test]
     fn block_volume_path_is_forwarded_to_drive_args() {
@@ -304,5 +365,58 @@ mod tests {
                 "virtio-9p-pci,fsdev=fs1,mount_tag=data-disk".to_string(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn restore_boot_disk_is_copied_from_source_ship_disk() {
+        let dir = temp_dir("restore-source");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base_image = dir.join("base.qcow2");
+        let source_disk = dir.join("source-ship.qcow2");
+        std::fs::write(&base_image, b"base-image").unwrap();
+        std::fs::write(&source_disk, b"snapshot-disk").unwrap();
+
+        let config = test_config(&dir);
+        let args = run_request(
+            "target-ship",
+            &base_image,
+            Some("source-ship-snapshot"),
+            Some("source-ship"),
+        );
+        let vm = QemuVm::new(&config, args);
+        let boot_disk = vm.create_boot_disk().await.unwrap();
+
+        assert_eq!(std::fs::read(boot_disk.0).unwrap(), b"snapshot-disk");
+        assert_eq!(
+            std::fs::read(dir.join("target-ship.qcow2")).unwrap(),
+            b"snapshot-disk"
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn restore_boot_disk_preserves_same_source_disk() {
+        let dir = temp_dir("restore-same-source");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base_image = dir.join("base.qcow2");
+        let existing_disk = dir.join("ship-a.qcow2");
+        std::fs::write(&base_image, b"base-image").unwrap();
+        std::fs::write(&existing_disk, b"snapshot-disk").unwrap();
+
+        let config = test_config(&dir);
+        let args = run_request(
+            "ship-a",
+            &base_image,
+            Some("ship-a-snapshot"),
+            Some("ship-a"),
+        );
+        let vm = QemuVm::new(&config, args);
+        let boot_disk = vm.create_boot_disk().await.unwrap();
+
+        assert_eq!(std::fs::read(boot_disk.0).unwrap(), b"snapshot-disk");
+        assert_eq!(std::fs::read(existing_disk).unwrap(), b"snapshot-disk");
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

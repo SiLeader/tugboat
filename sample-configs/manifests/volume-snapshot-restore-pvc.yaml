@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restored-data
+  namespace: demo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: hostpath
+  resources:
+    requests:
+      storage: 1Gi
+  dataSource:
+    name: data-snapshot
+    kind: VolumeSnapshot
+    apiGroup: snapshot

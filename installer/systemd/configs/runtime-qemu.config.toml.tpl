@@ -1,5 +1,6 @@
 [qemu]
 disk_image_location = "/var/lib/tugboat-agent/images"
+snapshot_dir = "/var/lib/tugboat-agent/snapshots"
 
 [qemu.executables]
 qemu = "/usr/bin/qemu-system-x86_64"

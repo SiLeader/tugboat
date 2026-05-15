@@ -40,3 +40,14 @@ message OwnerReference {
   string uid = 4;
   optional bool controller = 5;
 }
+
+message LabelSelector {
+  map<string, string> match_labels = 1;
+  repeated LabelSelectorRequirement match_expressions = 2;
+}
+
+message LabelSelectorRequirement {
+  string key = 1;
+  string operator = 2;
+  repeated string values = 3;
+}
