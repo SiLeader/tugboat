@@ -533,11 +533,9 @@ spec:
   automountServiceAccountToken: true
 ```
 
-### Implementation status and planned enhancements
+### Planned enhancements
 
 - **CRD (Custom Resource Definition)** — planned; allow users to define their own resource types without modifying Tugboat core
-- **High availability** — the apiserver is stateless for horizontal scaling, and scheduler Lease-based leader election is implemented
-- **Topology-aware scheduling and snapshots** — implemented; see [topology-aware scheduling](docs/topology-aware-scheduling.md), [volume snapshots](docs/volume-snapshots.md), and [ship snapshots](docs/ship-snapshots.md)
 
 ## Roadmap
 

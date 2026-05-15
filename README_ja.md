@@ -526,11 +526,9 @@ spec:
   automountServiceAccountToken: true
 ```
 
-### 実装状況と今後の拡張予定
+### 今後の拡張予定
 
 - **CRD (Custom Resource Definition)** — 予定。Tugboat のコアを変更することなく、ユーザーが独自のリソース型を定義可能にする
-- **高可用性（HA）** — apiserver は水平スケーリングしやすい stateless 構成で、scheduler の Lease ベース leader election は実装済み
-- **Topology-aware scheduling と snapshot** — 実装済み。詳細は [topology-aware scheduling](docs/topology-aware-scheduling.md)、[volume snapshots](docs/volume-snapshots.md)、[ship snapshots](docs/ship-snapshots.md) を参照してください。
 
 ## Roadmap
 
