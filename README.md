@@ -535,9 +535,7 @@ spec:
 
 ### Planned enhancements
 
-- **CRD (Custom Resource Definition)** — allow users to define their own resource types without modifying Tugboat core
-- **High availability design** — apiserver horizontal scaling and scheduler lease-based leader election
-- **Topology-aware scheduling and snapshots** — shipped; see [topology-aware scheduling](docs/topology-aware-scheduling.md), [volume snapshots](docs/volume-snapshots.md), and [ship snapshots](docs/ship-snapshots.md)
+- **CRD (Custom Resource Definition)** — planned; allow users to define their own resource types without modifying Tugboat core
 
 ## Roadmap
 
@@ -614,7 +612,13 @@ spec:
     - [x] CSI hostpath provisioner installer (`install-csi-hostpath.sh`)
     - [x] `uninstall.sh` — stops and removes all Tugboat units, binaries, and configs
     - [x] Docker-based isolated test environment with scenario scripts (`installer/systemd/test/`)
-- [ ] Snapshot
+- [x] Snapshot
+    - [x] `VolumeSnapshot`, `VolumeSnapshotContent`, and `VolumeSnapshotClass` resource definitions and API (`snapshot/v1`)
+    - [x] `ShipSnapshot` resource definition and API (`snapshot/v1`)
+    - [x] VolumeSnapshot controller for CSI snapshot create/delete and status propagation
+    - [x] ShipSnapshot volume fanout and agent runtime snapshot reconciliation
+    - [x] Runtime snapshot create/delete/restore/list support for QEMU and Cloud Hypervisor
+    - [x] PVC restore and clone via `spec.dataSource`
 - [ ] CRD
 
 ## Installation
