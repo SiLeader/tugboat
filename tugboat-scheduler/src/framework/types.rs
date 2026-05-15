@@ -192,6 +192,31 @@ impl SchedulingContext {
             .unwrap_or(0);
         (cpu, memory)
     }
+
+    pub fn is_unbound_wffc_claim(&self, pvc: &PersistentVolumeClaim) -> bool {
+        const WAIT_FOR_FIRST_CONSUMER: &str = "WaitForFirstConsumer";
+        let Some(spec) = pvc.spec.as_ref() else {
+            return false;
+        };
+        if spec
+            .volume_name
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        {
+            return false;
+        }
+        let Some(storage_class_name) = spec
+            .storage_class_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        else {
+            return false;
+        };
+        self.find_storage_class(storage_class_name)
+            .and_then(|storage_class| storage_class.spec.as_ref())
+            .and_then(|spec| spec.volume_binding_mode.as_deref())
+            == Some(WAIT_FOR_FIRST_CONSUMER)
+    }
 }
 
 /// Parse a memory size string (e.g., "1Gi", "512Mi", "2G", "1024M", "1073741824") into bytes.

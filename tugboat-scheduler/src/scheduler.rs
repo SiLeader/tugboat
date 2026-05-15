@@ -25,7 +25,6 @@ use tugboat_resources::manifests::meta::v1::Time;
 
 const CONDITION_SCHEDULING_BLOCKED: &str = "SchedulingBlocked";
 const SELECTED_NODE_ANNOTATION: &str = "volume.tugboat.cloud/selected-node";
-const WAIT_FOR_FIRST_CONSUMER: &str = "WaitForFirstConsumer";
 
 pub(crate) struct Scheduler {
     client: TugboatClient,
@@ -237,7 +236,7 @@ impl Scheduler {
     ) -> Result<(), tugboat_client::Error> {
         let pvc_api: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
         for pvc in ctx.ship_persistent_volume_claims() {
-            if !is_unbound_wffc_claim(ctx, pvc) || selected_node(pvc) == Some(node_name) {
+            if !ctx.is_unbound_wffc_claim(pvc) || selected_node(pvc) == Some(node_name) {
                 continue;
             }
             let Some(name) = pvc
@@ -284,30 +283,6 @@ impl Scheduler {
             );
         }
     }
-}
-
-fn is_unbound_wffc_claim(ctx: &SchedulingContext, pvc: &PersistentVolumeClaim) -> bool {
-    let Some(spec) = pvc.spec.as_ref() else {
-        return false;
-    };
-    if spec
-        .volume_name
-        .as_deref()
-        .is_some_and(|value| !value.is_empty())
-    {
-        return false;
-    }
-    let Some(storage_class_name) = spec
-        .storage_class_name
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    else {
-        return false;
-    };
-    ctx.find_storage_class(storage_class_name)
-        .and_then(|storage_class| storage_class.spec.as_ref())
-        .and_then(|spec| spec.volume_binding_mode.as_deref())
-        == Some(WAIT_FOR_FIRST_CONSUMER)
 }
 
 fn selected_node(pvc: &PersistentVolumeClaim) -> Option<&str> {

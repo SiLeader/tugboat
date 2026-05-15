@@ -111,6 +111,17 @@ fn topology_buckets(
     constraint: &TopologySpreadConstraint,
 ) -> HashMap<String, i64> {
     let mut buckets = HashMap::new();
+    let node_map: HashMap<&str, &Node> = ctx
+        .all_nodes
+        .iter()
+        .filter_map(|node| {
+            node.object_meta
+                .as_ref()
+                .and_then(|meta| meta.name.as_deref())
+                .map(|name| (name, node))
+        })
+        .collect();
+
     for node in &ctx.all_nodes {
         if let Some(value) = node
             .object_meta
@@ -136,15 +147,9 @@ fn topology_buckets(
         if !labels_match {
             continue;
         }
-        let Some(value) = ctx
-            .all_nodes
-            .iter()
-            .find(|node| {
-                node.object_meta
-                    .as_ref()
-                    .and_then(|meta| meta.name.as_deref())
-                    == Some(node_name)
-            })
+
+        let Some(value) = node_map
+            .get(node_name)
             .and_then(|node| node.object_meta.as_ref())
             .and_then(|meta| meta.labels.get(&constraint.topology_key))
         else {
