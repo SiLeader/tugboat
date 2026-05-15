@@ -705,20 +705,19 @@ impl PvcProvisionerReconciler {
                     snapshot_status
                         .restore_size_bytes
                         .filter(|value| *value > 0),
-                ) {
-                    if requested < restore_size {
-                        self.apply_data_source_condition(
-                            pvc,
-                            namespace,
-                            name,
-                            "SnapshotRestoreSizeExceeded",
-                            &format!(
-                                "Requested capacity {requested} is smaller than snapshot restore size {restore_size}."
-                            ),
-                        )
-                        .await?;
-                        return Ok(DataSourceResolution::Pending(Action::await_change()));
-                    }
+                ) && requested < restore_size
+                {
+                    self.apply_data_source_condition(
+                        pvc,
+                        namespace,
+                        name,
+                        "SnapshotRestoreSizeExceeded",
+                        &format!(
+                            "Requested capacity {requested} is smaller than snapshot restore size {restore_size}."
+                        ),
+                    )
+                    .await?;
+                    return Ok(DataSourceResolution::Pending(Action::await_change()));
                 }
                 let Some(content_name) = snapshot_status
                     .bound_volume_snapshot_content_name

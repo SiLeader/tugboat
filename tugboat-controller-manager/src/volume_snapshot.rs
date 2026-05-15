@@ -226,12 +226,14 @@ impl VolumeSnapshotReconciler {
         }
 
         let content_name = deterministic_content_name(uid.as_deref(), &namespace, &name);
+        let snapshot_ref = VolumeSnapshotRef {
+            name: name.clone(),
+            namespace: namespace.clone(),
+            uid: uid.clone().unwrap_or_default(),
+        };
         let content = build_snapshot_content(
             &content_name,
-            &snapshot,
-            &namespace,
-            &name,
-            uid.as_deref().unwrap_or_default(),
+            snapshot_ref,
             &class_name,
             class_spec.deletion_policy.clone(),
             driver,
@@ -277,10 +279,9 @@ impl VolumeSnapshotReconciler {
             if reference.namespace == namespace
                 && reference.name == name
                 && (uid.is_none() || Some(reference.uid.as_str()) == uid.as_deref())
+                && let Some(content_name) = content.name()
             {
-                if let Some(content_name) = content.name() {
-                    content_api.delete(content_name).await?;
-                }
+                content_api.delete(content_name).await?;
             }
         }
         Ok(Action::await_change())
@@ -314,21 +315,20 @@ impl VolumeSnapshotReconciler {
             .name()
             .ok_or(ControllerError::MissingName("VolumeSnapshotContent"))?
             .to_string();
-        if let Some(status) = content.status.as_ref() {
-            if let Some(snapshot_handle) = status
+        if let Some(status) = content.status.as_ref()
+            && let Some(snapshot_handle) = status
                 .snapshot_handle
                 .as_deref()
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned)
-            {
-                if status.ready_to_use != Some(true) {
-                    return self
-                        .refresh_existing_snapshot(content, &content_name, &snapshot_handle)
-                        .await;
-                }
-                self.propagate_bound_content(&content).await?;
-                return Ok(Action::await_change());
+        {
+            if status.ready_to_use != Some(true) {
+                return self
+                    .refresh_existing_snapshot(content, &content_name, &snapshot_handle)
+                    .await;
             }
+            self.propagate_bound_content(&content).await?;
+            return Ok(Action::await_change());
         }
 
         let spec = content.spec.clone().ok_or_else(|| {
@@ -868,10 +868,7 @@ fn snapshot_identity(
 
 fn build_snapshot_content(
     content_name: &str,
-    _snapshot: &VolumeSnapshot,
-    namespace: &str,
-    snapshot_name: &str,
-    uid: &str,
+    snapshot_ref: VolumeSnapshotRef,
     class_name: &str,
     deletion_policy: String,
     driver: String,
@@ -884,8 +881,8 @@ fn build_snapshot_content(
             owner_references: vec![OwnerReference {
                 api_version: "snapshot/v1".to_string(),
                 kind: "VolumeSnapshot".to_string(),
-                name: snapshot_name.to_string(),
-                uid: uid.to_string(),
+                name: snapshot_ref.name.clone(),
+                uid: snapshot_ref.uid.clone(),
                 controller: Some(true),
             }],
             ..Default::default()
@@ -893,11 +890,7 @@ fn build_snapshot_content(
         spec: Some(VolumeSnapshotContentSpec {
             driver,
             deletion_policy,
-            volume_snapshot_ref: Some(VolumeSnapshotRef {
-                name: snapshot_name.to_string(),
-                namespace: namespace.to_string(),
-                uid: uid.to_string(),
-            }),
+            volume_snapshot_ref: Some(snapshot_ref),
             source: Some(VolumeSnapshotContentSource {
                 volume_handle: Some(source_volume_handle.clone()),
                 snapshot_handle: None,
