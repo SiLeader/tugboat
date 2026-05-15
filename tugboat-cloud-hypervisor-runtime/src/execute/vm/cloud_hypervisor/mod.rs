@@ -109,7 +109,11 @@ impl<'a> CloudHypervisorVm<'a> {
         ];
 
         if let Some(restore_handle) = &self.args.restore_handle {
-            let source_id = self.args.restore_source_id.as_deref().unwrap_or(&self.args.id);
+            let source_id = self
+                .args
+                .restore_source_id
+                .as_deref()
+                .unwrap_or(&self.args.id);
             let ship_dir = tugboat_runtime_common::snapshot::ship_snapshot_dir(
                 &self.config.snapshot_dir_path(),
                 source_id,

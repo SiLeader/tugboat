@@ -167,11 +167,13 @@ impl<'a> SnapshotStateMachine<'a> {
         }
 
         if spec.include_volumes.unwrap_or(false) {
-            let status = snapshot.status.as_ref();
-            let volume_snapshots = status
-                .map(|status| status.volume_snapshots.as_slice())
-                .unwrap_or(&[]);
-            if !all_volume_snapshots_ready(volume_snapshots) {
+            let Some(status) = snapshot.status.as_ref() else {
+                // Wait for the volume fanout controller to publish its view.
+                // Once it has, an empty list means "this Ship has no PVCs".
+                return Ok(SnapshotAction::Wait(WaitReason::VolumeSnapshotsPending));
+            };
+            let volume_snapshots = status.volume_snapshots.as_slice();
+            if !volume_snapshots.is_empty() && !all_volume_snapshots_ready(volume_snapshots) {
                 self.write_capturing_waiting_for_volumes(namespace, name, snapshot)
                     .await?;
                 return Ok(SnapshotAction::Wait(WaitReason::VolumeSnapshotsPending));
@@ -360,9 +362,7 @@ mod tests {
             _ship_id: &str,
             _mode: VmSnapshotMode,
         ) -> Result<VmSnapshotCreateResponse, RuntimeError> {
-            self.snapshot_outcome
-                .clone()
-                .map_err(RuntimeError::Other)
+            self.snapshot_outcome.clone().map_err(RuntimeError::Other)
         }
         async fn patch_status(
             &self,
@@ -488,6 +488,35 @@ mod tests {
         );
         let statuses = ctx.statuses.lock().unwrap();
         assert_eq!(statuses.last().unwrap().phase, PHASE_CAPTURING);
+    }
+
+    #[tokio::test]
+    async fn include_volumes_waits_for_volume_snapshot_status() {
+        let mut ctx = FakeContext::new("node-a");
+        ctx.ship = Some(ship_on_node("node-a", "ship-a", "ship-uid"));
+        let machine = SnapshotStateMachine::new(&ctx);
+        let snapshot = snapshot_object("ship-a", true);
+        let action = machine.reconcile(&snapshot).await.unwrap();
+        assert_eq!(
+            action,
+            SnapshotAction::Wait(WaitReason::VolumeSnapshotsPending)
+        );
+        assert!(ctx.statuses.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn include_volumes_proceeds_when_controller_reports_no_pvcs() {
+        let mut ctx = FakeContext::new("node-a");
+        ctx.ship = Some(ship_on_node("node-a", "ship-a", "ship-uid"));
+        let machine = SnapshotStateMachine::new(&ctx);
+        let mut snapshot = snapshot_object("ship-a", true);
+        snapshot.status = Some(ShipSnapshotStatus {
+            phase: PHASE_PENDING.to_string(),
+            volume_snapshots: Vec::new(),
+            ..Default::default()
+        });
+        let action = machine.reconcile(&snapshot).await.unwrap();
+        assert_eq!(action, SnapshotAction::Ready);
     }
 
     #[tokio::test]
