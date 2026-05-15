@@ -70,6 +70,9 @@ pub(crate) trait SnapshotContext: Send + Sync {
         mode: VmSnapshotMode,
     ) -> Result<VmSnapshotCreateResponse, RuntimeError>;
 
+    /// Delete a VM-level snapshot from the active runtime.
+    async fn snapshot_delete(&self, ship_id: &str, handle: &str) -> Result<(), RuntimeError>;
+
     /// Persist `status` on the `ShipSnapshot` object.
     async fn patch_status(
         &self,
@@ -205,6 +208,25 @@ impl<'a> SnapshotStateMachine<'a> {
         }
     }
 
+    pub(crate) async fn cleanup(&self, snapshot: &ShipSnapshot) -> Result<(), ReconcileError> {
+        let Some(status) = snapshot.status.as_ref() else {
+            return Ok(());
+        };
+        let Some(handle) = status.handle.as_deref().filter(|value| !value.is_empty()) else {
+            return Ok(());
+        };
+        let Some(ship_id) = status
+            .source_ship_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(());
+        };
+
+        self.context.snapshot_delete(ship_id, handle).await?;
+        Ok(())
+    }
+
     async fn write_capturing_waiting_for_volumes(
         &self,
         namespace: &str,
@@ -314,6 +336,7 @@ fn parse_mode(value: Option<&str>) -> Result<VmSnapshotMode, ReconcileError> {
 /// Production `SnapshotContext` used inside the agent reconciler loop.
 /// Talks to the apiserver via [`TugboatClient`] and dispatches VM-level
 /// snapshot creation through [`RuntimeOperator`].
+#[derive(Clone)]
 pub(crate) struct AgentSnapshotContext {
     pub(crate) node_name: String,
     pub(crate) client: TugboatClient,
@@ -341,6 +364,10 @@ impl SnapshotContext for AgentSnapshotContext {
         mode: VmSnapshotMode,
     ) -> Result<VmSnapshotCreateResponse, RuntimeError> {
         self.runtime_operator.snapshot_create(ship_id, mode).await
+    }
+
+    async fn snapshot_delete(&self, ship_id: &str, handle: &str) -> Result<(), RuntimeError> {
+        self.runtime_operator.snapshot_delete(ship_id, handle).await
     }
 
     async fn patch_status(
@@ -371,6 +398,7 @@ mod tests {
         ship: Option<Ship>,
         snapshot_outcome: Result<VmSnapshotCreateResponse, String>,
         statuses: Mutex<Vec<ShipSnapshotStatus>>,
+        deleted_snapshots: Mutex<Vec<(String, String)>>,
     }
 
     impl FakeContext {
@@ -385,6 +413,7 @@ mod tests {
                     size_bytes: Some(1024),
                 }),
                 statuses: Mutex::new(Vec::new()),
+                deleted_snapshots: Mutex::new(Vec::new()),
             }
         }
     }
@@ -407,6 +436,13 @@ mod tests {
             _mode: VmSnapshotMode,
         ) -> Result<VmSnapshotCreateResponse, RuntimeError> {
             self.snapshot_outcome.clone().map_err(RuntimeError::Other)
+        }
+        async fn snapshot_delete(&self, ship_id: &str, handle: &str) -> Result<(), RuntimeError> {
+            self.deleted_snapshots
+                .lock()
+                .unwrap()
+                .push((ship_id.to_string(), handle.to_string()));
+            Ok(())
         }
         async fn patch_status(
             &self,
@@ -591,6 +627,43 @@ mod tests {
         assert_eq!(action, SnapshotAction::Wait(WaitReason::InvalidSpec));
         let statuses = ctx.statuses.lock().unwrap();
         assert_eq!(statuses[0].phase, PHASE_FAILED);
+    }
+
+    #[tokio::test]
+    async fn cleanup_ready_snapshot_deletes_runtime_snapshot() {
+        let ctx = FakeContext::new("node-a");
+        let machine = SnapshotStateMachine::new(&ctx);
+        let mut snapshot = snapshot_object("ship-a", false);
+        snapshot.status = Some(ShipSnapshotStatus {
+            phase: PHASE_READY.to_string(),
+            handle: Some("snap-1".to_string()),
+            source_ship_id: Some("ship-uid".to_string()),
+            ..Default::default()
+        });
+
+        machine.cleanup(&snapshot).await.unwrap();
+
+        let deleted = ctx.deleted_snapshots.lock().unwrap();
+        assert_eq!(
+            deleted.as_slice(),
+            &[("ship-uid".to_string(), "snap-1".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_without_handle_is_noop() {
+        let ctx = FakeContext::new("node-a");
+        let machine = SnapshotStateMachine::new(&ctx);
+        let mut snapshot = snapshot_object("ship-a", false);
+        snapshot.status = Some(ShipSnapshotStatus {
+            phase: PHASE_READY.to_string(),
+            source_ship_id: Some("ship-uid".to_string()),
+            ..Default::default()
+        });
+
+        machine.cleanup(&snapshot).await.unwrap();
+
+        assert!(ctx.deleted_snapshots.lock().unwrap().is_empty());
     }
 
     #[test]

@@ -18,10 +18,13 @@ use crate::reconciler::ops::snapshot::{AgentSnapshotContext, SnapshotStateMachin
 use tokio::select;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+use tugboat_client::Api;
 use tugboat_client::WatchParams;
-use tugboat_client::runtime::{Action, Controller, ReconcileEvent};
+use tugboat_client::runtime::{Action, Controller, FinalizerEvent, ReconcileEvent, finalizer};
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::core::v1::ShipSnapshot;
+use tugboat_resources::manifests::core::v1::{Ship, ShipSnapshot};
+
+const SHIP_SNAPSHOT_AGENT_FINALIZER_PREFIX: &str = "snapshot.tugboat.cloud/agent-";
 
 pub(crate) struct ReconcilerRunner {
     reconciler: ShipReconciler,
@@ -235,11 +238,80 @@ async fn reconcile_ship_snapshot(
     context: AgentSnapshotContext,
     event: ReconcileEvent<ShipSnapshot>,
 ) -> Result<Action, crate::reconciler::error::ReconcileError> {
-    let snapshot = match event {
-        ReconcileEvent::Applied(snapshot) => snapshot,
-        ReconcileEvent::Deleted(_) => return Ok(Action::await_change()),
+    match event {
+        ReconcileEvent::Applied(snapshot) => {
+            if snapshot.deletion_timestamp().is_none()
+                && !ship_snapshot_targets_node(&context, &snapshot).await?
+            {
+                let machine = SnapshotStateMachine::new(&context);
+                machine.reconcile(&snapshot).await?;
+                return Ok(Action::await_change());
+            }
+            let namespace = snapshot.namespace().unwrap_or("default");
+            let api: Api<ShipSnapshot> = Api::namespaced(context.client.clone(), namespace);
+            let finalizer_name = ship_snapshot_agent_finalizer(&context.node_name);
+            finalizer::<ShipSnapshot, crate::reconciler::error::ReconcileError, _, _>(
+                &api,
+                &finalizer_name,
+                snapshot,
+                {
+                    let context = context.clone();
+                    move |event| async move {
+                        let machine = SnapshotStateMachine::new(&context);
+                        match event {
+                            FinalizerEvent::Apply(snapshot) => {
+                                machine.reconcile(&snapshot).await?;
+                                Ok(Action::await_change())
+                            }
+                            FinalizerEvent::Cleanup(snapshot) => {
+                                machine.cleanup(&snapshot).await?;
+                                Ok(Action::await_change())
+                            }
+                        }
+                    }
+                },
+            )
+            .await
+            .map_err(|err| crate::reconciler::error::ReconcileError::Finalizer(err.to_string()))
+        }
+        ReconcileEvent::Deleted(snapshot) => {
+            let machine = SnapshotStateMachine::new(&context);
+            if let Err(err) = machine.cleanup(&snapshot).await {
+                warn!(
+                    "Best-effort ShipSnapshot cleanup failed on node '{}': {}",
+                    context.node_name, err
+                );
+            }
+            Ok(Action::await_change())
+        }
+    }
+}
+
+async fn ship_snapshot_targets_node(
+    context: &AgentSnapshotContext,
+    snapshot: &ShipSnapshot,
+) -> Result<bool, crate::reconciler::error::ReconcileError> {
+    let Some(spec) = snapshot.spec.as_ref() else {
+        return Ok(false);
     };
-    let machine = SnapshotStateMachine::new(&context);
-    machine.reconcile(&snapshot).await?;
-    Ok(Action::await_change())
+    let ship_name = spec.ship_name.trim();
+    if ship_name.is_empty() {
+        return Ok(false);
+    }
+    let Some(namespace) = snapshot.namespace() else {
+        return Ok(false);
+    };
+    let ship_api: Api<Ship> = Api::namespaced(context.client.clone(), namespace);
+    let Some(ship) = ship_api.get(ship_name).await? else {
+        return Ok(false);
+    };
+    Ok(ship
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.node_name.as_deref())
+        == Some(context.node_name.as_str()))
+}
+
+fn ship_snapshot_agent_finalizer(node_name: &str) -> String {
+    format!("{SHIP_SNAPSHOT_AGENT_FINALIZER_PREFIX}{node_name}")
 }
