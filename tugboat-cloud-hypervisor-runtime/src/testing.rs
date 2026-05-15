@@ -16,7 +16,6 @@ use crate::{CloudHypervisorBootConfig, CloudHypervisorVmConfig};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
@@ -177,9 +176,6 @@ pub(crate) fn decode_json(body: &[u8]) -> Value {
 }
 
 fn unique_dir(prefix: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!("{prefix}-{nanos}"))
+    let suffix = uuid::Uuid::new_v4().simple();
+    std::env::temp_dir().join(format!("{prefix}-{suffix}"))
 }
