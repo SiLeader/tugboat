@@ -26,7 +26,7 @@ spec:
   dataSource:
     name: my-snapshot
     kind: VolumeSnapshot
-    apiGroup: snapshot.tugboat.cloud
+    apiGroup: snapshot
 ```
 
 ### Clone from PVC

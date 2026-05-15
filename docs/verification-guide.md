@@ -924,7 +924,7 @@ Verify that you can capture a snapshot of a volume and restore it.
 1. **Create Source**: Create a PVC, bind it to a Ship, and write some data to it.
 2. **Snapshot**: Create a `VolumeSnapshot` for the PVC.
    ```yaml
-   apiVersion: snapshot.tugboat.cloud/v1
+   apiVersion: snapshot/v1
    kind: VolumeSnapshot
    metadata:
      name: data-snapshot
@@ -944,7 +944,7 @@ Verify that you can capture the full state of a running VM and restore it.
 1. **Start Ship**: Boot a Ship and ensure it's in `Running` state.
 2. **Snapshot**: Create a `ShipSnapshot` with `includeVolumes: true`.
    ```yaml
-   apiVersion: snapshot.tugboat.cloud/v1
+   apiVersion: snapshot/v1
    kind: ShipSnapshot
    metadata:
      name: ship-full-backup

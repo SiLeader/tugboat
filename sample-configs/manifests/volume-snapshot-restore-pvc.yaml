@@ -13,4 +13,4 @@ spec:
   dataSource:
     name: data-snapshot
     kind: VolumeSnapshot
-    apiGroup: snapshot.tugboat.cloud
+    apiGroup: snapshot

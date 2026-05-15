@@ -7,7 +7,7 @@ Ship snapshots capture the full state of a virtual machine, allowing you to back
 A `ShipSnapshot` references a running or stopped `Ship`.
 
 ```yaml
-apiVersion: snapshot.tugboat.cloud/v1
+apiVersion: snapshot/v1
 kind: ShipSnapshot
 metadata:
   name: my-ship-snapshot

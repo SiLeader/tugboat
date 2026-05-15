@@ -16,7 +16,7 @@ tests. Do not add a second metadata table for a new resource.
 | `apps/v1` | namespaced | `Deployment`, `ReplicaSet`, `Fleet` |
 | `authorization/v1` | mixed | `ClusterRole`, `ClusterRoleBinding`, `Role`, `RoleBinding` |
 | `coordination/v1` | namespaced | `Lease` |
-| `snapshot.tugboat.cloud/v1` | mixed | `VolumeSnapshot`, `VolumeSnapshotContent`, `VolumeSnapshotClass`, `ShipSnapshot` |
+| `snapshot/v1` | mixed | `VolumeSnapshot`, `VolumeSnapshotContent`, `VolumeSnapshotClass`, `ShipSnapshot` |
 
 ## Adding a Resource
 
@@ -46,7 +46,7 @@ If shared types (like `LabelSelector` or `Condition`) are introduced in a common
 - Import the shared proto file in your group-specific proto: `import "core/v1/selector.proto";`
 - Use the fully qualified type name if necessary.
 - Ensure the shared proto is included in `tugboat-resources/build.rs` before the groups that depend on it.
-- This allows for a consistent API contract across different resource groups (e.g., sharing selectors between `apps/v1` and `snapshot.tugboat.cloud/v1`).
+- This allows for a consistent API contract across different resource groups (e.g., sharing selectors between `apps/v1` and `snapshot/v1`).
 
 ## Status Subresources
 

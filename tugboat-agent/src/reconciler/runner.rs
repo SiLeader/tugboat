@@ -14,12 +14,14 @@
 
 use crate::reconciler::ShipReconciler;
 use crate::reconciler::dependency::{DependencyChangeKind, DependencyEvent, DependencyTracker};
+use crate::reconciler::ops::snapshot::{AgentSnapshotContext, SnapshotStateMachine};
 use tokio::select;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use tugboat_client::WatchParams;
-use tugboat_client::runtime::Controller;
+use tugboat_client::runtime::{Action, Controller, ReconcileEvent};
 use tugboat_resources::ObjectMetaResource;
+use tugboat_resources::manifests::core::v1::ShipSnapshot;
 
 pub(crate) struct ReconcilerRunner {
     reconciler: ShipReconciler,
@@ -68,6 +70,10 @@ impl ReconcilerRunner {
             .dependency_tracker
             .build_secret_controller()
             .with_cancellation_token(self.reconciler.cancellation_token.clone());
+        let ship_snapshot_controller = Controller::new(tugboat_client::Api::<ShipSnapshot>::all(
+            self.reconciler.client.clone(),
+        ))
+        .with_cancellation_token(self.reconciler.cancellation_token.clone());
 
         let ship_reconciler_fn = {
             let r = self.reconciler.clone();
@@ -96,6 +102,19 @@ impl ReconcilerRunner {
             move |event| {
                 let tracker = tracker.clone();
                 async move { tracker.handle_secret_event(event).await }
+            }
+        };
+        let snapshot_reconciler_fn = {
+            let node_name = self.reconciler.node_name.clone();
+            let client = self.reconciler.client.clone();
+            let runtime_operator = self.reconciler.runtime_operator.clone();
+            move |event: ReconcileEvent<ShipSnapshot>| {
+                let context = AgentSnapshotContext {
+                    node_name: node_name.clone(),
+                    client: client.clone(),
+                    runtime_operator: runtime_operator.clone(),
+                };
+                async move { reconcile_ship_snapshot(context, event).await }
             }
         };
 
@@ -128,6 +147,7 @@ impl ReconcilerRunner {
             ship_target_controller.run(ship_target_reconciler_fn),
             config_map_controller.run(config_map_reconciler_fn),
             secret_controller.run(secret_reconciler_fn),
+            ship_snapshot_controller.run(snapshot_reconciler_fn),
             async {
                 let _ = dependency_handle.await;
             }
@@ -209,4 +229,17 @@ async fn handle_dependency_change(
         return Err(err);
     }
     Ok(())
+}
+
+async fn reconcile_ship_snapshot(
+    context: AgentSnapshotContext,
+    event: ReconcileEvent<ShipSnapshot>,
+) -> Result<Action, crate::reconciler::error::ReconcileError> {
+    let snapshot = match event {
+        ReconcileEvent::Applied(snapshot) => snapshot,
+        ReconcileEvent::Deleted(_) => return Ok(Action::await_change()),
+    };
+    let machine = SnapshotStateMachine::new(&context);
+    machine.reconcile(&snapshot).await?;
+    Ok(Action::await_change())
 }

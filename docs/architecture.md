@@ -64,7 +64,7 @@ The following API groups and versions are currently supported:
 - `apps/v1`: Workload resources (Deployment, ReplicaSet, Fleet)
 - `authorization/v1`: RBAC resources (Role, ClusterRole, etc.)
 - `coordination/v1`: Lease resources
-- `snapshot.tugboat.cloud/v1`: Snapshot resources (VolumeSnapshot, VolumeSnapshotContent, VolumeSnapshotClass, ShipSnapshot)
+- `snapshot/v1`: Snapshot resources (VolumeSnapshot, VolumeSnapshotContent, VolumeSnapshotClass, ShipSnapshot)
 
 ## Controller Boundary
 

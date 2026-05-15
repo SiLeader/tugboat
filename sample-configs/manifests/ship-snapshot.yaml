@@ -1,4 +1,4 @@
-apiVersion: snapshot.tugboat.cloud/v1
+apiVersion: snapshot/v1
 kind: ShipSnapshot
 metadata:
   name: ship-backup

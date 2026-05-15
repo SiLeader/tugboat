@@ -30,7 +30,7 @@ use tugboat_resources::manifests::core::v1::ShipSnapshot;
         params(("namespace" = String, Path, description = "Namespace of the resource")),
         request_body = ShipSnapshot
     )]
-#[post("/api/v1/namespaces/{namespace}/shipsnapshots")]
+#[post("/apis/snapshot/v1/namespaces/{namespace}/shipsnapshots")]
 pub(super) async fn handle_ship_snapshot_create(
     path: Path<NamespacedPathParams>,
     json: Json<ShipSnapshot>,
@@ -51,7 +51,7 @@ pub(super) async fn handle_ship_snapshot_create(
             ("name" = String, Path, description = "Name of the resource"),
         )
     )]
-#[delete("/api/v1/namespaces/{namespace}/shipsnapshots/{name}")]
+#[delete("/apis/snapshot/v1/namespaces/{namespace}/shipsnapshots/{name}")]
 pub(super) async fn handle_ship_snapshot_delete(
     path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
@@ -78,7 +78,7 @@ pub(super) async fn handle_ship_snapshot_delete(
             ("labelSelector" = Option<String>, Query, description = "Filter by label"),
         )
     )]
-#[get("/api/v1/namespaces/{namespace}/shipsnapshots")]
+#[get("/apis/snapshot/v1/namespaces/{namespace}/shipsnapshots")]
 pub(super) async fn handle_ship_snapshot_list(
     path: Path<NamespacedPathParams>,
     query: Query<ListQuery>,
@@ -104,7 +104,7 @@ pub(super) async fn handle_ship_snapshot_list(
             ("labelSelector" = Option<String>, Query, description = "Filter by label"),
         )
     )]
-#[get("/api/v1/shipsnapshots")]
+#[get("/apis/snapshot/v1/shipsnapshots")]
 pub(super) async fn handle_ship_snapshot_list_all(
     query: Query<ListQuery>,
     operator: Data<ApiOperator>,
@@ -123,7 +123,7 @@ pub(super) async fn handle_ship_snapshot_list_all(
             ("name" = String, Path, description = "Name of the resource"),
         )
     )]
-#[get("/api/v1/namespaces/{namespace}/shipsnapshots/{name}")]
+#[get("/apis/snapshot/v1/namespaces/{namespace}/shipsnapshots/{name}")]
 pub(super) async fn handle_ship_snapshot_read(
     path: Path<NamespacedNamePathParams>,
     operator: Data<ApiOperator>,
@@ -145,7 +145,7 @@ pub(super) async fn handle_ship_snapshot_read(
         ),
         request_body = ShipSnapshot
     )]
-#[put("/api/v1/namespaces/{namespace}/shipsnapshots/{name}")]
+#[put("/apis/snapshot/v1/namespaces/{namespace}/shipsnapshots/{name}")]
 pub(super) async fn handle_ship_snapshot_replace(
     path: Path<NamespacedNamePathParams>,
     replacement: Json<ShipSnapshot>,
@@ -178,7 +178,7 @@ pub(super) async fn handle_ship_snapshot_replace(
         ),
         request_body = Object
     )]
-#[patch("/api/v1/namespaces/{namespace}/shipsnapshots/{name}")]
+#[patch("/apis/snapshot/v1/namespaces/{namespace}/shipsnapshots/{name}")]
 pub(super) async fn handle_ship_snapshot_patch(
     path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
@@ -211,7 +211,7 @@ pub(super) async fn handle_ship_snapshot_patch(
         ),
         request_body = Object
     )]
-#[patch("/api/v1/namespaces/{namespace}/shipsnapshots/{name}/status")]
+#[patch("/apis/snapshot/v1/namespaces/{namespace}/shipsnapshots/{name}/status")]
 pub(super) async fn handle_ship_snapshot_status_patch(
     path: Path<NamespacedNamePathParams>,
     patch: Json<serde_json::Map<String, serde_json::Value>>,
@@ -239,7 +239,7 @@ pub(super) async fn handle_ship_snapshot_status_patch(
         ),
         request_body = ShipSnapshot
     )]
-#[put("/api/v1/namespaces/{namespace}/shipsnapshots/{name}/status")]
+#[put("/apis/snapshot/v1/namespaces/{namespace}/shipsnapshots/{name}/status")]
 pub(super) async fn handle_ship_snapshot_status_replace(
     path: Path<NamespacedNamePathParams>,
     replacement: Json<ShipSnapshot>,

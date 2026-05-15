@@ -139,10 +139,6 @@ pub(crate) fn all_resource_apis() -> &'static [ResourceApiDescriptor] {
                 &resource_api::SHIP_CLASS,
                 v1_core::register_shipclass,
             ),
-            ResourceApiDescriptor::new::<ShipSnapshot>(
-                &resource_api::SHIP_SNAPSHOT,
-                v1_core::register_ship_snapshot,
-            ),
             ResourceApiDescriptor::new::<StorageClass>(
                 &resource_api::STORAGE_CLASS,
                 v1_core::register_storage_class,
@@ -162,6 +158,10 @@ pub(crate) fn all_resource_apis() -> &'static [ResourceApiDescriptor] {
             ResourceApiDescriptor::new::<VolumeSnapshotClass>(
                 &resource_api::VOLUME_SNAPSHOT_CLASS,
                 v1_snapshot::register_volume_snapshot_class,
+            ),
+            ResourceApiDescriptor::new::<ShipSnapshot>(
+                &resource_api::SHIP_SNAPSHOT,
+                v1_snapshot::register_ship_snapshot,
             ),
         ]
     })

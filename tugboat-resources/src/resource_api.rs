@@ -372,7 +372,7 @@ descriptor!(
 );
 descriptor!(
     SHIP_SNAPSHOT,
-    "core",
+    "snapshot",
     "v1",
     "ShipSnapshot",
     "shipsnapshots",
@@ -511,12 +511,12 @@ pub const ALL_RESOURCE_DESCRIPTORS: &[ResourceApiDescriptor] = &[
     SERVICE_ACCOUNT,
     SHIP,
     SHIP_CLASS,
-    SHIP_SNAPSHOT,
     STORAGE_CLASS,
     LEASE,
     VOLUME_SNAPSHOT,
     VOLUME_SNAPSHOT_CONTENT,
     VOLUME_SNAPSHOT_CLASS,
+    SHIP_SNAPSHOT,
 ];
 
 pub fn all_resource_descriptors() -> &'static [ResourceApiDescriptor] {

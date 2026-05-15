@@ -282,6 +282,7 @@ mod tests {
             ("volumesnapshots", "VolumeSnapshot", true),
             ("volumesnapshotcontents", "VolumeSnapshotContent", false),
             ("volumesnapshotclasses", "VolumeSnapshotClass", false),
+            ("shipsnapshots", "ShipSnapshot", true),
         ] {
             let resource = resources
                 .iter()

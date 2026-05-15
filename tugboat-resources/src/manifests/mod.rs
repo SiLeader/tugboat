@@ -106,7 +106,7 @@ pub mod core {
                     return false;
                 }
                 match data_source.kind.as_str() {
-                    "VolumeSnapshot" => data_source.api_group == "snapshot.tugboat.cloud",
+                    "VolumeSnapshot" => data_source.api_group == "snapshot",
                     "PersistentVolumeClaim" => data_source.api_group.is_empty(),
                     _ => false,
                 }
@@ -330,7 +330,7 @@ pub mod core {
             #[test]
             fn persistent_volume_claim_accepts_supported_data_sources() {
                 for (kind, api_group) in [
-                    ("VolumeSnapshot", "snapshot.tugboat.cloud"),
+                    ("VolumeSnapshot", "snapshot"),
                     ("PersistentVolumeClaim", ""),
                 ] {
                     let pvc = PersistentVolumeClaim {
@@ -358,9 +358,9 @@ pub mod core {
             fn persistent_volume_claim_rejects_unsupported_data_sources() {
                 for (kind, api_group, name) in [
                     ("VolumeSnapshot", "", "snap-a"),
-                    ("PersistentVolumeClaim", "snapshot.tugboat.cloud", "pvc-a"),
+                    ("PersistentVolumeClaim", "snapshot", "pvc-a"),
                     ("ConfigMap", "", "config"),
-                    ("VolumeSnapshot", "snapshot.tugboat.cloud", ""),
+                    ("VolumeSnapshot", "snapshot", ""),
                 ] {
                     let pvc = PersistentVolumeClaim {
                         object_meta: Some(ObjectMeta {

@@ -26,17 +26,18 @@
 //! result via `status.volume_snapshots[].ready_to_use` and waits for
 //! the set to be ready before issuing the VM snapshot.
 
-#![allow(dead_code)]
-
 use crate::reconciler::error::ReconcileError;
+use crate::runtime::RuntimeOperator;
 use crate::runtime::error::RuntimeError;
 use async_trait::async_trait;
+use tugboat_client::{Api, TugboatClient};
 use tugboat_resources::manifests::core::v1::{
     Ship, ShipSnapshot, ShipSnapshotCondition, ShipSnapshotStatus, ShipSnapshotVolumeRef,
 };
 use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_vm_runtime_interface::snapshot::{VmSnapshotCreateResponse, VmSnapshotMode};
 
+#[cfg(test)]
 pub(crate) const PHASE_PENDING: &str = "Pending";
 pub(crate) const PHASE_CAPTURING: &str = "Capturing";
 pub(crate) const PHASE_READY: &str = "Ready";
@@ -310,10 +311,53 @@ fn parse_mode(value: Option<&str>) -> Result<VmSnapshotMode, ReconcileError> {
     }
 }
 
-// `Ship` is used only via the SnapshotContext trait. Keep the explicit
-// `use` so the linker keeps the symbol in scope when the trait is used.
-#[allow(dead_code)]
-fn _ship_marker(_: &Ship) {}
+/// Production `SnapshotContext` used inside the agent reconciler loop.
+/// Talks to the apiserver via [`TugboatClient`] and dispatches VM-level
+/// snapshot creation through [`RuntimeOperator`].
+pub(crate) struct AgentSnapshotContext {
+    pub(crate) node_name: String,
+    pub(crate) client: TugboatClient,
+    pub(crate) runtime_operator: RuntimeOperator,
+}
+
+#[async_trait]
+impl SnapshotContext for AgentSnapshotContext {
+    fn node_name(&self) -> &str {
+        &self.node_name
+    }
+
+    async fn get_ship(
+        &self,
+        namespace: &str,
+        ship_name: &str,
+    ) -> Result<Option<Ship>, ReconcileError> {
+        let api: Api<Ship> = Api::namespaced(self.client.clone(), namespace);
+        Ok(api.get(ship_name).await?)
+    }
+
+    async fn snapshot_create(
+        &self,
+        ship_id: &str,
+        mode: VmSnapshotMode,
+    ) -> Result<VmSnapshotCreateResponse, RuntimeError> {
+        self.runtime_operator.snapshot_create(ship_id, mode).await
+    }
+
+    async fn patch_status(
+        &self,
+        namespace: &str,
+        name: &str,
+        status: ShipSnapshotStatus,
+    ) -> Result<(), ReconcileError> {
+        let api: Api<ShipSnapshot> = Api::namespaced(self.client.clone(), namespace);
+        let Some(mut snapshot) = api.get(name).await? else {
+            return Ok(());
+        };
+        snapshot.status = Some(status);
+        api.replace_status(name, snapshot).await?;
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {

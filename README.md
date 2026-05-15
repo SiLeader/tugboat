@@ -309,7 +309,7 @@ provision new volumes (restore) or to create clones of existing volumes.
 Example `VolumeSnapshot` manifest:
 
 ```yaml
-apiVersion: snapshot.tugboat.cloud/v1
+apiVersion: snapshot/v1
 kind: VolumeSnapshot
 metadata:
   name: my-snapshot
@@ -330,7 +330,7 @@ allows for full backup and restoration of a VM instance.
 Example `ShipSnapshot` manifest:
 
 ```yaml
-apiVersion: snapshot.tugboat.cloud/v1
+apiVersion: snapshot/v1
 kind: ShipSnapshot
 metadata:
   name: my-ship-snapshot

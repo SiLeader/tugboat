@@ -16,6 +16,7 @@ use actix_web::{HttpResponse, Responder, get};
 use utoipa::OpenApi;
 use utoipa_actix_web::service_config::ServiceConfig;
 
+mod ship_snapshot;
 mod volume_snapshot;
 mod volume_snapshot_class;
 mod volume_snapshot_content;
@@ -48,8 +49,22 @@ mod volume_snapshot_content;
         volume_snapshot_class::handle_volume_snapshot_class_replace,
         volume_snapshot_class::handle_volume_snapshot_class_status_patch,
         volume_snapshot_class::handle_volume_snapshot_class_status_replace,
+        ship_snapshot::handle_ship_snapshot_create,
+        ship_snapshot::handle_ship_snapshot_delete,
+        ship_snapshot::handle_ship_snapshot_list,
+        ship_snapshot::handle_ship_snapshot_list_all,
+        ship_snapshot::handle_ship_snapshot_patch,
+        ship_snapshot::handle_ship_snapshot_read,
+        ship_snapshot::handle_ship_snapshot_replace,
+        ship_snapshot::handle_ship_snapshot_status_patch,
+        ship_snapshot::handle_ship_snapshot_status_replace,
     ),
     components(schemas(
+        tugboat_resources::manifests::core::v1::ShipSnapshot,
+        tugboat_resources::manifests::core::v1::ShipSnapshotSpec,
+        tugboat_resources::manifests::core::v1::ShipSnapshotStatus,
+        tugboat_resources::manifests::core::v1::ShipSnapshotVolumeRef,
+        tugboat_resources::manifests::core::v1::ShipSnapshotCondition,
         tugboat_resources::manifests::snapshot::v1::VolumeSnapshot,
         tugboat_resources::manifests::snapshot::v1::VolumeSnapshotSpec,
         tugboat_resources::manifests::snapshot::v1::VolumeSnapshotSource,
@@ -110,4 +125,17 @@ pub(super) fn register_volume_snapshot_class(service: &mut ServiceConfig) {
         .service(volume_snapshot_class::handle_volume_snapshot_class_replace)
         .service(volume_snapshot_class::handle_volume_snapshot_class_status_patch)
         .service(volume_snapshot_class::handle_volume_snapshot_class_status_replace);
+}
+
+pub(super) fn register_ship_snapshot(service: &mut ServiceConfig) {
+    service
+        .service(ship_snapshot::handle_ship_snapshot_create)
+        .service(ship_snapshot::handle_ship_snapshot_delete)
+        .service(ship_snapshot::handle_ship_snapshot_list)
+        .service(ship_snapshot::handle_ship_snapshot_list_all)
+        .service(ship_snapshot::handle_ship_snapshot_patch)
+        .service(ship_snapshot::handle_ship_snapshot_read)
+        .service(ship_snapshot::handle_ship_snapshot_replace)
+        .service(ship_snapshot::handle_ship_snapshot_status_patch)
+        .service(ship_snapshot::handle_ship_snapshot_status_replace);
 }

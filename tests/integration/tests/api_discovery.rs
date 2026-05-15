@@ -136,6 +136,7 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         ("volumesnapshots", true),
         ("volumesnapshotcontents", false),
         ("volumesnapshotclasses", false),
+        ("shipsnapshots", true),
     ] {
         let resource = find_resource(snapshot_resources, resource_name)?;
         assert_eq!(resource["namespaced"], namespaced);

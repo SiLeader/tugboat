@@ -301,7 +301,7 @@ spec:
 `VolumeSnapshot` のマニフェスト例:
 
 ```yaml
-apiVersion: snapshot.tugboat.cloud/v1
+apiVersion: snapshot/v1
 kind: VolumeSnapshot
 metadata:
   name: my-snapshot
@@ -321,7 +321,7 @@ Ship スナップショットは、メモリの状態やボリュームの状態
 `ShipSnapshot` のマニフェスト例:
 
 ```yaml
-apiVersion: snapshot.tugboat.cloud/v1
+apiVersion: snapshot/v1
 kind: ShipSnapshot
 metadata:
   name: my-ship-snapshot

@@ -210,7 +210,7 @@ fn build_volume_snapshot(
             name: Some(volume_snapshot_name.to_string()),
             namespace: Some(namespace.to_string()),
             owner_references: vec![OwnerReference {
-                api_version: "v1".to_string(),
+                api_version: "snapshot/v1".to_string(),
                 kind: "ShipSnapshot".to_string(),
                 name: owner_name.to_string(),
                 uid: owner_uid.to_string(),
