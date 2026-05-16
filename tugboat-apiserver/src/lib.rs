@@ -34,6 +34,7 @@ use utoipa_actix_web::AppExt;
 pub mod auth;
 pub mod config;
 pub mod crd_registry;
+pub(crate) mod crd_schema;
 mod data;
 mod endpoints;
 mod name_generator;

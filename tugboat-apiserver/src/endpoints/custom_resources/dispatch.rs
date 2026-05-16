@@ -65,6 +65,7 @@ pub(super) async fn create(
     }
     meta = apply_new_metadata(meta);
     set_metadata(&mut value, &meta)?;
+    normalize_status_for_write(&entry, &mut value)?;
     validate_against_schema(&entry, &value)?;
 
     let name = meta.name.clone().expect("metadata.name was populated");
@@ -158,6 +159,7 @@ pub(super) async fn replace(
         preserve_status(&mut replacement, &current_value)?;
     }
     set_metadata(&mut replacement, &replacement_meta)?;
+    normalize_status_for_write(&entry, &mut replacement)?;
     validate_against_schema(&entry, &replacement)?;
 
     let envelope = envelope_from_value(&entry, &replacement, replacement_meta)?;
@@ -195,6 +197,7 @@ pub(super) async fn patch(
     rfc7396_merge_patch(&mut current_value, &serde_json::Value::Object(patch));
     enforce_type_meta(&mut current_value, &entry)?;
     preserve_identity_and_maybe_status(&entry, &mut current_value, &old_value)?;
+    normalize_status_for_write(&entry, &mut current_value)?;
     validate_against_schema(&entry, &current_value)?;
 
     let meta = extract_metadata(&current_value)?;
@@ -612,6 +615,24 @@ fn set_status(
         ))
     })?;
     obj.insert("status".to_string(), status);
+    Ok(())
+}
+
+fn normalize_status_for_write(
+    entry: &CrdEntry,
+    value: &mut serde_json::Value,
+) -> Result<(), Box<StatusResponse>> {
+    if !entry.version.status_subresource {
+        return Ok(());
+    }
+    let obj = value.as_object_mut().ok_or_else(|| {
+        Box::new(StatusResponse::bad_request(
+            "custom resource body must be a JSON object",
+            None,
+        ))
+    })?;
+    obj.entry("status".to_string())
+        .or_insert_with(|| serde_json::json!({}));
     Ok(())
 }
 

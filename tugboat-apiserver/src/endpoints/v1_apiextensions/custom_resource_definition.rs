@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::crd_schema::validate_crd_schemas;
 use crate::data::{ModifyResponse, ReadResponse, StatusResponse};
 use crate::endpoints::resource_handlers::ReplaceOptions;
 use crate::endpoints::{ClusterNamePathParams, ListQuery, resource_handlers};
@@ -34,7 +35,9 @@ pub(super) async fn handle_custom_resource_definition_create(
     json: Json<CustomResourceDefinition>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<CustomResourceDefinition>, Box<StatusResponse>> {
-    resource_handlers::create_cluster(json.into_inner(), operator).await
+    let crd = json.into_inner();
+    validate_custom_resource_definition_schema(&crd)?;
+    resource_handlers::create_cluster(crd, operator).await
 }
 
 #[utoipa::path(
@@ -120,11 +123,13 @@ pub(super) async fn handle_custom_resource_definition_replace(
     replacement: Json<CustomResourceDefinition>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<CustomResourceDefinition>, Box<StatusResponse>> {
+    let replacement = replacement.into_inner();
+    validate_custom_resource_definition_schema(&replacement)?;
     resource_handlers::replace_resource::<CustomResourceDefinition>(
         &operator,
         None,
         path.into_inner().name,
-        replacement.into_inner(),
+        replacement,
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,
@@ -212,4 +217,15 @@ pub(super) async fn handle_custom_resource_definition_status_replace(
         replacement.into_inner(),
     )
     .await
+}
+
+fn validate_custom_resource_definition_schema(
+    crd: &CustomResourceDefinition,
+) -> Result<(), Box<StatusResponse>> {
+    validate_crd_schemas(crd).map_err(|err| {
+        Box::new(StatusResponse::invalid(
+            format!("Invalid CustomResourceDefinition schema: {err}"),
+            Some(serde_json::json!({ "reason": err })),
+        ))
+    })
 }

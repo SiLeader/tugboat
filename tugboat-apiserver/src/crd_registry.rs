@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use crate::crd_schema::{CompiledSchema, compile_schema, parse_schema};
 use thiserror::Error;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -42,13 +43,24 @@ pub enum CrdScope {
     Namespaced,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct CrdVersionInfo {
     pub name: String,
     pub served: bool,
     pub storage: bool,
     pub schema_json: Option<Arc<serde_json::Value>>,
+    pub compiled_schema: Option<Arc<CompiledSchema>>,
     pub status_subresource: bool,
+}
+
+impl PartialEq for CrdVersionInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.served == other.served
+            && self.storage == other.storage
+            && self.schema_json == other.schema_json
+            && self.status_subresource == other.status_subresource
+    }
 }
 
 #[derive(Debug, Error)]
@@ -152,11 +164,13 @@ impl CrdRegistry {
             "Namespaced" => CrdScope::Namespaced,
             _ => return None,
         };
-        let schema_json = match version.schema.as_ref() {
-            Some(schema) if !schema.open_api_v3_schema.trim().is_empty() => Some(Arc::new(
-                serde_json::from_str::<serde_json::Value>(&schema.open_api_v3_schema).ok()?,
-            )),
-            _ => None,
+        let (schema_json, compiled_schema) = match version.schema.as_ref() {
+            Some(schema) if !schema.open_api_v3_schema.trim().is_empty() => {
+                let schema_json = Arc::new(parse_schema(&schema.open_api_v3_schema).ok()?);
+                let compiled_schema = Arc::new(compile_schema(&schema_json).ok()?);
+                (Some(schema_json), Some(compiled_schema))
+            }
+            _ => (None, None),
         };
         let list_kind = if names.list_kind.is_empty() {
             format!("{}List", names.kind)
@@ -176,6 +190,7 @@ impl CrdRegistry {
                 served: version.served,
                 storage: version.storage,
                 schema_json,
+                compiled_schema,
                 status_subresource: version
                     .subresources
                     .as_ref()
