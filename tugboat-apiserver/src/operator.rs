@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::crd_registry::CrdRegistry;
 use crate::name_generator::NameGenerator;
 use std::sync::Arc;
 use tugboat_resource_store::ResourceStore;
@@ -19,7 +20,8 @@ use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
 use uuid::Uuid;
 
 pub(crate) struct ApiOperator {
-    pub(crate) store: ResourceStore,
+    pub(crate) store: Arc<ResourceStore>,
+    pub(crate) crd_registry: Arc<CrdRegistry>,
     pub(crate) name_generator: NameGenerator,
     pub(crate) service_account_tokens:
         Option<Arc<crate::auth::service_account_jwt::ServiceAccountTokenIssuer>>,
@@ -33,7 +35,8 @@ impl ApiOperator {
         oidc_authenticator: Option<crate::auth::oidc::OidcAuthenticator>,
     ) -> Self {
         Self {
-            store,
+            store: Arc::new(store),
+            crd_registry: Arc::new(CrdRegistry::default()),
             name_generator: NameGenerator::new(),
             service_account_tokens: service_account_tokens.map(Arc::new),
             oidc_authenticator: oidc_authenticator.map(Arc::new),

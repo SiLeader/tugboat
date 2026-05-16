@@ -33,6 +33,7 @@ use utoipa_actix_web::AppExt;
 
 pub mod auth;
 pub mod config;
+pub mod crd_registry;
 mod data;
 mod endpoints;
 mod name_generator;
@@ -75,6 +76,17 @@ impl ApiServer {
             .map_err(|e| {
                 std::io::Error::other(format!("Failed to bootstrap default RBAC resources: {e}"))
             })?;
+        crd_registry::load_crds_into_registry(&self.operator.store, &self.operator.crd_registry)
+            .await
+            .map_err(|e| {
+                std::io::Error::other(format!("Failed to load CRDs into registry: {e}"))
+            })?;
+        let crd_registry = self.operator.crd_registry.clone();
+        let crd_registry_data = Data::from(crd_registry.clone());
+        tokio::spawn(crd_registry::run_crd_watcher(
+            self.operator.store.clone(),
+            crd_registry,
+        ));
         let data = Data::new(self.operator);
         let authentication = self.authentication.clone();
         let authorization = self.authorization.clone();
@@ -96,6 +108,7 @@ impl ApiServer {
                 ))
                 .wrap(Logger::default().exclude("/healthz"))
                 .app_data(data.clone())
+                .app_data(crd_registry_data.clone())
                 .app_data(json_config())
                 .service(health_check)
                 .configure(endpoints::register_openapi_endpoints)
@@ -175,6 +188,18 @@ async fn run_with_bound_listener(
         tracing::error!("Failed to bootstrap default RBAC resources: {err}");
         return;
     }
+    if let Err(err) =
+        crd_registry::load_crds_into_registry(&operator.store, &operator.crd_registry).await
+    {
+        tracing::error!("Failed to load CRDs into registry: {err}");
+        return;
+    }
+    let crd_registry = operator.crd_registry.clone();
+    let crd_registry_data = Data::from(crd_registry.clone());
+    tokio::spawn(crd_registry::run_crd_watcher(
+        operator.store.clone(),
+        crd_registry,
+    ));
     let data = Data::new(operator);
     let audit_policy = Arc::new(AuditPolicy::from_rules(audit.rules.clone()));
     let audit_sink = start_audit_writer(&audit);
@@ -194,6 +219,7 @@ async fn run_with_bound_listener(
             ))
             .wrap(Logger::default().exclude("/healthz"))
             .app_data(data.clone())
+            .app_data(crd_registry_data.clone())
             .app_data(json_config())
             .service(health_check)
             .configure(endpoints::register_openapi_endpoints)

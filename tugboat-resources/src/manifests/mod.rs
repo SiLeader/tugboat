@@ -34,6 +34,15 @@ pub mod apiextensions {
             validators NamespaceProhibitedValidator, CrdSpecValidator
         );
 
+        pub const RESERVED_GROUPS: &[&str] = &[
+            "core",
+            "apps",
+            "authorization",
+            "coordination",
+            "snapshot",
+            "apiextensions",
+        ];
+
         pub struct CrdSpecValidator;
 
         impl Validator<CustomResourceDefinition> for CrdSpecValidator {
@@ -43,6 +52,9 @@ pub mod apiextensions {
                 };
                 if spec.group.is_empty() || !matches!(spec.scope.as_str(), "Namespaced" | "Cluster")
                 {
+                    return false;
+                }
+                if RESERVED_GROUPS.contains(&spec.group.as_str()) {
                     return false;
                 }
                 if spec.versions.len() != 1 {
@@ -140,6 +152,15 @@ pub mod apiextensions {
                 crd.spec.as_mut().unwrap().versions[0].schema = Some(CustomResourceValidation {
                     open_api_v3_schema: "{".to_string(),
                 });
+
+                assert!(!crd.validate());
+            }
+
+            #[test]
+            fn crd_rejects_reserved_group() {
+                let mut crd = valid_crd();
+                crd.object_meta.as_mut().unwrap().name = Some("widgets.core".to_string());
+                crd.spec.as_mut().unwrap().group = "core".to_string();
 
                 assert!(!crd.validate());
             }
