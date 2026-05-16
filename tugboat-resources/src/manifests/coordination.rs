@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-fn default<T: Default + PartialEq>(t: &T) -> bool {
-    *t == Default::default()
-}
+pub mod v1 {
+    use crate::validators::NameValidator;
+    use crate::{apply_resource, apply_validators, resource_api};
 
-pub mod apiextensions;
-pub mod apps;
-pub mod authorization;
-pub mod coordination;
-pub mod core;
-pub mod meta;
-pub mod snapshot;
+    include!(concat!(env!("OUT_DIR"), "/tugboat.coordination.v1.rs"));
+
+    apply_resource!(Lease, resource_api::LEASE, namespaced);
+
+    apply_validators!(Lease, validators NameValidator);
+}

@@ -18,6 +18,7 @@ use crate::auth::authorization::{AuthorizationDecision, AuthorizationRequest};
 use crate::auth::rbac_authorizer::RbacAuthorizer;
 use crate::auth::user_info::UserInfo;
 use crate::config::{AuthenticationConfig, AuthorizationConfig, AuthorizationMode};
+use crate::crd_registry::{CrdRegistry, CrdScope};
 use crate::data::StatusResponse;
 use crate::endpoints::resource_registry;
 use crate::operator::ApiOperator;
@@ -202,7 +203,9 @@ where
                 return unauthorized(req, "Authentication context is missing");
             };
 
-            let Some(authz_request) = build_authorization_request(req.request(), user) else {
+            let Some(authz_request) =
+                build_authorization_request(req.request(), user, &operator.crd_registry)
+            else {
                 let res = service.call(req).await?;
                 return Ok(res.map_into_left_body());
             };
@@ -259,7 +262,11 @@ fn should_bypass(path: &str) -> bool {
         || path.starts_with("/openapi/v3/")
 }
 
-fn build_authorization_request(req: &HttpRequest, user: UserInfo) -> Option<AuthorizationRequest> {
+fn build_authorization_request(
+    req: &HttpRequest,
+    user: UserInfo,
+    crd_registry: &CrdRegistry,
+) -> Option<AuthorizationRequest> {
     let path = req.path();
     let mut segments = path
         .trim_start_matches('/')
@@ -273,7 +280,12 @@ fn build_authorization_request(req: &HttpRequest, user: UserInfo) -> Option<Auth
     };
 
     let remaining = segments.collect::<Vec<_>>();
-    let parsed = parse_resource_path(api_group.as_str(), version.as_str(), &remaining)?;
+    let parsed = parse_resource_path(
+        api_group.as_str(),
+        version.as_str(),
+        &remaining,
+        crd_registry,
+    )?;
     let verb = request_verb(
         req.method(),
         req.query_string(),
@@ -297,6 +309,16 @@ struct ParsedResourcePath {
 }
 
 fn parse_resource_path(
+    api_group: &str,
+    version: &str,
+    path: &[&str],
+    crd_registry: &CrdRegistry,
+) -> Option<ParsedResourcePath> {
+    parse_static_resource_path(api_group, version, path)
+        .or_else(|| parse_crd_resource_path(api_group, version, path, crd_registry))
+}
+
+fn parse_static_resource_path(
     api_group: &str,
     version: &str,
     path: &[&str],
@@ -337,6 +359,38 @@ fn parse_resource_path(
     })
 }
 
+fn parse_crd_resource_path(
+    api_group: &str,
+    version: &str,
+    path: &[&str],
+    crd_registry: &CrdRegistry,
+) -> Option<ParsedResourcePath> {
+    let (entry, namespace, resource_index) = match path {
+        ["namespaces", namespace, resource, ..] => {
+            let entry = crd_registry.lookup(api_group, version, resource)?;
+            let namespace =
+                matches!(entry.scope, CrdScope::Namespaced).then(|| (*namespace).to_string());
+            (entry, namespace, 2)
+        }
+        [resource, ..] => (crd_registry.lookup(api_group, version, resource)?, None, 0),
+        _ => return None,
+    };
+
+    let after_resource = &path[(resource_index + 1)..];
+    let resource_name = after_resource.first().map(|segment| (*segment).to_string());
+    let resource = if after_resource.len() > 1 {
+        format!("{}/{}", entry.plural, after_resource[1..].join("/"))
+    } else {
+        entry.plural
+    };
+
+    Some(ParsedResourcePath {
+        resource,
+        resource_name,
+        namespace,
+    })
+}
+
 fn request_verb(method: &Method, query: &str, resource_name_present: bool) -> Option<String> {
     let verb = match *method {
         Method::GET if query_requests_watch(query) => "watch",
@@ -372,6 +426,7 @@ mod tests {
         query_requests_watch,
     };
     use crate::auth::user_info::UserInfo;
+    use crate::crd_registry::{CrdEntry, CrdRegistry, CrdScope, CrdVersionInfo};
     use crate::endpoints::resource_registry;
     use actix_web::test::TestRequest;
     use openssl::asn1::Asn1Time;
@@ -405,11 +460,12 @@ mod tests {
 
     #[test]
     fn builds_authorization_request_for_namespaced_read() {
+        let registry = CrdRegistry::default();
         let req = TestRequest::get()
             .uri("/api/v1/namespaces/default/configmaps/example")
             .to_http_request();
 
-        let request = build_authorization_request(&req, UserInfo::anonymous()).unwrap();
+        let request = build_authorization_request(&req, UserInfo::anonymous(), &registry).unwrap();
 
         assert_eq!(request.api_group, "core");
         assert_eq!(request.verb, "get");
@@ -420,11 +476,12 @@ mod tests {
 
     #[test]
     fn builds_authorization_request_for_status_subresource() {
+        let registry = CrdRegistry::default();
         let req = TestRequest::patch()
             .uri("/apis/apps/v1/namespaces/default/deployments/example/status")
             .to_http_request();
 
-        let request = build_authorization_request(&req, UserInfo::anonymous()).unwrap();
+        let request = build_authorization_request(&req, UserInfo::anonymous(), &registry).unwrap();
 
         assert_eq!(request.api_group, "apps");
         assert_eq!(request.verb, "patch");
@@ -435,11 +492,12 @@ mod tests {
 
     #[test]
     fn builds_authorization_request_for_custom_action_path() {
+        let registry = CrdRegistry::default();
         let req = TestRequest::post()
             .uri("/api/v1/namespaces/default/ships/example/migrate/abort")
             .to_http_request();
 
-        let request = build_authorization_request(&req, UserInfo::anonymous()).unwrap();
+        let request = build_authorization_request(&req, UserInfo::anonymous(), &registry).unwrap();
 
         assert_eq!(request.verb, "create");
         assert_eq!(request.resource, "ships/migrate/abort");
@@ -448,8 +506,14 @@ mod tests {
 
     #[test]
     fn cluster_scoped_resource_ignores_namespace_prefix() {
-        let parsed = parse_resource_path("core", "v1", &["namespaces", "default", "namespaces"])
-            .expect("resource path should parse");
+        let registry = CrdRegistry::default();
+        let parsed = parse_resource_path(
+            "core",
+            "v1",
+            &["namespaces", "default", "namespaces"],
+            &registry,
+        )
+        .expect("resource path should parse");
 
         assert_eq!(parsed.resource, "namespaces");
         assert_eq!(parsed.namespace, None);
@@ -458,11 +522,12 @@ mod tests {
 
     #[test]
     fn parses_cluster_scoped_namespace_collection() {
+        let registry = CrdRegistry::default();
         let req = TestRequest::get()
             .uri("/api/v1/namespaces")
             .to_http_request();
 
-        let request = build_authorization_request(&req, UserInfo::anonymous()).unwrap();
+        let request = build_authorization_request(&req, UserInfo::anonymous(), &registry).unwrap();
 
         assert_eq!(request.verb, "list");
         assert_eq!(request.resource, "namespaces");
@@ -472,11 +537,12 @@ mod tests {
 
     #[test]
     fn parses_cluster_scoped_namespace_read() {
+        let registry = CrdRegistry::default();
         let req = TestRequest::get()
             .uri("/api/v1/namespaces/default")
             .to_http_request();
 
-        let request = build_authorization_request(&req, UserInfo::anonymous()).unwrap();
+        let request = build_authorization_request(&req, UserInfo::anonymous(), &registry).unwrap();
 
         assert_eq!(request.verb, "get");
         assert_eq!(request.resource, "namespaces");
@@ -493,15 +559,20 @@ mod tests {
 
     #[test]
     fn rbac_resource_names_are_derived_from_resource_descriptors() {
+        let registry = CrdRegistry::default();
         for descriptor in resource_registry::all_resource_apis() {
             let collection_path = if descriptor.namespaced() {
                 vec!["namespaces", "default", descriptor.plural]
             } else {
                 vec![descriptor.plural]
             };
-            let parsed =
-                parse_resource_path(descriptor.group, descriptor.version, &collection_path)
-                    .expect("collection path should parse");
+            let parsed = parse_resource_path(
+                descriptor.group,
+                descriptor.version,
+                &collection_path,
+                &registry,
+            )
+            .expect("collection path should parse");
             assert_eq!(parsed.resource, descriptor.plural);
             assert_eq!(
                 parsed.namespace.as_deref(),
@@ -520,9 +591,13 @@ mod tests {
                 } else {
                     vec![descriptor.plural, "example", "status"]
                 };
-                let parsed =
-                    parse_resource_path(descriptor.group, descriptor.version, &status_path)
-                        .expect("status path should parse");
+                let parsed = parse_resource_path(
+                    descriptor.group,
+                    descriptor.version,
+                    &status_path,
+                    &registry,
+                )
+                .expect("status path should parse");
                 assert_eq!(parsed.resource, format!("{}/status", descriptor.plural));
                 assert_eq!(parsed.resource_name.as_deref(), Some("example"));
                 assert_eq!(
@@ -531,6 +606,61 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn builds_authorization_request_for_namespaced_crd_resource() {
+        let registry = registry_with_crd(CrdScope::Namespaced, true);
+        let req = TestRequest::patch()
+            .uri("/apis/example.com/v1/namespaces/default/widgets/demo/status")
+            .to_http_request();
+
+        let request = build_authorization_request(&req, UserInfo::anonymous(), &registry).unwrap();
+
+        assert_eq!(request.api_group, "example.com");
+        assert_eq!(request.verb, "patch");
+        assert_eq!(request.resource, "widgets/status");
+        assert_eq!(request.resource_name.as_deref(), Some("demo"));
+        assert_eq!(request.namespace.as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn builds_authorization_request_for_cluster_scoped_crd_resource() {
+        let registry = registry_with_crd(CrdScope::Cluster, false);
+        let req = TestRequest::get()
+            .uri("/apis/example.com/v1/widgets/demo")
+            .to_http_request();
+
+        let request = build_authorization_request(&req, UserInfo::anonymous(), &registry).unwrap();
+
+        assert_eq!(request.api_group, "example.com");
+        assert_eq!(request.verb, "get");
+        assert_eq!(request.resource, "widgets");
+        assert_eq!(request.resource_name.as_deref(), Some("demo"));
+        assert_eq!(request.namespace, None);
+    }
+
+    fn registry_with_crd(scope: CrdScope, status_subresource: bool) -> CrdRegistry {
+        let registry = CrdRegistry::default();
+        registry
+            .upsert(CrdEntry {
+                group: "example.com".to_string(),
+                plural: "widgets".to_string(),
+                singular: "widget".to_string(),
+                kind: "Widget".to_string(),
+                list_kind: "WidgetList".to_string(),
+                scope,
+                version: CrdVersionInfo {
+                    name: "v1".to_string(),
+                    served: true,
+                    storage: true,
+                    schema_json: None,
+                    compiled_schema: None,
+                    status_subresource,
+                },
+            })
+            .expect("CRD registry update should succeed");
+        registry
     }
 
     fn test_cert(subject_entries: &[(&str, &str)]) -> X509 {

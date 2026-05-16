@@ -213,6 +213,7 @@ macro_rules! apply_resource {
 #[cfg(test)]
 mod tests {
     use crate::StaticResource;
+    use crate::manifests::apiextensions::v1::CustomResourceDefinition;
     use crate::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
     use crate::manifests::authorization::v1::{ClusterRole, ClusterRoleBinding, Role, RoleBinding};
     use crate::manifests::coordination::v1::Lease;
@@ -246,6 +247,10 @@ mod tests {
 
     #[test]
     fn static_resource_metadata_comes_from_resource_descriptors() {
+        assert_static_descriptor!(
+            CustomResourceDefinition,
+            resource_api::CUSTOM_RESOURCE_DEFINITION
+        );
         assert_static_descriptor!(ClusterRole, resource_api::CLUSTER_ROLE);
         assert_static_descriptor!(ClusterRoleBinding, resource_api::CLUSTER_ROLE_BINDING);
         assert_static_descriptor!(Deployment, resource_api::DEPLOYMENT);

@@ -12,14 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-fn default<T: Default + PartialEq>(t: &T) -> bool {
-    *t == Default::default()
-}
+syntax = "proto3";
 
-pub mod apiextensions;
-pub mod apps;
-pub mod authorization;
-pub mod coordination;
-pub mod core;
-pub mod meta;
-pub mod snapshot;
+import "meta/v1/object_meta.proto";
+import "meta/v1/type_meta.proto";
+
+package tugboat.meta.v1;
+
+// CRD-defined resource storage envelope.
+// raw_json contains the full JSON resource body: apiVersion, kind, metadata,
+// spec, and status.
+message CustomResourceObject {
+  TypeMeta type_meta = 1;
+  ObjectMeta object_meta = 2;
+  bytes raw_json = 3;
+}

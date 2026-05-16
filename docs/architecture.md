@@ -65,6 +65,24 @@ The following API groups and versions are currently supported:
 - `authorization/v1`: RBAC resources (Role, ClusterRole, etc.)
 - `coordination/v1`: Lease resources
 - `snapshot/v1`: Snapshot resources (VolumeSnapshot, VolumeSnapshotContent, VolumeSnapshotClass, ShipSnapshot)
+- `apiextensions/v1`: Extension resources (CustomResourceDefinition)
+
+### Custom Resource Dispatch
+
+CRDs extend the static resource model with an in-memory registry and a small catch-all dispatcher:
+
+```text
+CustomResourceDefinition
+  -> etcd
+  -> CrdRegistry watcher
+  -> /apis/{group}/{version}/... catch-all routes
+  -> OpenAPI schema validation
+  -> CustomResourceObject envelope in etcd
+```
+
+`CrdRegistry` is loaded at apiserver startup and kept synchronized through an etcd watch on `CustomResourceDefinition`. Static resources still use descriptor-driven route registration, while custom resources are resolved at request time by `(group, version, plural)`. The dispatcher enforces CRD scope, schema validation, status subresource rules, and stores the full JSON body inside a fixed `CustomResourceObject` protobuf envelope.
+
+Discovery and RBAC use the same registry entries. Dynamic resources appear under `/apis/{group}/{version}`, and authorization rules match the CRD group and plural resource string exactly like built-in resources.
 
 ## Controller Boundary
 
@@ -127,4 +145,3 @@ Use [verification-guide.md](./verification-guide.md) for gate commands. The shor
 - Component gate: run the package and integration tests that cover the touched boundary
 - Phase completion gate: PR gate plus relevant component gates and the control-plane installer smoke test
 - Release gate: PR gate, `cargo deny check` as a release blocker, and the fixed installer scenario set
-

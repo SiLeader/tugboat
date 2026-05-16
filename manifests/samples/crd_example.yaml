@@ -1,0 +1,39 @@
+apiVersion: apiextensions/v1
+kind: CustomResourceDefinition
+metadata:
+  name: databases.example.com
+spec:
+  group: example.com
+  names:
+    plural: databases
+    singular: database
+    kind: Database
+    listKind: DatabaseList
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openApiV3Schema: |
+          {
+            "type": "object",
+            "required": ["spec"],
+            "properties": {
+              "apiVersion": {"type": "string"},
+              "kind": {"type": "string"},
+              "metadata": {"type": "object"},
+              "spec": {
+                "type": "object",
+                "required": ["engine", "size"],
+                "properties": {
+                  "engine": {"type": "string"},
+                  "size": {"type": "integer", "minimum": 1}
+                }
+              },
+              "status": {"type": "object"}
+            },
+            "additionalProperties": false
+          }
+      subresources:
+        status: {}

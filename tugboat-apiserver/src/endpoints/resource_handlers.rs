@@ -401,6 +401,35 @@ where
         + PartialEq
         + Validatable,
 {
+    patch_resource_with_validation(
+        operator,
+        namespace,
+        name,
+        patch,
+        options,
+        validate_resource::<T>,
+    )
+    .await
+}
+
+pub(crate) async fn patch_resource_with_validation<T, V>(
+    operator: &ApiOperator,
+    namespace: Option<String>,
+    name: String,
+    patch: serde_json::Map<String, serde_json::Value>,
+    options: ReplaceOptions,
+    validate: V,
+) -> Result<ModifyResponse<T>, Box<StatusResponse>>
+where
+    T: StaticSerializable
+        + ObjectMetaResource
+        + StaticResource
+        + Serialize
+        + DeserializeOwned
+        + PartialEq
+        + Validatable,
+    V: Fn(&T) -> Result<(), Box<StatusResponse>>,
+{
     validate_patch_name(&patch, &name)?;
     let current = operator
         .store
@@ -415,7 +444,7 @@ where
     };
     let current = current.apply_revision();
     let patched = ResourceUpdater::new(&current, options).apply_patch(patch)?;
-    validate_resource(&patched)?;
+    validate(&patched)?;
 
     let patched = if current != patched {
         operator

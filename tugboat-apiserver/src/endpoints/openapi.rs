@@ -31,6 +31,12 @@ struct DiscoveryResponse {
 pub async fn discovery() -> impl Responder {
     let mut paths = HashMap::new();
     paths.insert(
+        "apis/apiextensions/v1".to_string(),
+        DiscoveryPath {
+            server_relative_url: "/openapi/v3/apis/apiextensions/v1".to_string(),
+        },
+    );
+    paths.insert(
         "apis/authorization/v1".to_string(),
         DiscoveryPath {
             server_relative_url: "/openapi/v3/apis/authorization/v1".to_string(),
@@ -67,6 +73,7 @@ pub async fn discovery() -> impl Responder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::endpoints::v1_apiextensions::openapi_apiextensions_v1;
     use crate::endpoints::v1_apps::openapi_apps_v1;
     use crate::endpoints::v1_authorization::openapi_authorization_v1;
     use crate::endpoints::v1_coordination::openapi_coordination_v1;
@@ -80,6 +87,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .service(discovery)
+                .service(openapi_apiextensions_v1)
                 .service(openapi_authorization_v1)
                 .service(openapi_apps_v1)
                 .service(openapi_core_v1)
@@ -91,6 +99,11 @@ mod tests {
         // Test Discovery
         let req = test::TestRequest::get().uri("/openapi/v3").to_request();
         let resp: DiscoveryResponse = test::call_and_read_body_json(&app, req).await;
+        assert!(resp.paths.contains_key("apis/apiextensions/v1"));
+        assert_eq!(
+            resp.paths["apis/apiextensions/v1"].server_relative_url,
+            "/openapi/v3/apis/apiextensions/v1"
+        );
         assert!(resp.paths.contains_key("apis/authorization/v1"));
         assert_eq!(
             resp.paths["apis/authorization/v1"].server_relative_url,
@@ -127,6 +140,19 @@ mod tests {
         assert!(schema["paths"]["/apis/authorization/v1/clusterroles"].is_object());
         assert!(
             schema["paths"]["/apis/authorization/v1/namespaces/{namespace}/rolebindings"]
+                .is_object()
+        );
+
+        let req = test::TestRequest::get()
+            .uri("/openapi/v3/apis/apiextensions/v1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+        let body = test::read_body(resp).await;
+        let schema: Value = serde_json::from_slice(&body).unwrap();
+        assert!(schema["paths"]["/apis/apiextensions/v1/customresourcedefinitions"].is_object());
+        assert!(
+            schema["paths"]["/apis/apiextensions/v1/customresourcedefinitions/{name}/status"]
                 .is_object()
         );
 

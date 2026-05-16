@@ -80,6 +80,15 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         "authorization/v1"
     );
 
+    let apiextensions_group = groups
+        .iter()
+        .find(|group| group["name"] == "apiextensions")
+        .ok_or("apiextensions API group is missing")?;
+    assert_eq!(
+        apiextensions_group["preferredVersion"]["groupVersion"],
+        "apiextensions/v1"
+    );
+
     let apps_v1_resources = get_json(&client, &ctx.base_url, "/apis/apps/v1").await?;
     assert_eq!(apps_v1_resources["groupVersion"], "apps/v1");
     let apps_resources = apps_v1_resources["resources"]
@@ -117,6 +126,21 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
         let resource = find_resource(authorization_resources, resource_name)?;
         assert_has_verbs(resource, &["create", "list", "get", "delete"])?;
     }
+
+    let apiextensions_v1_resources =
+        get_json(&client, &ctx.base_url, "/apis/apiextensions/v1").await?;
+    assert_eq!(
+        apiextensions_v1_resources["groupVersion"],
+        "apiextensions/v1"
+    );
+    let apiextensions_resources = apiextensions_v1_resources["resources"]
+        .as_array()
+        .ok_or("apiextensions/v1 discovery response is missing resources")?;
+    let crd = find_resource(apiextensions_resources, "customresourcedefinitions")?;
+    assert_eq!(crd["namespaced"], false);
+    assert_has_verbs(crd, &["create", "list", "get", "delete"])?;
+    let crd_status = find_resource(apiextensions_resources, "customresourcedefinitions/status")?;
+    assert_has_verbs(crd_status, &["patch", "update"])?;
 
     let snapshot_group = groups
         .iter()
@@ -168,6 +192,10 @@ async fn discovery_endpoints_expose_expected_groups_and_resources() -> Result<()
     assert_eq!(
         openapi_discovery["paths"]["apis/authorization/v1"]["serverRelativeUrl"],
         "/openapi/v3/apis/authorization/v1"
+    );
+    assert_eq!(
+        openapi_discovery["paths"]["apis/apiextensions/v1"]["serverRelativeUrl"],
+        "/openapi/v3/apis/apiextensions/v1"
     );
     assert_eq!(
         openapi_discovery["paths"]["apis/snapshot/v1"]["serverRelativeUrl"],

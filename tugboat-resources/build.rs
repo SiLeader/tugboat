@@ -27,6 +27,7 @@ fn main() {
     config.field_attribute("type_meta", "#[serde(flatten)]");
 
     let resources = [
+        ".tugboat.apiextensions.v1",
         ".tugboat.apps.v1",
         ".tugboat.authorization.v1",
         ".tugboat.core.v1",
@@ -38,6 +39,7 @@ fn main() {
         ".tugboat.meta.v1.LabelSelector",
         ".tugboat.meta.v1.LabelSelectorRequirement",
         ".tugboat.meta.v1.TypeMeta",
+        ".tugboat.meta.v1.CustomResourceObject",
     ];
 
     for res in resources {
@@ -60,6 +62,8 @@ fn main() {
     config
         .compile_protos(
             &[
+                // apiextensions/v1
+                "proto/apiextensions/v1/custom_resource_definition.proto",
                 // apps/v1
                 "proto/apps/v1/workload.proto",
                 "proto/apps/v1/replica_set.proto",
@@ -95,6 +99,7 @@ fn main() {
                 "proto/meta/v1/object_reference.proto",
                 "proto/meta/v1/type_meta.proto",
                 "proto/meta/v1/time.proto",
+                "proto/meta/v1/custom_resource_object.proto",
                 // coordination/v1
                 "proto/coordination/v1/lease.proto",
             ],

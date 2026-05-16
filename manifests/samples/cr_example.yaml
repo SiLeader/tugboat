@@ -1,0 +1,10 @@
+apiVersion: example.com/v1
+kind: Database
+metadata:
+  namespace: demo
+  name: demo-db
+  annotations:
+    tugboat.cloud/plural: databases
+spec:
+  engine: postgres
+  size: 1

@@ -55,15 +55,33 @@ impl WatchMuxAggregator {
         key: &str,
         resource_version: Option<String>,
     ) -> Result<WatchReceiver, crate::Error> {
+        let start_revision = parse_resource_version(resource_version.as_deref())?
+            .map(|revision| revision.saturating_add(1));
+        self.get_from_start_revision(key, start_revision).await
+    }
+
+    pub(crate) async fn get_from_start_revision(
+        &self,
+        key: &str,
+        start_revision: Option<i64>,
+    ) -> Result<WatchReceiver, crate::Error> {
         debug!("Get watch receiver: key: {key}");
+        if let Some(revision) = start_revision
+            && revision < 0
+        {
+            return Err(crate::Error::InvalidField(
+                "startRevision".to_string(),
+                "must not be negative".to_string(),
+            ));
+        }
         let mut mux_map = self.mux.lock().await;
         if let Some(mux) = mux_map.get(key).cloned()
-            && resource_version.is_none()
+            && start_revision.is_none()
         {
             return Ok(mux.receiver());
         }
         let m = Arc::new(WatchMux::new());
-        if resource_version.is_none() {
+        if start_revision.is_none() {
             mux_map.insert(key.to_string(), m.clone());
         }
         drop(mux_map);
@@ -72,8 +90,6 @@ impl WatchMuxAggregator {
         let key = key.to_string();
         let watch_mux = m.clone();
         let aggregator_mux = Arc::clone(&self.mux);
-        let start_revision = parse_resource_version(resource_version.as_deref())?
-            .map(|revision| revision.saturating_add(1));
         // Create the receiver before spawning to avoid a race where the task
         // sees zero receivers and exits before the caller can subscribe.
         let receiver = m.receiver();

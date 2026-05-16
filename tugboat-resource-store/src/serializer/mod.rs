@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod custom_resource;
 mod protobuf;
 
 use crate::error::Error;
 use crate::serializer::protobuf::ProtobufSerializer;
+use tugboat_resources::manifests::apiextensions::v1::CustomResourceDefinition;
 use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::authorization::v1::{
     ClusterRole, ClusterRoleBinding, Role, RoleBinding,
@@ -78,6 +80,7 @@ protobuf_serializable!(ClusterNetworkClass);
 protobuf_serializable!(ClusterRole);
 protobuf_serializable!(ClusterRoleBinding);
 protobuf_serializable!(ConfigMap);
+protobuf_serializable!(CustomResourceDefinition);
 protobuf_serializable!(Deployment);
 protobuf_serializable!(Fleet);
 protobuf_serializable!(Lease);
@@ -104,8 +107,13 @@ protobuf_serializable!(VolumeSnapshotClass);
 mod tests {
     use super::Serializable;
     use super::StaticSerializable;
+    use super::custom_resource::CustomResourceSerializable;
     use std::collections::BTreeSet;
     use std::collections::HashMap;
+    use tugboat_resources::manifests::apiextensions::v1::{
+        CustomResourceDefinition, CustomResourceDefinitionNames, CustomResourceDefinitionSpec,
+        CustomResourceDefinitionVersion,
+    };
     use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
     use tugboat_resources::manifests::authorization::v1::{
         ClusterRole, ClusterRoleBinding, Role, RoleBinding,
@@ -118,7 +126,7 @@ mod tests {
         StorageClass, StorageClassSpec, TopologySelectorLabelRequirement, TopologySelectorTerm,
         VolumeNodeAffinity,
     };
-    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+    use tugboat_resources::manifests::meta::v1::{CustomResourceObject, ObjectMeta, TypeMeta};
     use tugboat_resources::manifests::snapshot::v1::{
         VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotClassSpec, VolumeSnapshotContent,
         VolumeSnapshotContentSource, VolumeSnapshotContentSpec, VolumeSnapshotSource,
@@ -136,6 +144,7 @@ mod tests {
             serializable_descriptor::<ClusterRole>(),
             serializable_descriptor::<ClusterRoleBinding>(),
             serializable_descriptor::<ConfigMap>(),
+            serializable_descriptor::<CustomResourceDefinition>(),
             serializable_descriptor::<Deployment>(),
             serializable_descriptor::<Fleet>(),
             serializable_descriptor::<Lease>(),
@@ -194,6 +203,72 @@ mod tests {
             Some("settings")
         );
         assert_eq!(decoded.data.get("key").map(String::as_str), Some("value"));
+    }
+
+    #[test]
+    fn can_round_trip_custom_resource_definition() {
+        let crd = CustomResourceDefinition {
+            object_meta: Some(ObjectMeta {
+                name: Some("widgets.example.com".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(CustomResourceDefinitionSpec {
+                group: "example.com".to_string(),
+                names: Some(CustomResourceDefinitionNames {
+                    plural: "widgets".to_string(),
+                    singular: "widget".to_string(),
+                    kind: "Widget".to_string(),
+                    list_kind: "WidgetList".to_string(),
+                }),
+                scope: "Namespaced".to_string(),
+                versions: vec![CustomResourceDefinitionVersion {
+                    name: "v1".to_string(),
+                    served: true,
+                    storage: true,
+                    ..Default::default()
+                }],
+            }),
+            ..Default::default()
+        };
+
+        let encoded = crd.serialize().unwrap();
+        let decoded = CustomResourceDefinition::deserialize(&encoded).unwrap();
+
+        assert_eq!(
+            decoded.object_meta.unwrap().name.as_deref(),
+            Some("widgets.example.com")
+        );
+        assert_eq!(decoded.spec.unwrap().group, "example.com");
+    }
+
+    #[test]
+    fn can_round_trip_custom_resource_object() {
+        let raw_json = br#"{"apiVersion":"example.com/v1","kind":"Widget","metadata":{"name":"demo","namespace":"default"},"spec":{"size":3},"status":{"phase":"Ready"}}"#.to_vec();
+        let envelope = CustomResourceObject {
+            type_meta: Some(TypeMeta {
+                api_version: Some("example.com/v1".to_string()),
+                kind: Some("Widget".to_string()),
+            }),
+            object_meta: Some(ObjectMeta {
+                name: Some("demo".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            raw_json: raw_json.clone(),
+        };
+
+        let encoded = envelope.serialize().unwrap();
+        let decoded = CustomResourceObject::deserialize(&encoded).unwrap();
+
+        assert_eq!(
+            decoded.type_meta.and_then(|meta| meta.kind),
+            Some("Widget".to_string())
+        );
+        assert_eq!(
+            decoded.object_meta.unwrap().namespace.as_deref(),
+            Some("default")
+        );
+        assert_eq!(decoded.raw_json, raw_json);
     }
 
     #[test]

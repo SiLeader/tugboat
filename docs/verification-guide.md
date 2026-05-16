@@ -102,6 +102,7 @@ cargo test -p tugboat-resources
 cargo test -p tugboat-resource-store
 cargo test -p tugboat-apiserver
 cargo test -p tugboat-integration-tests api_discovery
+cargo test -p tugboat-integration-tests crd_lifecycle
 cargo test -p tugboat-integration-tests resource_versioning
 cargo test -p tugboat-integration-tests watch
 ```
@@ -195,6 +196,20 @@ apply.sh
         └─▶ waits for PVC to be bound
               └─▶ pulls VM image → creates QEMU VM
 ```
+
+### CRD Smoke Test
+
+After the sample manifests are applied, verify the CRD path separately:
+
+```bash
+curl -s "$APISERVER_URL/apis/apiextensions/v1/customresourcedefinitions/databases.example.com" | python3 -m json.tool
+curl -s "$APISERVER_URL/apis/example.com/v1" | python3 -m json.tool
+curl -s "$APISERVER_URL/apis/example.com/v1/namespaces/demo/databases/demo-db" | python3 -m json.tool
+curl -s -X DELETE "$APISERVER_URL/apis/example.com/v1/namespaces/demo/databases/demo-db" | python3 -m json.tool
+curl -s -X DELETE "$APISERVER_URL/apis/apiextensions/v1/customresourcedefinitions/databases.example.com" | python3 -m json.tool
+```
+
+The CRD deletion removes the custom resource API path from discovery. Existing custom resource data is not garbage-collected by this smoke test.
 
 ---
 

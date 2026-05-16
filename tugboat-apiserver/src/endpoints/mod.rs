@@ -14,6 +14,7 @@
 
 use crate::data::StatusResponse;
 use crate::endpoints::selector::Selector;
+use crate::endpoints::v1_apiextensions::openapi_apiextensions_v1;
 use crate::endpoints::v1_apps::openapi_apps_v1;
 use crate::endpoints::v1_authorization::openapi_authorization_v1;
 use crate::endpoints::v1_coordination::openapi_coordination_v1;
@@ -23,12 +24,14 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use utoipa_actix_web::service_config::ServiceConfig;
 
+mod custom_resources;
 mod discovery;
 mod openid;
 mod resource_handlers;
 pub(crate) mod resource_registry;
 mod selector;
 mod utils;
+mod v1_apiextensions;
 mod v1_apps;
 mod v1_authorization;
 mod v1_coordination;
@@ -41,6 +44,7 @@ pub mod openapi;
 pub fn register_openapi_endpoints(config: &mut actix_web::web::ServiceConfig) {
     config
         .service(openapi::discovery)
+        .service(openapi_apiextensions_v1)
         .service(openapi_authorization_v1)
         .service(openapi_apps_v1)
         .service(openapi_core_v1)

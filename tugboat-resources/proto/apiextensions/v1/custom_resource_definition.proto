@@ -1,0 +1,74 @@
+// Copyright 2025- SiLeader (Cerussite).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+import "meta/v1/object_meta.proto";
+import "meta/v1/time.proto";
+import "meta/v1/type_meta.proto";
+
+package tugboat.apiextensions.v1;
+
+message CustomResourceDefinition {
+  meta.v1.TypeMeta type_meta = 1;
+  meta.v1.ObjectMeta object_meta = 2;
+  CustomResourceDefinitionSpec spec = 3;
+  optional CustomResourceDefinitionStatus status = 4;
+}
+
+message CustomResourceDefinitionSpec {
+  string group = 1;
+  CustomResourceDefinitionNames names = 2;
+  string scope = 3;
+  repeated CustomResourceDefinitionVersion versions = 4;
+}
+
+message CustomResourceDefinitionNames {
+  string plural = 1;
+  string singular = 2;
+  string kind = 3;
+  string list_kind = 4;
+}
+
+message CustomResourceDefinitionVersion {
+  string name = 1;
+  bool served = 2;
+  bool storage = 3;
+  optional CustomResourceValidation schema = 4;
+  optional CustomResourceSubresources subresources = 5;
+}
+
+message CustomResourceValidation {
+  string open_api_v3_schema = 1;
+}
+
+message CustomResourceSubresources {
+  optional CustomResourceSubresourceStatus status = 1;
+}
+
+message CustomResourceSubresourceStatus {}
+
+message CustomResourceDefinitionStatus {
+  optional CustomResourceDefinitionNames accepted_names = 1;
+  repeated string stored_versions = 2;
+  repeated Condition conditions = 3;
+}
+
+message Condition {
+  string type = 1;
+  string status = 2;
+  string reason = 3;
+  string message = 4;
+  optional meta.v1.Time last_transition_time = 5;
+}

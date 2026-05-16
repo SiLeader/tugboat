@@ -12,14 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-fn default<T: Default + PartialEq>(t: &T) -> bool {
-    *t == Default::default()
+use crate::error::Error;
+use prost::Message;
+use tugboat_resources::manifests::meta::v1::CustomResourceObject;
+
+pub trait CustomResourceSerializable: Sized {
+    fn serialize(&self) -> Result<Vec<u8>, Error>;
+    fn deserialize(data: &[u8]) -> Result<Self, Error>;
 }
 
-pub mod apiextensions;
-pub mod apps;
-pub mod authorization;
-pub mod coordination;
-pub mod core;
-pub mod meta;
-pub mod snapshot;
+impl CustomResourceSerializable for CustomResourceObject {
+    fn serialize(&self) -> Result<Vec<u8>, Error> {
+        Ok(self.encode_to_vec())
+    }
+
+    fn deserialize(data: &[u8]) -> Result<Self, Error> {
+        Ok(Self::decode(data)?)
+    }
+}
