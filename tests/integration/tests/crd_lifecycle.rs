@@ -482,8 +482,7 @@ async fn crd_lifecycle_custom_resource_watch_emits_added_modified_deleted_events
 }
 
 #[tokio::test]
-async fn crd_lifecycle_deleting_crd_removes_custom_resource_api_but_leaves_data_orphaned()
--> Result<(), DynError> {
+async fn crd_lifecycle_deleting_crd_cascades_custom_resource_data() -> Result<(), DynError> {
     let Some(ctx) = setup_or_skip().await? else {
         return Ok(());
     };
@@ -518,7 +517,7 @@ async fn crd_lifecycle_deleting_crd_removes_custom_resource_api_but_leaves_data_
             "delete-crd.example.com/v1",
             "Widget",
             None,
-            "orphan",
+            "cascade-target",
         )),
     )
     .await?;
@@ -534,6 +533,8 @@ async fn crd_lifecycle_deleting_crd_removes_custom_resource_api_but_leaves_data_
     )
     .await?;
 
+    // The CRD definition is removed from the registry first, so the CR API
+    // returns 404 promptly.
     wait_for_custom_resource_removed(
         &client,
         &ctx.base_url,
@@ -542,6 +543,40 @@ async fn crd_lifecycle_deleting_crd_removes_custom_resource_api_but_leaves_data_
         "widgets",
     )
     .await?;
+
+    // Recreate the CRD with the same group/plural; if cascade-delete worked
+    // the prior CR data is gone, so the LIST is empty. If we had left the
+    // data orphaned (the previous behavior), it would resurface here.
+    create_crd(
+        &client,
+        &ctx.base_url,
+        cluster_crd(
+            "delete-crd.example.com",
+            "widgets",
+            "widget",
+            "Widget",
+            false,
+        ),
+    )
+    .await?;
+    wait_for_custom_resource(
+        &client,
+        &ctx.base_url,
+        "delete-crd.example.com",
+        "v1",
+        "widgets",
+    )
+    .await?;
+    let list = request_json(
+        &client,
+        Method::GET,
+        &format!("{}/apis/delete-crd.example.com/v1/widgets", ctx.base_url),
+        &[StatusCode::OK],
+        None,
+    )
+    .await?;
+    let items = list["items"].as_array().map(Vec::len).unwrap_or(usize::MAX);
+    assert_eq!(items, 0, "cascade delete must remove CR data");
 
     Ok(())
 }

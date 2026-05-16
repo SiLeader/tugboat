@@ -141,7 +141,11 @@ Prefer the existing `tugboat-client` reflector and runtime modules when building
 - no scale subresource;
 - no short names, categories, or additional printer columns;
 - no mutating defaulting;
-- deleting a CRD makes the API path unavailable, but existing custom resource data remains orphaned in etcd until a future garbage collector removes it;
+- deleting a CRD removes the API path immediately and then cascade-deletes the
+  custom resource data. Custom resources whose `metadata.finalizers` is
+  non-empty are stamped with a `metadata.deletionTimestamp` instead of being
+  hard-deleted. After the CRD is gone the API path is no longer served, so any
+  remaining finalizer-blocked rows can only be cleared out-of-band;
 - changing a CRD's `scope` between `Namespaced` and `Cluster` after custom
   resources exist leaves the original rows under their previous key prefix
   unreachable. Delete the existing resources before flipping scope, or expect

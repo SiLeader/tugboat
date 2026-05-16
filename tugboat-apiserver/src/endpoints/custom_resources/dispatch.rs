@@ -17,11 +17,12 @@ use super::envelope::{
 };
 use super::merge::{patch_object, rfc7396_merge_patch};
 use super::metadata::{
-    apply_new_metadata, extract_metadata, has_finalizers, inject_resource_version,
-    normalize_status_for_write, parse_client_resource_version, preserve_identity_and_maybe_status,
-    preserve_identity_metadata, preserve_identity_metadata_from_value, preserve_status,
-    resource_version_as_revision, set_deletion_timestamp, set_metadata, set_status,
-    validate_create_name, validate_metadata_name, validate_patch_name, value_with_revision,
+    apply_new_metadata, compute_generation, extract_metadata, has_finalizers,
+    inject_resource_version, normalize_status_for_write, parse_client_resource_version,
+    preserve_identity_and_maybe_status, preserve_identity_metadata,
+    preserve_identity_metadata_from_value, preserve_status, resource_version_as_revision,
+    set_deletion_timestamp, set_metadata, set_status, validate_create_name, validate_metadata_name,
+    validate_patch_name, value_with_revision,
 };
 use super::validation::validate_against_schema;
 use super::watch::watch_custom;
@@ -110,8 +111,8 @@ pub(super) async fn list(
     let entry = lookup(operator, &group, &version, &plural)?;
     ensure_list_scope(&entry, namespace.as_deref())?;
 
-    if let Some(watch) = query.watch {
-        return watch_custom(operator, entry, namespace, query, watch).await;
+    if query.watch.is_some() {
+        return watch_custom(operator, entry, namespace, query).await;
     }
 
     let field_selector = query.to_field_selector()?;
@@ -271,7 +272,7 @@ pub(super) async fn delete(
         return Ok(HttpResponse::Ok().json(current_value));
     }
 
-    operator
+    let deleted = operator
         .store
         .delete_custom(
             &entry.group,
@@ -281,6 +282,15 @@ pub(super) async fn delete(
             resource_version_as_revision(&current_value),
         )
         .await?;
+    // A racing writer may have already removed the key between our get and
+    // delete. Surface that as 404 instead of returning 200 with a stale body
+    // — clients should not interpret success as "this delete removed it".
+    if !deleted {
+        return Err(Box::new(StatusResponse::not_found(
+            format!("{} \"{name}\" not found", entry.kind),
+            Some(resource_identity(namespace.as_deref(), &name)),
+        )));
+    }
     Ok(HttpResponse::Ok().json(current_value))
 }
 
@@ -369,19 +379,6 @@ pub(super) async fn patch_status(
         .await?;
     inject_resource_version(&mut current_value, revision)?;
     Ok(HttpResponse::Ok().json(current_value))
-}
-
-fn compute_generation(
-    current_value: &serde_json::Value,
-    next_value: &serde_json::Value,
-    current_meta: &tugboat_resources::manifests::meta::v1::ObjectMeta,
-) -> Option<i64> {
-    use super::metadata::{generation_tracked_fields, next_generation};
-    if generation_tracked_fields(current_value) != generation_tracked_fields(next_value) {
-        next_generation(current_meta.generation)
-    } else {
-        current_meta.generation
-    }
 }
 
 fn lookup(

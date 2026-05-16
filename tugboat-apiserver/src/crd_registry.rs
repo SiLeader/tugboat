@@ -25,6 +25,9 @@ use tugboat_resource_store::serializer::Serializable;
 use tugboat_resources::manifests::apiextensions::v1::CustomResourceDefinition;
 
 pub use tugboat_resources::manifests::apiextensions::v1::RESERVED_GROUPS;
+// Re-export under the CRD-domain alias so call sites read naturally while we
+// share the single ResourceScope enum that already powers static descriptors.
+pub use tugboat_resources::resource_api::ResourceScope as CrdScope;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CrdEntry {
@@ -35,12 +38,6 @@ pub struct CrdEntry {
     pub list_kind: String,
     pub scope: CrdScope,
     pub version: CrdVersionInfo,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CrdScope {
-    Cluster,
-    Namespaced,
 }
 
 #[derive(Clone, Debug)]
@@ -92,11 +89,17 @@ struct CrdRegistryInner {
 
 impl CrdRegistry {
     pub fn lookup(&self, group: &str, version: &str, plural: &str) -> Option<CrdEntry> {
+        // Defense in depth: discovery already filters by served, but the catch-all
+        // dispatcher and RBAC middleware also rely on lookup. Treat unserved
+        // versions as if they were not registered so no traffic reaches them
+        // even if the validator constraint that pins served=true is later
+        // relaxed.
         self.inner
             .read()
             .expect("CRD registry lock poisoned")
             .by_group_version_plural
             .get(&(group.to_string(), version.to_string(), plural.to_string()))
+            .filter(|entry| entry.version.served)
             .cloned()
     }
 
@@ -290,6 +293,10 @@ pub async fn run_crd_watcher(store: Arc<ResourceStore>, registry: Arc<CrdRegistr
 
 fn apply_watch_event(registry: &CrdRegistry, event: tugboat_resource_store::watch::WatchEvent) {
     match event {
+        // Added/Modified carry the just-written value, which etcd guarantees is
+        // present and current — unlike Deleted, where prev_kv may be missing
+        // after compaction. Deserialize the body and fall back to the key only
+        // when the body is undecodable.
         tugboat_resource_store::watch::WatchEvent::Added(kv)
         | tugboat_resource_store::watch::WatchEvent::Modified(kv) => {
             match CustomResourceDefinition::deserialize(kv.value.as_slice()) {
@@ -440,6 +447,17 @@ mod tests {
             .upsert(entry)
             .expect_err("reserved group should be rejected");
         assert!(matches!(err, CrdRegistryError::ReservedGroup(group) if group == "core"));
+    }
+
+    #[test]
+    fn lookup_skips_versions_that_are_not_served() {
+        let registry = CrdRegistry::default();
+        let mut entry = CrdRegistry::from_crd(&crd()).expect("valid CRD should convert");
+        entry.version.served = false;
+        registry.upsert(entry).expect("upsert should succeed");
+
+        assert!(registry.lookup("example.com", "v1", "widgets").is_none());
+        assert!(!registry.is_registered("example.com", "v1", "widgets"));
     }
 
     #[test]

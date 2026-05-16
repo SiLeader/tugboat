@@ -20,9 +20,10 @@ use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use tugboat_resources::ObjectMetaResource;
-use tugboat_resources::manifests::apiextensions::v1::CustomResourceDefinition;
+use tugboat_resources::manifests::apiextensions::v1::{
+    CustomResourceDefinition, validate_crd_spec,
+};
 use tugboat_resources::manifests::meta::v1::Time;
-use tugboat_resources::validators::Validatable;
 
 async fn ensure_immutable_spec(
     operator: &ApiOperator,
@@ -150,19 +151,28 @@ pub(super) async fn handle_custom_resource_definition_delete(
         return Ok(ReadResponse::new(pending_delete));
     }
 
-    delete_custom_resources_for_crd(&operator, &current).await?;
+    // Order matters: delete the CRD definition first so the registry watch
+    // removes it from the API surface. Only then GC the CR data. If the CR
+    // GC fails midway, the leftover etcd entries are unreachable through any
+    // API path (404 from the catch-all) — strictly safer than the previous
+    // order, where a CR-GC failure could leave a CRD pointing at partially
+    // deleted data.
     let deleted = operator
         .store
         .delete::<CustomResourceDefinition>(None, &name)
         .await
         .map_err(|err| Box::new(err.into()))?;
-    match deleted {
-        Some(data) => Ok(ReadResponse::new(data.apply_revision())),
-        None => Err(Box::new(StatusResponse::not_found(
-            "CustomResourceDefinition not found",
-            Some(serde_json::json!({ "name": name })),
-        ))),
-    }
+    let deleted = match deleted {
+        Some(data) => data.apply_revision(),
+        None => {
+            return Err(Box::new(StatusResponse::not_found(
+                "CustomResourceDefinition not found",
+                Some(serde_json::json!({ "name": name })),
+            )));
+        }
+    };
+    cascade_delete_custom_resources(&operator, &current).await?;
+    Ok(ReadResponse::new(deleted))
 }
 
 #[utoipa::path(
@@ -346,7 +356,16 @@ pub(super) async fn handle_custom_resource_definition_status_replace(
     .await
 }
 
-async fn delete_custom_resources_for_crd(
+/// Cascade-delete the custom resources owned by a CRD that has just been
+/// removed. CRs whose metadata.finalizers is non-empty get a deletionTimestamp
+/// stamped on their JSON body so an out-of-band cleanup process can still see
+/// they were marked for deletion. The rest are hard-deleted.
+///
+/// Note: once the CRD definition is gone, controllers cannot use the catch-all
+/// API to clear finalizers (it returns 404). The deletionTimestamp persists in
+/// etcd as evidence; the data is no longer reachable through any served API
+/// path.
+async fn cascade_delete_custom_resources(
     operator: &ApiOperator,
     crd: &CustomResourceDefinition,
 ) -> Result<(), Box<StatusResponse>> {
@@ -357,12 +376,113 @@ async fn delete_custom_resources_for_crd(
         return Ok(());
     };
 
-    operator
+    let items = operator
         .store
-        .delete_custom_collection(&spec.group, &names.plural)
+        .list_custom(&spec.group, &names.plural, None)
         .await
-        .map(|_| ())
-        .map_err(|err| Box::new(err.into()))
+        .map_err(|err| Box::new(err.into()))?;
+
+    for item in items {
+        let envelope = item.data;
+        let namespace = envelope
+            .object_meta
+            .as_ref()
+            .and_then(|meta| meta.namespace.clone());
+        let name = match envelope
+            .object_meta
+            .as_ref()
+            .and_then(|meta| meta.name.clone())
+        {
+            Some(name) => name,
+            None => continue,
+        };
+
+        let cr_value: serde_json::Value = match serde_json::from_slice(&envelope.raw_json) {
+            Ok(value) => value,
+            Err(_) => {
+                // Body is unparseable — treat as opaque data and force-delete it
+                // so etcd is not left with permanently undecodable orphans.
+                operator
+                    .store
+                    .delete_custom(
+                        &spec.group,
+                        &names.plural,
+                        namespace.as_deref(),
+                        &name,
+                        None,
+                    )
+                    .await
+                    .map_err(|err| Box::new(err.into()))?;
+                continue;
+            }
+        };
+
+        if has_cr_finalizers(&cr_value) {
+            let stamped =
+                stamp_deletion_timestamp(envelope, &cr_value, item.revision).map_err(|err| {
+                    Box::new(StatusResponse::internal_error(
+                        format!("Failed to stamp deletionTimestamp on custom resource: {err}"),
+                        None,
+                    ))
+                })?;
+            operator
+                .store
+                .put_custom(
+                    &spec.group,
+                    &names.plural,
+                    namespace.as_deref(),
+                    &name,
+                    &stamped,
+                    Some(item.revision),
+                )
+                .await
+                .map_err(|err| Box::new(err.into()))?;
+        } else {
+            operator
+                .store
+                .delete_custom(
+                    &spec.group,
+                    &names.plural,
+                    namespace.as_deref(),
+                    &name,
+                    None,
+                )
+                .await
+                .map_err(|err| Box::new(err.into()))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn has_cr_finalizers(value: &serde_json::Value) -> bool {
+    value
+        .get("metadata")
+        .and_then(|metadata| metadata.get("finalizers"))
+        .and_then(|finalizers| finalizers.as_array())
+        .is_some_and(|finalizers| !finalizers.is_empty())
+}
+
+fn stamp_deletion_timestamp(
+    envelope: tugboat_resources::manifests::meta::v1::CustomResourceObject,
+    cr_value: &serde_json::Value,
+    _revision: i64,
+) -> Result<tugboat_resources::manifests::meta::v1::CustomResourceObject, serde_json::Error> {
+    let mut value = cr_value.clone();
+    let metadata = value
+        .as_object_mut()
+        .and_then(|obj| obj.get_mut("metadata"))
+        .and_then(|meta| meta.as_object_mut());
+    if let Some(metadata) = metadata
+        && !metadata.contains_key("deletionTimestamp")
+    {
+        let now = Time::now();
+        let timestamp = serde_json::to_value(now)?;
+        metadata.insert("deletionTimestamp".to_string(), timestamp);
+    }
+    let mut updated = envelope;
+    updated.raw_json = serde_json::to_vec(&value)?;
+    Ok(updated)
 }
 
 fn validate_custom_resource_definition_schema(
@@ -374,14 +494,34 @@ fn validate_custom_resource_definition_schema(
             Some(serde_json::json!({ "reason": err })),
         ))
     })?;
-    if crd.validate() {
-        Ok(())
-    } else {
-        Err(Box::new(StatusResponse::invalid(
-            "Invalid CustomResourceDefinition resource",
+    // Use the typed spec validator so 422 responses carry the specific reason
+    // (NameMismatch, ReservedGroup, InvalidPlural, ...) rather than an opaque
+    // boolean. The other validators in the apply_validators! chain (e.g.,
+    // NamespaceProhibitedValidator) are checked separately via .validate().
+    validate_crd_spec(crd).map_err(|err| {
+        Box::new(StatusResponse::invalid(
+            format!("Invalid CustomResourceDefinition: {err}"),
+            Some(serde_json::json!({
+                "reason": err.to_string(),
+                "name": crd
+                    .object_meta
+                    .as_ref()
+                    .and_then(|metadata| metadata.name.as_deref()),
+            })),
+        ))
+    })?;
+    if crd
+        .object_meta
+        .as_ref()
+        .and_then(|metadata| metadata.namespace.as_deref())
+        .is_some()
+    {
+        return Err(Box::new(StatusResponse::invalid(
+            "CustomResourceDefinition is cluster-scoped and must not set metadata.namespace",
             None,
-        )))
+        )));
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -427,5 +567,33 @@ mod tests {
         let crd = crd_with_schema(r#"{"type":"not-a-json-schema-type"}"#);
 
         assert!(validate_custom_resource_definition_schema(&crd).is_err());
+    }
+
+    #[test]
+    fn validate_custom_resource_definition_schema_surfaces_spec_failure_reason() {
+        // metadata.name does not match {plural}.{group}, so the spec validator
+        // should produce a NameMismatch error and the response should mention
+        // the expected name in either message or details.
+        let mut crd = crd_with_schema(r#"{"type":"object"}"#);
+        crd.object_meta.as_mut().unwrap().name = Some("wrong-name".to_string());
+
+        let err = validate_custom_resource_definition_schema(&crd).unwrap_err();
+        let serialized = serde_json::to_value(&*err).expect("status response serializes");
+        let message = serialized["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("widgets.example.com"),
+            "expected message to mention expected name, got: {message}"
+        );
+    }
+
+    #[test]
+    fn validate_custom_resource_definition_schema_rejects_namespaced_metadata() {
+        let mut crd = crd_with_schema(r#"{"type":"object"}"#);
+        crd.object_meta.as_mut().unwrap().namespace = Some("default".to_string());
+
+        let err = validate_custom_resource_definition_schema(&crd).unwrap_err();
+        let serialized = serde_json::to_value(&*err).expect("status response serializes");
+        let message = serialized["message"].as_str().unwrap_or_default();
+        assert!(message.contains("cluster-scoped"), "got: {message}");
     }
 }

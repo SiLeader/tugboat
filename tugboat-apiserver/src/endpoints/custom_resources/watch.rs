@@ -42,7 +42,6 @@ pub(super) async fn watch_custom(
     entry: CrdEntry,
     namespace: Option<String>,
     query: ListQuery,
-    _watch: crate::endpoints::WatchOption,
 ) -> Result<HttpResponse, Box<StatusResponse>> {
     let field_selector = query.to_field_selector()?;
     let label_selector = query.to_label_selector()?;

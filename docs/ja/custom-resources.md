@@ -135,7 +135,7 @@ let client = tugboat_client::TugboatClient::try_new(
 - scale subresource は未対応。
 - shortNames、categories、additional printer columns は未対応。
 - mutating defaulting は未対応。
-- CRD を削除すると API path は使えなくなりますが、既存の custom resource data は将来の garbage collector が実装されるまで etcd に孤児として残ります。
+- CRD を削除すると API path はすぐに利用不可になり、その後 custom resource data がカスケード削除されます。`metadata.finalizers` が空でない custom resource は強制削除せず、`metadata.deletionTimestamp` を打刻して残します。CRD 削除後は対応する API path が提供されないため、finalizer が残っているリソースは別経路でクリアする必要があります。
 - custom resource が存在する状態で CRD の `scope` を `Namespaced` ↔ `Cluster` に切り替えると、以前の key prefix に保存された data はそのままアクセス不能になります。先に既存の custom resource を削除するか、etcd を手動で掃除してください。
 - custom resource は API discovery には出ますが、生成済み `/openapi/v3` schema には動的反映されません。
 

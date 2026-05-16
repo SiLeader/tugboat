@@ -109,17 +109,27 @@ pub(super) fn preserve_identity_and_maybe_status(
     let current_meta = extract_metadata(current_value)?;
     let mut next_meta = extract_metadata(next_value)?;
     preserve_identity_metadata(&current_meta, &mut next_meta);
-    next_meta.generation =
-        if generation_tracked_fields(current_value) != generation_tracked_fields(next_value) {
-            next_generation(current_meta.generation)
-        } else {
-            current_meta.generation
-        };
+    next_meta.generation = compute_generation(current_value, next_value, &current_meta);
     set_metadata(next_value, &next_meta)?;
     if entry.version.status_subresource {
         preserve_status(next_value, current_value)?;
     }
     Ok(())
+}
+
+/// Decide the next generation: bump only when fields outside metadata,
+/// apiVersion, kind, or status changed; otherwise keep the current generation.
+/// Shared between the replace and patch paths so they apply the same rule.
+pub(super) fn compute_generation(
+    current_value: &serde_json::Value,
+    next_value: &serde_json::Value,
+    current_meta: &ObjectMeta,
+) -> Option<i64> {
+    if generation_tracked_fields(current_value) != generation_tracked_fields(next_value) {
+        next_generation(current_meta.generation)
+    } else {
+        current_meta.generation
+    }
 }
 
 pub(super) fn preserve_status(
