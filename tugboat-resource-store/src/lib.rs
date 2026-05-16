@@ -318,6 +318,14 @@ impl ResourceStore {
         namespace: Option<String>,
         limit: Option<usize>,
     ) -> Result<Vec<ContentData<T>>, Error> {
+        Ok(self.list_with_revision::<T>(namespace, limit).await?.0)
+    }
+
+    pub async fn list_with_revision<T: StaticSerializable>(
+        &self,
+        namespace: Option<String>,
+        limit: Option<usize>,
+    ) -> Result<(Vec<ContentData<T>>, i64), Error> {
         let key = Self::create_watch_key::<T>(namespace);
         info!("List resources: key = {key}");
         let mut client = self.etcd.clone();
@@ -327,6 +335,7 @@ impl ResourceStore {
         }
 
         let res = client.get(key, Some(options)).await?;
+        let header_revision = res.header().map(|h| h.revision()).unwrap_or(0);
         let mut data = Vec::new();
         for kv in res.kvs() {
             let value = T::deserialize(kv.value())?;
@@ -335,7 +344,7 @@ impl ResourceStore {
                 revision: kv.mod_revision(),
             });
         }
-        Ok(data)
+        Ok((data, header_revision))
     }
 
     pub async fn watch<T: StaticSerializable>(
@@ -346,6 +355,18 @@ impl ResourceStore {
         let key = Self::create_watch_key::<T>(namespace);
         info!("Watch resources: key = {key}");
         self.watch_mux.get(&key, resource_version).await
+    }
+
+    pub async fn watch_from_revision<T: StaticSerializable>(
+        &self,
+        start_revision: Option<i64>,
+        namespace: Option<String>,
+    ) -> Result<WatchReceiver, Error> {
+        let key = Self::create_watch_key::<T>(namespace);
+        info!("Watch resources from revision: key = {key}, start = {start_revision:?}");
+        self.watch_mux
+            .get_from_start_revision(&key, start_revision)
+            .await
     }
 
     pub async fn delete<T: StaticSerializable>(
@@ -449,13 +470,37 @@ impl ResourceStore {
         plural: &str,
         namespace: Option<&str>,
         name: &str,
+        expected_revision: Option<i64>,
     ) -> Result<bool, Error> {
         let key = Self::create_custom_key(group, plural, namespace, name);
         info!("Delete custom resource: key = {key}");
 
         let mut client = self.etcd.clone();
-        let response = client.delete(key, None).await?;
-        Ok(response.deleted() > 0)
+        let Some(expected_revision) = expected_revision else {
+            let response = client.delete(key, None).await?;
+            return Ok(response.deleted() > 0);
+        };
+
+        let txn = Txn::new()
+            .when(vec![Compare::mod_revision(
+                key.as_str(),
+                CompareOp::Equal,
+                expected_revision,
+            )])
+            .and_then(vec![TxnOp::delete(key.as_str(), None)]);
+        let response = client.txn(txn).await?;
+        if !response.succeeded() {
+            return Err(Error::OptimisticLockFailed(expected_revision));
+        }
+        Ok(response
+            .op_responses()
+            .into_iter()
+            .filter_map(|op| match op {
+                TxnOpResponse::Delete(res) => Some(res.deleted() > 0),
+                _ => None,
+            })
+            .next()
+            .unwrap_or(false))
     }
 
     pub async fn watch_custom(
@@ -576,7 +621,7 @@ mod tests {
         };
 
         let _ = store
-            .delete_custom(group, plural, Some(namespace.as_str()), name)
+            .delete_custom(group, plural, Some(namespace.as_str()), name, None)
             .await;
         let revision = store
             .put_custom(
@@ -607,7 +652,7 @@ mod tests {
 
         assert!(
             store
-                .delete_custom(group, plural, Some(namespace.as_str()), name)
+                .delete_custom(group, plural, Some(namespace.as_str()), name, None)
                 .await
                 .expect("delete custom resource")
         );

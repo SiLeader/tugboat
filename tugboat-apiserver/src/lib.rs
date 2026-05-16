@@ -79,6 +79,7 @@ impl ApiServer {
             })?;
         crd_registry::load_crds_into_registry(&self.operator.store, &self.operator.crd_registry)
             .await
+            .map(|_| ())
             .map_err(|e| {
                 std::io::Error::other(format!("Failed to load CRDs into registry: {e}"))
             })?;

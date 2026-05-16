@@ -89,10 +89,18 @@ Validation failures return `422 Invalid` with `details.causes` entries that incl
 Set `subresources.status: {}` on the CRD version to enable `/status` routes. When enabled:
 
 - normal create/update/patch preserves status independently from spec;
-- `PATCH /status` accepts only the `status` field;
+- `PATCH /status` merges into the existing `status` field; non-`status` fields in the
+  patch body are ignored;
 - status patches do not update spec fields.
 
 Without `subresources.status`, `/status` routes return `404`.
+
+If `subresources.status` is enabled, the apiserver populates `status` with `{}` on
+create when the body does not provide one. Schemas that mark `status.<field>` as
+`required` will then reject create with `422 Invalid` because the empty default
+does not satisfy the constraint. Either leave `status.*` optional in the schema
+or have controllers populate `status` exclusively through the `/status`
+subresource (so spec-only requests are never rejected).
 
 ## Scope
 
@@ -134,6 +142,10 @@ Prefer the existing `tugboat-client` reflector and runtime modules when building
 - no short names, categories, or additional printer columns;
 - no mutating defaulting;
 - deleting a CRD makes the API path unavailable, but existing custom resource data remains orphaned in etcd until a future garbage collector removes it;
+- changing a CRD's `scope` between `Namespaced` and `Cluster` after custom
+  resources exist leaves the original rows under their previous key prefix
+  unreachable. Delete the existing resources before flipping scope, or expect
+  to clean them up manually from etcd;
 - dynamic custom resources are visible through API discovery, not through generated `/openapi/v3` schemas.
 
 ## Troubleshooting

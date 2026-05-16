@@ -214,26 +214,40 @@ impl CrdEntry {
 pub async fn load_crds_into_registry(
     store: &ResourceStore,
     registry: &CrdRegistry,
-) -> Result<(), CrdRegistrySyncError> {
-    let crds = store.list::<CustomResourceDefinition>(None, None).await?;
+) -> Result<i64, CrdRegistrySyncError> {
+    let (crds, revision) = store
+        .list_with_revision::<CustomResourceDefinition>(None, None)
+        .await?;
     let entries = crds
         .iter()
         .filter_map(|crd| CrdRegistry::from_crd(&crd.data))
         .collect::<Vec<_>>();
     registry.replace_all(entries)?;
-    info!("Loaded {} CRDs into registry", registry.list_all().len());
-    Ok(())
+    info!(
+        "Loaded {} CRDs into registry at revision {revision}",
+        registry.list_all().len()
+    );
+    Ok(revision)
 }
 
 pub async fn run_crd_watcher(store: Arc<ResourceStore>, registry: Arc<CrdRegistry>) {
     loop {
-        if let Err(err) = load_crds_into_registry(&store, &registry).await {
-            error!("Failed to load CRDs into registry: {err}");
-            sleep(Duration::from_millis(500)).await;
-            continue;
-        }
+        let revision = match load_crds_into_registry(&store, &registry).await {
+            Ok(revision) => revision,
+            Err(err) => {
+                error!("Failed to load CRDs into registry: {err}");
+                sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+        };
 
-        let mut watch = match store.watch::<CustomResourceDefinition>(None, None).await {
+        // Start the watch immediately after the snapshot's revision so any events
+        // between the list and the watch subscription are replayed deterministically.
+        let start_revision = Some(revision.saturating_add(1));
+        let mut watch = match store
+            .watch_from_revision::<CustomResourceDefinition>(start_revision, None)
+            .await
+        {
             Ok(watch) => watch,
             Err(err) => {
                 error!("Failed to start CRD watcher: {err}");

@@ -13,6 +13,9 @@
 // limitations under the License.
 
 mod dispatch;
+mod envelope;
+mod merge;
+mod metadata;
 mod validation;
 mod watch;
 

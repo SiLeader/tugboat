@@ -12,6 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::envelope::{
+    custom_data_to_value as envelope_to_value, enforce_type_meta, envelope_from_value,
+};
+use super::merge::{patch_object, rfc7396_merge_patch};
+use super::metadata::{
+    apply_new_metadata, extract_metadata, has_finalizers, inject_resource_version,
+    normalize_status_for_write, preserve_identity_and_maybe_status, preserve_identity_metadata,
+    preserve_identity_metadata_from_value, preserve_status, resource_version_as_revision,
+    set_deletion_timestamp, set_metadata, set_status, validate_metadata_name, validate_patch_name,
+    value_with_revision,
+};
 use super::validation::validate_against_schema;
 use super::watch::watch_custom;
 use crate::crd_registry::{CrdEntry, CrdScope};
@@ -22,10 +33,10 @@ use crate::operator::ApiOperator;
 use actix_web::http::header;
 use actix_web::{HttpRequest, HttpResponse};
 use tugboat_resource_store::ContentData;
-use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::core::v1::Namespace;
-use tugboat_resources::manifests::meta::v1::{CustomResourceObject, ObjectMeta, Time, TypeMeta};
-use uuid::Uuid;
+use tugboat_resources::manifests::meta::v1::CustomResourceObject;
+
+pub(super) use super::envelope::custom_data_to_value;
 
 pub(super) async fn create(
     operator: &ApiOperator,
@@ -107,7 +118,7 @@ pub(super) async fn list(
         .list_custom(&entry.group, &entry.plural, namespace.as_deref())
         .await?
         .into_iter()
-        .filter_map(|data| custom_data_to_value(data).transpose())
+        .filter_map(|data| envelope_to_value(data).transpose())
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .filter(|value| matches_selectors(value, &field_selector, &label_selector))
@@ -127,7 +138,7 @@ pub(super) async fn read(
     let entry = lookup(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
     let current = get_existing(operator, &entry, namespace.as_deref(), &name).await?;
-    Ok(HttpResponse::Ok().json(custom_data_to_value(current)?.expect("resource has raw JSON")))
+    Ok(HttpResponse::Ok().json(envelope_to_value(current)?.expect("resource has raw JSON")))
 }
 
 pub(super) async fn replace(
@@ -142,19 +153,14 @@ pub(super) async fn replace(
     let entry = lookup(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
     let current = get_existing(operator, &entry, namespace.as_deref(), &name).await?;
-    let current_value = custom_data_to_value(current)?.expect("resource has raw JSON");
+    let current_value = envelope_to_value(current)?.expect("resource has raw JSON");
     validate_metadata_name(&replacement, &name)?;
     enforce_type_meta(&mut replacement, &entry)?;
 
     let current_meta = extract_metadata(&current_value)?;
     let mut replacement_meta = extract_metadata(&replacement)?;
     preserve_identity_metadata(&current_meta, &mut replacement_meta);
-    replacement_meta.generation =
-        if generation_tracked_fields(&current_value) != generation_tracked_fields(&replacement) {
-            next_generation(current_meta.generation)
-        } else {
-            current_meta.generation
-        };
+    replacement_meta.generation = compute_generation(&current_value, &replacement, &current_meta);
     if entry.version.status_subresource {
         preserve_status(&mut replacement, &current_value)?;
     }
@@ -192,7 +198,7 @@ pub(super) async fn patch(
     let entry = lookup(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
     let current = get_existing(operator, &entry, namespace.as_deref(), &name).await?;
-    let mut current_value = custom_data_to_value(current)?.expect("resource has raw JSON");
+    let mut current_value = envelope_to_value(current)?.expect("resource has raw JSON");
     let old_value = current_value.clone();
     rfc7396_merge_patch(&mut current_value, &serde_json::Value::Object(patch));
     enforce_type_meta(&mut current_value, &entry)?;
@@ -228,7 +234,7 @@ pub(super) async fn delete(
     let entry = lookup(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
     let current = get_existing(operator, &entry, namespace.as_deref(), &name).await?;
-    let mut current_value = custom_data_to_value(current)?.expect("resource has raw JSON");
+    let mut current_value = envelope_to_value(current)?.expect("resource has raw JSON");
 
     if has_finalizers(&current_value) {
         set_deletion_timestamp(&mut current_value)?;
@@ -251,7 +257,13 @@ pub(super) async fn delete(
 
     operator
         .store
-        .delete_custom(&entry.group, &entry.plural, namespace.as_deref(), &name)
+        .delete_custom(
+            &entry.group,
+            &entry.plural,
+            namespace.as_deref(),
+            &name,
+            resource_version_as_revision(&current_value),
+        )
         .await?;
     Ok(HttpResponse::Ok().json(current_value))
 }
@@ -268,7 +280,7 @@ pub(super) async fn replace_status(
     let entry = lookup_status(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
     let current = get_existing(operator, &entry, namespace.as_deref(), &name).await?;
-    let mut current_value = custom_data_to_value(current)?.expect("resource has raw JSON");
+    let mut current_value = envelope_to_value(current)?.expect("resource has raw JSON");
     let old_value = current_value.clone();
     let status = replacement
         .as_object()
@@ -307,18 +319,14 @@ pub(super) async fn patch_status(
     let entry = lookup_status(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
     let current = get_existing(operator, &entry, namespace.as_deref(), &name).await?;
-    let mut current_value = custom_data_to_value(current)?.expect("resource has raw JSON");
+    let mut current_value = envelope_to_value(current)?.expect("resource has raw JSON");
     let old_value = current_value.clone();
-    let status_patch = patch.get("status").cloned().ok_or_else(|| {
-        Box::new(StatusResponse::bad_request(
-            "status field is required",
-            None,
-        ))
-    })?;
-    rfc7396_merge_patch(
-        &mut current_value,
-        &serde_json::json!({ "status": status_patch }),
-    );
+    if let Some(status_patch) = patch.get("status").cloned() {
+        rfc7396_merge_patch(
+            &mut current_value,
+            &serde_json::json!({ "status": status_patch }),
+        );
+    }
     preserve_identity_metadata_from_value(&mut current_value, &old_value)?;
     validate_against_schema(&entry, &current_value)?;
     let meta = extract_metadata(&current_value)?;
@@ -336,6 +344,19 @@ pub(super) async fn patch_status(
         .await?;
     inject_resource_version(&mut current_value, revision)?;
     Ok(HttpResponse::Ok().json(current_value))
+}
+
+fn compute_generation(
+    current_value: &serde_json::Value,
+    next_value: &serde_json::Value,
+    current_meta: &tugboat_resources::manifests::meta::v1::ObjectMeta,
+) -> Option<i64> {
+    use super::metadata::{generation_tracked_fields, next_generation};
+    if generation_tracked_fields(current_value) != generation_tracked_fields(next_value) {
+        next_generation(current_meta.generation)
+    } else {
+        current_meta.generation
+    }
 }
 
 fn lookup(
@@ -440,289 +461,6 @@ async fn get_existing(
         })
 }
 
-pub(super) fn custom_data_to_value(
-    data: ContentData<CustomResourceObject>,
-) -> Result<Option<serde_json::Value>, Box<StatusResponse>> {
-    let mut envelope = data.data;
-    if let Some(meta) = envelope.object_meta_mut().as_mut() {
-        meta.resource_version = Some(data.revision.to_string());
-    }
-    let mut value = value_from_envelope(&envelope)?;
-    inject_resource_version(&mut value, data.revision)?;
-    Ok(Some(value))
-}
-
-fn value_from_envelope(
-    envelope: &CustomResourceObject,
-) -> Result<serde_json::Value, Box<StatusResponse>> {
-    let value = serde_json::from_slice(&envelope.raw_json)?;
-    Ok(value)
-}
-
-fn envelope_from_value(
-    entry: &CrdEntry,
-    value: &serde_json::Value,
-    object_meta: ObjectMeta,
-) -> Result<CustomResourceObject, Box<StatusResponse>> {
-    Ok(CustomResourceObject {
-        type_meta: Some(TypeMeta {
-            api_version: Some(format!("{}/{}", entry.group, entry.version.name)),
-            kind: Some(entry.kind.clone()),
-        }),
-        object_meta: Some(object_meta),
-        raw_json: serde_json::to_vec(value)?,
-    })
-}
-
-fn enforce_type_meta(
-    value: &mut serde_json::Value,
-    entry: &CrdEntry,
-) -> Result<(), Box<StatusResponse>> {
-    let expected_api_version = format!("{}/{}", entry.group, entry.version.name);
-    let obj = value.as_object_mut().ok_or_else(|| {
-        Box::new(StatusResponse::bad_request(
-            "custom resource body must be a JSON object",
-            None,
-        ))
-    })?;
-    enforce_string_field(obj, "apiVersion", &expected_api_version)?;
-    enforce_string_field(obj, "kind", &entry.kind)?;
-    Ok(())
-}
-
-fn enforce_string_field(
-    obj: &mut serde_json::Map<String, serde_json::Value>,
-    field: &str,
-    expected: &str,
-) -> Result<(), Box<StatusResponse>> {
-    match obj.get(field).and_then(|v| v.as_str()) {
-        Some(actual) if actual != expected => Err(Box::new(StatusResponse::bad_request(
-            format!("{field} must be \"{expected}\", got \"{actual}\""),
-            Some(serde_json::json!({ "field": field, "expected": expected, "actual": actual })),
-        ))),
-        Some(_) => Ok(()),
-        None => {
-            obj.insert(
-                field.to_string(),
-                serde_json::Value::String(expected.to_string()),
-            );
-            Ok(())
-        }
-    }
-}
-
-fn extract_metadata(value: &serde_json::Value) -> Result<ObjectMeta, Box<StatusResponse>> {
-    let metadata = value
-        .get("metadata")
-        .cloned()
-        .ok_or_else(|| Box::new(StatusResponse::bad_request("metadata is required", None)))?;
-    serde_json::from_value(metadata).map_err(|err| {
-        Box::new(StatusResponse::bad_request(
-            "metadata is invalid",
-            Some(serde_json::json!({"error": err.to_string()})),
-        ))
-    })
-}
-
-fn set_metadata(
-    value: &mut serde_json::Value,
-    meta: &ObjectMeta,
-) -> Result<(), Box<StatusResponse>> {
-    let obj = value.as_object_mut().ok_or_else(|| {
-        Box::new(StatusResponse::bad_request(
-            "custom resource body must be a JSON object",
-            None,
-        ))
-    })?;
-    obj.insert("metadata".to_string(), serde_json::to_value(meta)?);
-    Ok(())
-}
-
-fn apply_new_metadata(mut meta: ObjectMeta) -> ObjectMeta {
-    meta.uid = Some(Uuid::new_v4().to_string());
-    meta.creation_timestamp = Some(Time::now());
-    meta.generation = Some(1);
-    meta.resource_version = None;
-    meta
-}
-
-fn preserve_identity_metadata(current: &ObjectMeta, next: &mut ObjectMeta) {
-    next.name = current.name.clone();
-    next.namespace = current.namespace.clone();
-    next.uid = current.uid.clone();
-    next.creation_timestamp = current.creation_timestamp;
-    next.deletion_timestamp = current.deletion_timestamp;
-    next.resource_version = current.resource_version.clone();
-}
-
-fn preserve_identity_metadata_from_value(
-    next_value: &mut serde_json::Value,
-    current_value: &serde_json::Value,
-) -> Result<(), Box<StatusResponse>> {
-    let current_meta = extract_metadata(current_value)?;
-    let mut next_meta = extract_metadata(next_value)?;
-    preserve_identity_metadata(&current_meta, &mut next_meta);
-    next_meta.generation = current_meta.generation;
-    set_metadata(next_value, &next_meta)
-}
-
-fn preserve_identity_and_maybe_status(
-    entry: &CrdEntry,
-    next_value: &mut serde_json::Value,
-    current_value: &serde_json::Value,
-) -> Result<(), Box<StatusResponse>> {
-    let current_meta = extract_metadata(current_value)?;
-    let mut next_meta = extract_metadata(next_value)?;
-    preserve_identity_metadata(&current_meta, &mut next_meta);
-    next_meta.generation =
-        if generation_tracked_fields(current_value) != generation_tracked_fields(next_value) {
-            next_generation(current_meta.generation)
-        } else {
-            current_meta.generation
-        };
-    set_metadata(next_value, &next_meta)?;
-    if entry.version.status_subresource {
-        preserve_status(next_value, current_value)?;
-    }
-    Ok(())
-}
-
-fn preserve_status(
-    next_value: &mut serde_json::Value,
-    current_value: &serde_json::Value,
-) -> Result<(), Box<StatusResponse>> {
-    let current_status = current_value.get("status").cloned();
-    let obj = next_value.as_object_mut().ok_or_else(|| {
-        Box::new(StatusResponse::bad_request(
-            "custom resource body must be a JSON object",
-            None,
-        ))
-    })?;
-    if let Some(status) = current_status {
-        obj.insert("status".to_string(), status);
-    } else {
-        obj.remove("status");
-    }
-    Ok(())
-}
-
-fn set_status(
-    value: &mut serde_json::Value,
-    status: serde_json::Value,
-) -> Result<(), Box<StatusResponse>> {
-    let obj = value.as_object_mut().ok_or_else(|| {
-        Box::new(StatusResponse::bad_request(
-            "custom resource body must be a JSON object",
-            None,
-        ))
-    })?;
-    obj.insert("status".to_string(), status);
-    Ok(())
-}
-
-fn normalize_status_for_write(
-    entry: &CrdEntry,
-    value: &mut serde_json::Value,
-) -> Result<(), Box<StatusResponse>> {
-    if !entry.version.status_subresource {
-        return Ok(());
-    }
-    let obj = value.as_object_mut().ok_or_else(|| {
-        Box::new(StatusResponse::bad_request(
-            "custom resource body must be a JSON object",
-            None,
-        ))
-    })?;
-    obj.entry("status".to_string())
-        .or_insert_with(|| serde_json::json!({}));
-    Ok(())
-}
-
-fn validate_metadata_name(
-    value: &serde_json::Value,
-    expected_name: &str,
-) -> Result<(), Box<StatusResponse>> {
-    let actual = value
-        .get("metadata")
-        .and_then(|metadata| metadata.get("name"))
-        .and_then(|name| name.as_str());
-    if let Some(actual) = actual
-        && actual != expected_name
-    {
-        return Err(Box::new(StatusResponse::bad_request(
-            format!(
-                "metadata.name must match resource name in URL: expected \"{expected_name}\", got \"{actual}\""
-            ),
-            Some(serde_json::json!({
-                "name": expected_name,
-                "providedName": actual,
-            })),
-        )));
-    }
-    Ok(())
-}
-
-fn validate_patch_name(
-    patch: &serde_json::Map<String, serde_json::Value>,
-    expected_name: &str,
-) -> Result<(), Box<StatusResponse>> {
-    let actual = patch
-        .get("metadata")
-        .and_then(|metadata| metadata.get("name"))
-        .and_then(|name| name.as_str());
-    if let Some(actual) = actual
-        && actual != expected_name
-    {
-        return Err(Box::new(StatusResponse::bad_request(
-            format!(
-                "metadata.name must match resource name in URL: expected \"{expected_name}\", got \"{actual}\""
-            ),
-            Some(serde_json::json!({
-                "name": expected_name,
-                "providedName": actual,
-            })),
-        )));
-    }
-    Ok(())
-}
-
-fn value_with_revision(
-    mut value: serde_json::Value,
-    revision: i64,
-) -> Result<serde_json::Value, Box<StatusResponse>> {
-    inject_resource_version(&mut value, revision)?;
-    Ok(value)
-}
-
-fn inject_resource_version(
-    value: &mut serde_json::Value,
-    revision: i64,
-) -> Result<(), Box<StatusResponse>> {
-    let mut meta = extract_metadata(value)?;
-    meta.resource_version = Some(revision.to_string());
-    set_metadata(value, &meta)
-}
-
-fn resource_version_as_revision(value: &serde_json::Value) -> Option<i64> {
-    value
-        .get("metadata")
-        .and_then(|metadata| metadata.get("resourceVersion"))
-        .and_then(|rv| rv.as_str())
-        .and_then(|rv| rv.parse::<i64>().ok())
-}
-
-fn patch_object(
-    patch: serde_json::Value,
-) -> Result<serde_json::Map<String, serde_json::Value>, Box<StatusResponse>> {
-    match patch {
-        serde_json::Value::Object(map) => Ok(map),
-        _ => Err(Box::new(StatusResponse::bad_request(
-            "JSON merge patch body must be an object",
-            None,
-        ))),
-    }
-}
-
 pub(super) fn ensure_merge_patch_content_type(
     req: &HttpRequest,
 ) -> Result<(), Box<StatusResponse>> {
@@ -787,43 +525,6 @@ pub(super) fn matches_selectors(
     true
 }
 
-fn generation_tracked_fields(
-    value: &serde_json::Value,
-) -> serde_json::Map<String, serde_json::Value> {
-    value
-        .as_object()
-        .map(|obj| {
-            obj.iter()
-                .filter(|(key, _)| {
-                    !matches!(key.as_str(), "metadata" | "apiVersion" | "kind" | "status")
-                })
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn next_generation(current: Option<i64>) -> Option<i64> {
-    Some(current.unwrap_or(0).max(0).saturating_add(1))
-}
-
-fn has_finalizers(value: &serde_json::Value) -> bool {
-    value
-        .get("metadata")
-        .and_then(|metadata| metadata.get("finalizers"))
-        .and_then(|finalizers| finalizers.as_array())
-        .is_some_and(|finalizers| !finalizers.is_empty())
-}
-
-fn set_deletion_timestamp(value: &mut serde_json::Value) -> Result<(), Box<StatusResponse>> {
-    let mut meta = extract_metadata(value)?;
-    if meta.deletion_timestamp.is_none() {
-        meta.deletion_timestamp = Some(Time::now());
-        set_metadata(value, &meta)?;
-    }
-    Ok(())
-}
-
 fn resource_identity(namespace: Option<&str>, name: &str) -> serde_json::Value {
     if let Some(namespace) = namespace {
         serde_json::json!({ "namespace": namespace, "name": name })
@@ -832,45 +533,12 @@ fn resource_identity(namespace: Option<&str>, name: &str) -> serde_json::Value {
     }
 }
 
-fn rfc7396_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
-    match patch {
-        serde_json::Value::Object(patch_map) => {
-            let target_map = match target {
-                serde_json::Value::Object(map) => map,
-                _ => {
-                    *target = serde_json::Value::Object(serde_json::Map::new());
-                    match target {
-                        serde_json::Value::Object(map) => map,
-                        _ => unreachable!("target was just set to object"),
-                    }
-                }
-            };
-            for (key, value) in patch_map {
-                if value.is_null() {
-                    target_map.remove(key);
-                } else {
-                    rfc7396_merge_patch(
-                        target_map.entry(key).or_insert(serde_json::Value::Null),
-                        value,
-                    );
-                }
-            }
-        }
-        _ => {
-            *target = patch.clone();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        ensure_list_scope, ensure_write_scope, generation_tracked_fields, next_generation,
-    };
+    use super::{ensure_list_scope, ensure_write_scope};
     use crate::crd_registry::{CrdEntry, CrdScope, CrdVersionInfo};
     use actix_web::ResponseError;
     use actix_web::http::StatusCode;
-    use serde_json::json;
 
     #[test]
     fn write_scope_rejects_namespaced_resource_without_namespace() {
@@ -891,23 +559,6 @@ mod tests {
     #[test]
     fn list_scope_allows_cluster_collection_without_namespace() {
         assert!(ensure_list_scope(&entry(CrdScope::Cluster), None).is_ok());
-    }
-
-    #[test]
-    fn generation_ignores_metadata_type_meta_and_status() {
-        let tracked = generation_tracked_fields(&json!({
-            "apiVersion": "example.com/v1",
-            "kind": "Widget",
-            "metadata": {"name": "demo"},
-            "spec": {"size": 1},
-            "status": {"phase": "Ready"}
-        }));
-
-        assert_eq!(
-            tracked,
-            serde_json::Map::from_iter([("spec".to_string(), json!({"size": 1}))])
-        );
-        assert_eq!(next_generation(Some(1)), Some(2));
     }
 
     fn entry(scope: CrdScope) -> CrdEntry {

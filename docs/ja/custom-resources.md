@@ -89,10 +89,12 @@ Kubernetes 固有の CRD 拡張、defaulting、conversion webhook、strategic me
 CRD version に `subresources.status: {}` を設定すると `/status` route が有効になります。
 
 - 通常の create/update/patch は status を spec から独立して保持します。
-- `PATCH /status` は `status` field だけを受け付けます。
+- `PATCH /status` は body 内の `status` field のみマージします。`status` 以外の field は無視されます。
 - status patch では spec は変更されません。
 
 `subresources.status` が無い場合、`/status` route は `404` を返します。
+
+`subresources.status` が有効な場合、create 時に body に `status` が無ければ apiserver が `{}` を補います。そのため schema で `status.<field>` を `required` にすると、空の `status` が制約を満たさず create が `422 Invalid` で拒否されます。schema 側で `status.*` を optional にするか、controller が `/status` subresource 経由でのみ status を埋めるよう設計してください (spec のみのリクエストが拒否されません)。
 
 ## scope
 
@@ -134,6 +136,7 @@ let client = tugboat_client::TugboatClient::try_new(
 - shortNames、categories、additional printer columns は未対応。
 - mutating defaulting は未対応。
 - CRD を削除すると API path は使えなくなりますが、既存の custom resource data は将来の garbage collector が実装されるまで etcd に孤児として残ります。
+- custom resource が存在する状態で CRD の `scope` を `Namespaced` ↔ `Cluster` に切り替えると、以前の key prefix に保存された data はそのままアクセス不能になります。先に既存の custom resource を削除するか、etcd を手動で掃除してください。
 - custom resource は API discovery には出ますが、生成済み `/openapi/v3` schema には動的反映されません。
 
 ## トラブルシューティング
