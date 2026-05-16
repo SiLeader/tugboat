@@ -648,6 +648,36 @@ spec:
     - [x] Runtime snapshot create/delete/restore/list support for QEMU and Cloud Hypervisor
     - [x] PVC restore and clone via `spec.dataSource`
 - [x] CRD
+- [ ] Production readiness
+    - [ ] Observability
+        - [ ] Add `/readyz` / `/livez` endpoints for control-plane components and node agents
+        - [ ] Expose Prometheus-style metrics for apiserver, scheduler, controller-manager, agent, CNI, CSI, and runtimes
+        - [ ] Provide default dashboards and alerting examples for scheduling, reconciliation, storage, networking, runtime, and audit failures
+    - [ ] Control-plane HA and failure handling
+        - [ ] Add Lease-based leader election or another single-writer mechanism for controller-manager controllers
+        - [ ] Define resync, retry, backoff, and stuck-reconcile recovery behavior for every controller and agent operation
+        - [ ] Document load-balancer and multi-apiserver deployment patterns with readiness-aware routing
+    - [ ] Security hardening
+        - [ ] Support certificate and ServiceAccount signing-key rotation without cluster downtime
+        - [ ] Add encryption-at-rest support for Secrets and other sensitive resources stored in etcd
+        - [ ] Provide production config profiles that disable insecure HTTP, insecure etcd, anonymous auth, and development-only defaults
+        - [ ] Finish audit log size-based rotation and age-based retention; surface dropped audit events as metrics
+    - [ ] Backup and disaster recovery
+        - [ ] Document and test etcd snapshot/restore procedures
+        - [ ] Add scheduled backup/retention workflows for ShipSnapshot and VolumeSnapshot resources
+        - [ ] Validate restore drills for control-plane state, VM runtime state, and CSI-backed persistent volumes
+    - [ ] Upgrade and release operations
+        - [ ] Define rolling-upgrade procedures and compatibility guarantees across apiserver, controllers, scheduler, agents, and runtimes
+        - [ ] Add API version migration/conversion strategy for future breaking resource changes
+        - [ ] Publish signed release artifacts, SBOMs, and reproducible install inputs
+    - [ ] Production networking and storage validation
+        - [ ] Manage or fully document multi-node CNI lifecycle instead of relying on externally managed Flannel state
+        - [ ] Maintain a tested CSI driver compatibility matrix covering topology, expansion, snapshots, clones, health, and recovery
+        - [ ] Add or document in-place attach/detach behavior for volumes and filesystem shares, including virtiofs migration from 9p
+    - [ ] Installer and operational tooling
+        - [ ] Add idempotent upgrade, rollback, and config-drift checks to the systemd installer
+        - [ ] Add host preflight checks for KVM, QEMU/Cloud Hypervisor, CNI binaries, CSI sockets, kernel modules, disk space, and time sync
+        - [ ] Extend isolated installer scenarios into a release-blocking multi-node smoke suite
 
 ## Installation
 

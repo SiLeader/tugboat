@@ -641,6 +641,36 @@ spec:
     - [x] QEMU と Cloud Hypervisor の runtime snapshot create/delete/restore/list
     - [x] `spec.dataSource` による PVC restore / clone
 - [x] CRD
+- [ ] Production readiness
+    - [ ] 可観測性
+        - [ ] control-plane component と node agent に `/readyz` / `/livez` endpoint を追加
+        - [ ] apiserver、scheduler、controller-manager、agent、CNI、CSI、runtime の Prometheus 形式 metrics を公開
+        - [ ] scheduling、reconcile、storage、networking、runtime、audit failure 向けの dashboard / alert 例を提供
+    - [ ] control-plane HA と障害処理
+        - [ ] controller-manager の各 controller に Lease ベースの leader election または同等の single-writer 機構を追加
+        - [ ] 全 controller / agent operation の resync、retry、backoff、stuck reconcile 復旧方針を定義
+        - [ ] readiness を考慮した load balancer と multi-apiserver 配置パターンを文書化
+    - [ ] セキュリティ hardening
+        - [ ] certificate と ServiceAccount 署名鍵を cluster downtime なしで rotation できるようにする
+        - [ ] etcd に保存する Secret などの機微リソースの encryption-at-rest を追加
+        - [ ] insecure HTTP、insecure etcd、anonymous auth、開発用 default を無効化した production config profile を提供
+        - [ ] audit log の size-based rotation と age-based retention を実装し、drop された audit event を metrics 化
+    - [ ] backup と disaster recovery
+        - [ ] etcd snapshot / restore 手順を文書化し、自動テストする
+        - [ ] ShipSnapshot / VolumeSnapshot の定期 backup / retention workflow を追加
+        - [ ] control-plane state、VM runtime state、CSI-backed persistent volume の restore drill を検証
+    - [ ] upgrade と release operations
+        - [ ] apiserver、controller、scheduler、agent、runtime 間の rolling upgrade 手順と互換性保証を定義
+        - [ ] 将来の破壊的 resource 変更に備えた API version migration / conversion 方針を追加
+        - [ ] 署名済み release artifact、SBOM、再現可能な install input を公開
+    - [ ] production networking / storage 検証
+        - [ ] 外部管理の Flannel state に依存しない multi-node CNI lifecycle の管理または完全な運用手順を提供
+        - [ ] topology、expansion、snapshot、clone、health、recovery を含む CSI driver compatibility matrix を維持
+        - [ ] volume と filesystem share の in-place attach/detach 挙動を追加または文書化し、9p から virtiofs への移行を進める
+    - [ ] installer と運用ツール
+        - [ ] systemd installer に idempotent upgrade、rollback、config drift check を追加
+        - [ ] KVM、QEMU/Cloud Hypervisor、CNI binary、CSI socket、kernel module、disk space、time sync の host preflight check を追加
+        - [ ] 分離 installer scenario を release-blocking な multi-node smoke suite に拡張
 
 ## インストール
 
