@@ -503,6 +503,17 @@ impl ResourceStore {
             .unwrap_or(false))
     }
 
+    pub async fn delete_custom_collection(&self, group: &str, plural: &str) -> Result<i64, Error> {
+        let key = Self::create_custom_watch_key(group, plural, None);
+        info!("Delete custom resource collection: key = {key}");
+
+        let mut client = self.etcd.clone();
+        let response = client
+            .delete(key, Some(DeleteOptions::default().with_prefix()))
+            .await?;
+        Ok(response.deleted())
+    }
+
     pub async fn watch_custom(
         &self,
         group: &str,

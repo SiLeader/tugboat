@@ -19,17 +19,20 @@ use crate::endpoints::{ClusterNamePathParams, ListQuery, resource_handlers};
 use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
+use tugboat_resources::ObjectMetaResource;
 use tugboat_resources::manifests::apiextensions::v1::CustomResourceDefinition;
+use tugboat_resources::manifests::meta::v1::Time;
 use tugboat_resources::validators::Validatable;
 
-async fn ensure_scope_unchanged(
+async fn ensure_immutable_spec(
     operator: &ApiOperator,
     name: &str,
     new_scope: Option<&str>,
+    new_version_name: Option<&str>,
 ) -> Result<(), Box<StatusResponse>> {
-    let Some(new_scope) = new_scope else {
+    if new_scope.is_none() && new_version_name.is_none() {
         return Ok(());
-    };
+    }
     let current = operator
         .store
         .get::<CustomResourceDefinition>(None, name)
@@ -38,22 +41,50 @@ async fn ensure_scope_unchanged(
     let Some(current) = current else {
         return Ok(());
     };
-    let Some(current_scope) = current.data.spec.as_ref().map(|spec| spec.scope.as_str()) else {
-        return Ok(());
-    };
-    if current_scope == new_scope {
-        return Ok(());
+
+    if let Some(new_scope) = new_scope {
+        let Some(current_scope) = current.data.spec.as_ref().map(|spec| spec.scope.as_str()) else {
+            return Ok(());
+        };
+        if current_scope != new_scope {
+            return Err(Box::new(StatusResponse::invalid(
+                format!(
+                    "CustomResourceDefinition spec.scope cannot be changed once set (current: \"{current_scope}\", requested: \"{new_scope}\")"
+                ),
+                Some(serde_json::json!({
+                    "name": name,
+                    "currentScope": current_scope,
+                    "requestedScope": new_scope,
+                })),
+            )));
+        }
     }
-    Err(Box::new(StatusResponse::invalid(
-        format!(
-            "CustomResourceDefinition spec.scope cannot be changed once set (current: \"{current_scope}\", requested: \"{new_scope}\")"
-        ),
-        Some(serde_json::json!({
-            "name": name,
-            "currentScope": current_scope,
-            "requestedScope": new_scope,
-        })),
-    )))
+
+    if let Some(new_version_name) = new_version_name {
+        let Some(current_version_name) = current
+            .data
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.versions.first())
+            .map(|version| version.name.as_str())
+        else {
+            return Ok(());
+        };
+        if current_version_name != new_version_name {
+            return Err(Box::new(StatusResponse::invalid(
+                format!(
+                    "CustomResourceDefinition spec.versions[0].name cannot be changed once set (current: \"{current_version_name}\", requested: \"{new_version_name}\")"
+                ),
+                Some(serde_json::json!({
+                    "name": name,
+                    "currentVersion": current_version_name,
+                    "requestedVersion": new_version_name,
+                })),
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 #[utoipa::path(
@@ -88,12 +119,50 @@ pub(super) async fn handle_custom_resource_definition_delete(
     path: Path<ClusterNamePathParams>,
     operator: Data<ApiOperator>,
 ) -> Result<ReadResponse<CustomResourceDefinition>, Box<StatusResponse>> {
-    resource_handlers::delete_resource::<CustomResourceDefinition>(
-        &operator,
-        None,
-        path.into_inner().name,
-    )
-    .await
+    let name = path.into_inner().name;
+    let current = operator
+        .store
+        .get::<CustomResourceDefinition>(None, &name)
+        .await
+        .map_err(|err| Box::new(err.into()))?;
+    let Some(current) = current else {
+        return Err(Box::new(StatusResponse::not_found(
+            "CustomResourceDefinition not found",
+            Some(serde_json::json!({ "name": name })),
+        )));
+    };
+    let current = current.apply_revision();
+
+    if current.has_finalizers() {
+        let mut pending_delete = current.clone();
+        pending_delete.mark_for_deletion(Time::now());
+        let pending_delete = if current != pending_delete {
+            operator
+                .store
+                .put(pending_delete)
+                .await
+                .map_err(|err| Box::new(err.into()))?
+                .apply_revision()
+        } else {
+            pending_delete
+        };
+
+        return Ok(ReadResponse::new(pending_delete));
+    }
+
+    delete_custom_resources_for_crd(&operator, &current).await?;
+    let deleted = operator
+        .store
+        .delete::<CustomResourceDefinition>(None, &name)
+        .await
+        .map_err(|err| Box::new(err.into()))?;
+    match deleted {
+        Some(data) => Ok(ReadResponse::new(data.apply_revision())),
+        None => Err(Box::new(StatusResponse::not_found(
+            "CustomResourceDefinition not found",
+            Some(serde_json::json!({ "name": name })),
+        ))),
+    }
 }
 
 #[utoipa::path(
@@ -162,7 +231,12 @@ pub(super) async fn handle_custom_resource_definition_replace(
     let name = path.into_inner().name;
     validate_custom_resource_definition_schema(&replacement)?;
     let new_scope = replacement.spec.as_ref().map(|spec| spec.scope.as_str());
-    ensure_scope_unchanged(&operator, &name, new_scope).await?;
+    let new_version_name = replacement
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.versions.first())
+        .map(|version| version.name.as_str());
+    ensure_immutable_spec(&operator, &name, new_scope, new_version_name).await?;
     resource_handlers::replace_resource::<CustomResourceDefinition>(
         &operator,
         None,
@@ -199,7 +273,14 @@ pub(super) async fn handle_custom_resource_definition_patch(
         .get("spec")
         .and_then(|spec| spec.get("scope"))
         .and_then(|scope| scope.as_str());
-    ensure_scope_unchanged(&operator, &name, new_scope).await?;
+    let new_version_name = patch_inner
+        .get("spec")
+        .and_then(|spec| spec.get("versions"))
+        .and_then(|versions| versions.as_array())
+        .and_then(|versions| versions.first())
+        .and_then(|version| version.get("name"))
+        .and_then(|name| name.as_str());
+    ensure_immutable_spec(&operator, &name, new_scope, new_version_name).await?;
     resource_handlers::patch_resource_with_validation::<CustomResourceDefinition, _>(
         &operator,
         None,
@@ -263,6 +344,25 @@ pub(super) async fn handle_custom_resource_definition_status_replace(
         replacement.into_inner(),
     )
     .await
+}
+
+async fn delete_custom_resources_for_crd(
+    operator: &ApiOperator,
+    crd: &CustomResourceDefinition,
+) -> Result<(), Box<StatusResponse>> {
+    let Some(spec) = crd.spec.as_ref() else {
+        return Ok(());
+    };
+    let Some(names) = spec.names.as_ref() else {
+        return Ok(());
+    };
+
+    operator
+        .store
+        .delete_custom_collection(&spec.group, &names.plural)
+        .await
+        .map(|_| ())
+        .map_err(|err| Box::new(err.into()))
 }
 
 fn validate_custom_resource_definition_schema(
