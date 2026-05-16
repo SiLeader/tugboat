@@ -22,6 +22,8 @@ use oci_distribution::errors::OciDistributionError;
 use oci_distribution::{Client, ParseError};
 use thiserror::Error;
 
+pub(crate) const MAX_DISK_IMAGE_UNCOMPRESSED_BYTES: u64 = 128 * 1024 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct VmImageRegistry {
     directory: std::path::PathBuf,
@@ -72,4 +74,6 @@ pub enum Error {
     FileLocationEncode,
     #[error("Disk image '{0}' is missing")]
     DiskImageMissing(String),
+    #[error("Disk image layer exceeds maximum uncompressed size of {limit} bytes")]
+    ImageLayerTooLarge { limit: u64 },
 }

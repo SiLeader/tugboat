@@ -25,6 +25,7 @@ ETCD_INITIAL_CLUSTER=""
 ETCD_INITIAL_CLUSTER_STATE="new"
 ETCD_ENDPOINTS=()
 SERVICE_ACCOUNT_TOKEN_ROOT="/var/run/secrets/tugboat.cloud/serviceaccount"
+FINAL_APISERVER_LISTEN=""
 
 ETCD_VERSION="v3.6.10"
 ETCD_TARBALL="etcd-${ETCD_VERSION}-linux-amd64.tar.gz"
@@ -116,6 +117,13 @@ apiserver_client_url() {
     fi
 
     printf '%s://%s:%s\n' "${scheme}" "${host}" "${port}"
+}
+
+bootstrap_listen_addr() {
+    local listen_addr="$1"
+    local port="${listen_addr##*:}"
+
+    printf '127.0.0.1:%s\n' "${port}"
 }
 
 is_ipv4_address() {
@@ -711,6 +719,7 @@ main() {
     if [[ "${SECURE}" -eq 1 && "${LISTEN_SET}" -ne 1 ]]; then
         APISERVER_LISTEN="0.0.0.0:8443"
     fi
+    FINAL_APISERVER_LISTEN="${APISERVER_LISTEN}"
     ETCD_PKI_DIR="${PKI_DIR}/etcd"
     configure_etcd_defaults
     APISERVER_SCHEME="http"
@@ -736,6 +745,9 @@ main() {
     usermod -aG tugboat tugboat-controller-manager
     configure_tls
     configure_etcd_pki
+    if [[ "${SECURE}" -eq 1 ]]; then
+        APISERVER_LISTEN="$(bootstrap_listen_addr "${FINAL_APISERVER_LISTEN}")"
+    fi
     APISERVER_URL="$(apiserver_client_url "${APISERVER_LISTEN}" "${APISERVER_SCHEME}")"
     export APISERVER_LISTEN APISERVER_URL
     install -d -m 0700 -o tugboat-etcd -- "${DATA_DIR}"
@@ -757,6 +769,11 @@ main() {
 
     wait_for_apiserver
     bootstrap_secure_rbac
+    if [[ "${SECURE}" -eq 1 ]]; then
+        APISERVER_LISTEN="${FINAL_APISERVER_LISTEN}"
+        APISERVER_URL="$(apiserver_client_url "${APISERVER_LISTEN}" "${APISERVER_SCHEME}")"
+        export APISERVER_LISTEN APISERVER_URL
+    fi
     set_final_auth_config
     render_configs
     if [[ "${SECURE}" -eq 1 ]]; then

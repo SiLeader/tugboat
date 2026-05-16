@@ -138,18 +138,22 @@ impl AuditPolicy {
     }
 }
 
-/// Hard fail-safe: Secret bodies must never reach the audit log even if an
-/// operator's policy says `Request`/`RequestResponse`. Clamps the level to
-/// `Metadata` (or `None`, whichever is lower) for the `secrets` resource and
-/// any of its subresources.
+/// Hard fail-safe: credential-bearing bodies must never reach the audit log
+/// even if an operator's policy says `Request`/`RequestResponse`. Clamps the
+/// level to `Metadata` (or `None`, whichever is lower) for Secrets and service
+/// account token issuance.
 fn clamp_sensitive_level(resource: &str, level: AuditLevel) -> AuditLevel {
-    if strip_subresource(resource) != "secrets" {
+    if !is_sensitive_audit_resource(resource) {
         return level;
     }
     match level {
         AuditLevel::Request | AuditLevel::RequestResponse => AuditLevel::Metadata,
         other => other,
     }
+}
+
+fn is_sensitive_audit_resource(resource: &str) -> bool {
+    strip_subresource(resource) == "secrets" || resource == "serviceaccounts/token"
 }
 
 /// Inputs the policy matcher inspects.
@@ -1156,6 +1160,36 @@ mod tests {
         assert_eq!(
             policy.select_level(&input("create", &u, "core", "ships", Some("default"))),
             AuditLevel::RequestResponse
+        );
+    }
+
+    #[test]
+    fn service_account_token_bodies_are_clamped_to_metadata_regardless_of_policy() {
+        let policy = AuditPolicy::from_rules(vec![AuditRule {
+            level: AuditLevel::RequestResponse,
+            ..Default::default()
+        }]);
+        let u = user();
+
+        assert_eq!(
+            policy.select_level(&input(
+                "create",
+                &u,
+                "core",
+                "serviceaccounts/token",
+                Some("default"),
+            )),
+            AuditLevel::Metadata
+        );
+        assert_eq!(
+            policy.select_level(&input(
+                "create",
+                &u,
+                "",
+                "serviceaccounts/token",
+                Some("default"),
+            )),
+            AuditLevel::Metadata
         );
     }
 
