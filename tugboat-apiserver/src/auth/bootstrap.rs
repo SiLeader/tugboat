@@ -49,7 +49,7 @@ pub(crate) async fn bootstrap_default_rbac(store: &ResourceStore) -> Result<(), 
         .await?;
 
     for child in builtin_aggregate_children() {
-        store.put_if_not_exists(child).await?;
+        ensure_builtin_cluster_role(store, child).await?;
     }
 
     for role in builtin_aggregated_cluster_roles() {
@@ -90,7 +90,35 @@ async fn ensure_aggregated_cluster_role(
         return Ok(());
     };
     let mut existing = existing.apply_revision();
-    if apply_missing_aggregation_rule(&mut existing, desired.aggregation_rule) {
+    let changed = apply_missing_aggregation_rule(&mut existing, desired.aggregation_rule)
+        | apply_desired_rules(&mut existing, desired.rules);
+    if changed {
+        store.put(existing).await?;
+    }
+    Ok(())
+}
+
+async fn ensure_builtin_cluster_role(
+    store: &ResourceStore,
+    desired: ClusterRole,
+) -> Result<(), Error> {
+    let name = desired
+        .object_meta
+        .as_ref()
+        .and_then(|meta| meta.name.as_deref())
+        .ok_or_else(|| Error::FieldMissing("metadata.name".to_string()))?
+        .to_string();
+    if store.put_if_not_exists(desired.clone()).await?.is_some() {
+        return Ok(());
+    }
+
+    let Some(existing) = store.get::<ClusterRole>(None, &name).await? else {
+        return Ok(());
+    };
+    let mut existing = existing.apply_revision();
+    let changed = apply_desired_rules(&mut existing, desired.rules)
+        | apply_desired_labels(&mut existing, desired.object_meta.as_ref());
+    if changed {
         store.put(existing).await?;
     }
     Ok(())
@@ -105,6 +133,34 @@ fn apply_missing_aggregation_rule(
     }
     role.aggregation_rule = aggregation_rule;
     role.aggregation_rule.is_some()
+}
+
+fn apply_desired_rules(role: &mut ClusterRole, rules: Vec<PolicyRule>) -> bool {
+    if role.rules == rules {
+        return false;
+    }
+    role.rules = rules;
+    true
+}
+
+fn apply_desired_labels(role: &mut ClusterRole, desired_meta: Option<&ObjectMeta>) -> bool {
+    let Some(desired_labels) = desired_meta.map(|meta| &meta.labels) else {
+        return false;
+    };
+    if desired_labels.is_empty() {
+        return false;
+    }
+    let Some(meta) = role.object_meta.as_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for (key, value) in desired_labels {
+        if meta.labels.get(key) != Some(value) {
+            meta.labels.insert(key.clone(), value.clone());
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn builtin_aggregated_cluster_roles() -> Vec<ClusterRole> {
@@ -158,7 +214,25 @@ fn edit_rules() -> Vec<PolicyRule> {
 fn view_rules() -> Vec<PolicyRule> {
     vec![
         policy_rule(
-            &["core", "apps", "coordination", "snapshot"],
+            &["core"],
+            &[
+                "clusternetworkclasses",
+                "configmaps",
+                "namespaces",
+                "networkclasses",
+                "nodes",
+                "persistentvolumeclaims",
+                "persistentvolumes",
+                "runtimeclasses",
+                "serviceaccounts",
+                "shipclasses",
+                "ships",
+                "storageclasses",
+            ],
+            &["get", "list", "watch"],
+        ),
+        policy_rule(
+            &["apps", "coordination", "snapshot"],
             &["*"],
             &["get", "list", "watch"],
         ),
@@ -251,9 +325,9 @@ mod tests {
     use super::{
         ADMIN_AGGREGATE_CHILD, AGGREGATE_TO_ADMIN_LABEL, AGGREGATE_TO_EDIT_LABEL,
         AGGREGATE_TO_VIEW_LABEL, EDIT_AGGREGATE_CHILD, LABEL_TRUE, VIEW_AGGREGATE_CHILD,
-        admin_rules, aggregate_child, aggregated_cluster_role, apply_missing_aggregation_rule,
-        builtin_aggregate_children, cluster_role, cluster_role_binding, edit_rules, policy_rule,
-        view_rules,
+        admin_rules, aggregate_child, aggregated_cluster_role, apply_desired_labels,
+        apply_desired_rules, apply_missing_aggregation_rule, builtin_aggregate_children,
+        cluster_role, cluster_role_binding, edit_rules, policy_rule, view_rules,
     };
     use tugboat_resources::ObjectMetaResource;
 
@@ -348,6 +422,41 @@ mod tests {
     }
 
     #[test]
+    fn desired_rules_replace_existing_builtin_rules() {
+        let mut role = cluster_role("view", vec![policy_rule(&["core"], &["*"], &["get"])]);
+        let desired = view_rules();
+
+        assert!(apply_desired_rules(&mut role, desired.clone()));
+
+        assert_eq!(role.rules, desired);
+        assert!(
+            !role
+                .rules
+                .iter()
+                .any(|rule| rule.api_groups == vec!["core".to_string()]
+                    && rule.resources == vec!["*".to_string()])
+        );
+    }
+
+    #[test]
+    fn desired_labels_are_merged_into_builtin_role() {
+        let mut role = cluster_role("system:aggregate-to-view", view_rules());
+        let desired = aggregate_child(VIEW_AGGREGATE_CHILD, AGGREGATE_TO_VIEW_LABEL, view_rules());
+
+        assert!(apply_desired_labels(
+            &mut role,
+            desired.object_meta.as_ref()
+        ));
+
+        assert_eq!(
+            role.object_meta
+                .as_ref()
+                .and_then(|meta| meta.labels.get(AGGREGATE_TO_VIEW_LABEL)),
+            Some(&LABEL_TRUE.to_string())
+        );
+    }
+
+    #[test]
     fn builtin_children_cover_admin_edit_view_with_matching_labels() {
         let children = builtin_aggregate_children();
         assert_eq!(children.len(), 3);
@@ -393,5 +502,34 @@ mod tests {
         assert_eq!(admin.rules, admin_rules());
         assert_eq!(edit.rules, edit_rules());
         assert_eq!(view.rules, view_rules());
+    }
+
+    #[test]
+    fn view_rules_do_not_grant_secret_access() {
+        let core_rules = view_rules()
+            .into_iter()
+            .filter(|rule| rule.api_groups == vec!["core".to_string()])
+            .collect::<Vec<_>>();
+
+        assert!(
+            core_rules
+                .iter()
+                .any(|rule| rule.resources.contains(&"ships".to_string()))
+        );
+        assert!(
+            core_rules
+                .iter()
+                .all(|rule| !rule.resources.contains(&"*".to_string()))
+        );
+        assert!(
+            core_rules
+                .iter()
+                .all(|rule| !rule.resources.contains(&"secrets".to_string()))
+        );
+        assert!(core_rules.iter().all(|rule| {
+            !rule
+                .resources
+                .contains(&"serviceaccounts/token".to_string())
+        }));
     }
 }

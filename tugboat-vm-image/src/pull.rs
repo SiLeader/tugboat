@@ -13,9 +13,11 @@
 // limitations under the License.
 
 use crate::auth::load_auth_or_anonymous;
-use crate::compress::decompress_gzip;
-use crate::{Error, VmImageRegistry};
+use crate::compress::decompress_gzip_to_writer;
+use crate::{Error, MAX_DISK_IMAGE_UNCOMPRESSED_BYTES, VmImageRegistry};
 use oci_distribution::Reference;
+use std::fs::File;
+use std::io::Write;
 use tracing::{debug, info};
 
 pub struct Image {
@@ -53,8 +55,17 @@ impl VmImageRegistry {
                 .to_str()
                 .ok_or(Error::FileLocationEncode)?
                 .to_string();
-            let data = decompress_gzip(layer.data.as_slice())?;
-            tokio::fs::write(&filename, data).await?;
+            let mut file = File::create(&filename)?;
+            if let Err(err) = decompress_gzip_to_writer(
+                layer.data.as_slice(),
+                &mut file,
+                MAX_DISK_IMAGE_UNCOMPRESSED_BYTES,
+            ) {
+                let _ = std::fs::remove_file(&filename);
+                return Err(err);
+            }
+            file.flush()?;
+            file.sync_all()?;
             tokio::fs::write(reference_path, image).await?;
             info!("Image '{image}' pull finished");
             return Ok(Image { location });
