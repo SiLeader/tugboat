@@ -57,7 +57,9 @@ Existing VM orchestration systems come with significant challenges:
     - Fine-grained verb- and resource-level access control enforced in the apiserver
     - Built-in roles: `cluster-admin`, `admin`, `edit`, `view`
     - Opaque bearer tokens generated per ServiceAccount, stored as Secrets
-- Planned CRD support
+- CustomResourceDefinition (CRD) support
+    - User-defined resources with Kubernetes-like `CustomResourceDefinition`
+    - OpenAPI v3 schema validation, Namespaced/Cluster scope, and optional `/status` subresource
 - High availability design
     - Apiserver can scale horizontally
     - Scheduler uses Lease‑based leader election
@@ -165,6 +167,36 @@ spec:
           image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
           shipClass: lightweight
 ```
+
+### CustomResourceDefinition
+
+Tugboat supports user-defined resources via CustomResourceDefinitions, similar to Kubernetes. A CRD declares the resource group, version, kind, plural name, scope, OpenAPI v3 schema, and optional status subresource.
+
+```yaml
+apiVersion: apiextensions/v1
+kind: CustomResourceDefinition
+metadata:
+  name: databases.example.com
+spec:
+  group: example.com
+  names:
+    plural: databases
+    singular: database
+    kind: Database
+    listKind: DatabaseList
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openApiV3Schema: |
+          {"type":"object","required":["spec"],"properties":{"spec":{"type":"object"}}}
+      subresources:
+        status: {}
+```
+
+See [docs/custom-resources.md](./docs/custom-resources.md) for the full guide.
 
 ### Deployment
 
@@ -533,10 +565,6 @@ spec:
   automountServiceAccountToken: true
 ```
 
-### Planned enhancements
-
-- **CRD (Custom Resource Definition)** — planned; allow users to define their own resource types without modifying Tugboat core
-
 ## Roadmap
 
 - [x] Runtime
@@ -619,7 +647,7 @@ spec:
     - [x] ShipSnapshot volume fanout and agent runtime snapshot reconciliation
     - [x] Runtime snapshot create/delete/restore/list support for QEMU and Cloud Hypervisor
     - [x] PVC restore and clone via `spec.dataSource`
-- [ ] CRD
+- [x] CRD
 
 ## Installation
 

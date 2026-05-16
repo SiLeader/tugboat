@@ -17,6 +17,7 @@ tests. Do not add a second metadata table for a new resource.
 | `authorization/v1` | mixed | `ClusterRole`, `ClusterRoleBinding`, `Role`, `RoleBinding` |
 | `coordination/v1` | namespaced | `Lease` |
 | `snapshot/v1` | mixed | `VolumeSnapshot`, `VolumeSnapshotContent`, `VolumeSnapshotClass`, `ShipSnapshot` |
+| `apiextensions/v1` | cluster | `CustomResourceDefinition` |
 
 ## Adding a Resource
 
@@ -70,3 +71,9 @@ cargo test -p tugboat-integration-tests api_discovery
 cargo test -p tugboat-integration-tests resource_versioning
 cargo test -p tugboat-integration-tests watch
 ```
+
+## Custom Resources via CRD
+
+Use `CustomResourceDefinition` when the resource type can be supplied by users at runtime and does not need a built-in Rust protobuf type, static route wrapper, or controller shipped in Tugboat core. CRD-backed resources are registered dynamically through the apiserver `CrdRegistry`, dispatched by catch-all routes, and stored as `CustomResourceObject` envelopes containing raw JSON.
+
+See [custom-resources.md](./custom-resources.md) for the user guide, manifest examples, scope behavior, schema validation, and current limitations.

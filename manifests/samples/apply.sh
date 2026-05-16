@@ -67,6 +67,7 @@ CLUSTER_RESOURCES = {
     'StorageClass':        ('storageclasses',        '/api/v1'),
     'ClusterNetworkClass': ('clusternetworkclasses', '/api/v1'),
     'PersistentVolume':    ('persistentvolumes',     '/api/v1'),
+    'CustomResourceDefinition': ('customresourcedefinitions', '/apis/apiextensions/v1'),
 }
 NAMESPACED_RESOURCES = {
     'Ship':                    ('ships',                    '/api/v1'),
@@ -87,8 +88,19 @@ elif kind in NAMESPACED_RESOURCES:
         sys.exit(1)
     print(f'{base_url}{prefix}/namespaces/{namespace}/{plural}')
 else:
-    print(f'ERROR: unknown resource kind: {kind}', file=sys.stderr)
-    sys.exit(1)
+    annotations = manifest.get('metadata', {}).get('annotations', {})
+    plural = annotations.get('tugboat.cloud/plural', '')
+    if not plural:
+        print(f'ERROR: unknown resource kind: {kind}; custom resources require metadata.annotations["tugboat.cloud/plural"]', file=sys.stderr)
+        sys.exit(1)
+    if '/' not in api_version:
+        print(f'ERROR: custom resource apiVersion must be group/version, got: {api_version}', file=sys.stderr)
+        sys.exit(1)
+    group, version = api_version.split('/', 1)
+    if namespace:
+        print(f'{base_url}/apis/{group}/{version}/namespaces/{namespace}/{plural}')
+    else:
+        print(f'{base_url}/apis/{group}/{version}/{plural}')
 EOF
 }
 
@@ -128,6 +140,7 @@ try:
 except Exception:
     pass
 "
+    maybe_wait_for_crd "$json"
   else
       echo "  ✗ FAILED ($http_status) → $url"
     echo "$body" | python3 -m json.tool --indent 2 2>/dev/null || echo "$body"
@@ -136,6 +149,41 @@ except Exception:
     fi
   fi
   echo
+}
+
+maybe_wait_for_crd() {
+  local json="$1"
+  local discovery_path
+  discovery_path="$(python3 - "$json" <<'EOF'
+import sys, json
+manifest = json.loads(sys.argv[1])
+if manifest.get('kind') != 'CustomResourceDefinition':
+    sys.exit(0)
+spec = manifest.get('spec', {})
+versions = spec.get('versions', [])
+names = spec.get('names', {})
+if not spec.get('group') or not versions or not names.get('plural'):
+    sys.exit(0)
+print(f"/apis/{spec['group']}/{versions[0].get('name', 'v1')}#{names['plural']}")
+EOF
+)"
+  if [[ -z "$discovery_path" ]]; then
+    return
+  fi
+
+  local path="${discovery_path%%#*}"
+  local plural="${discovery_path##*#}"
+  for _ in {1..20}; do
+    if curl -sf "$APISERVER_URL$path" | python3 -c "import sys, json; plural = sys.argv[1]; body = json.load(sys.stdin); sys.exit(0 if any(resource.get('name') == plural for resource in body.get('resources', [])) else 1)" "$plural" >/dev/null
+    then
+      echo "  ✓ CRD discovery ready ($path)"
+      return
+    fi
+    sleep 0.05
+  done
+
+  echo "  ✗ CRD did not appear in discovery: $path"
+  exit 1
 }
 
 # Wait for the API server to become ready
@@ -173,6 +221,8 @@ main() {
   echo "  7. Secret             (demo/app-secret)"
   echo "  8. PersistentVolumeClaim (demo/data-disk)"
   echo "  9. Ship               (demo/demo-ship)"
+  echo " 10. CustomResourceDefinition (databases.example.com)"
+  echo " 11. Custom Resource    (demo/demo-db)"
   echo
 
   # Apply files in dependency order
@@ -186,7 +236,9 @@ main() {
     "$SCRIPT_DIR/06_secret.yaml" \
     "$SCRIPT_DIR/07_pvc.yaml" \
     "$SCRIPT_DIR/07_pvc_fs.yaml" \
-    "$SCRIPT_DIR/08_ship.yaml"
+    "$SCRIPT_DIR/08_ship.yaml" \
+    "$SCRIPT_DIR/crd_example.yaml" \
+    "$SCRIPT_DIR/cr_example.yaml"
   do
     apply_manifest "$manifest"
   done
@@ -202,6 +254,10 @@ main() {
   echo
   echo "  # Check Node status (registered by agent)"
   echo "  curl -s $APISERVER_URL/api/v1/nodes | python3 -m json.tool"
+  echo
+  echo "  # Check custom resource discovery and sample CR"
+  echo "  curl -s $APISERVER_URL/apis/example.com/v1 | python3 -m json.tool"
+  echo "  curl -s $APISERVER_URL/apis/example.com/v1/namespaces/demo/databases/demo-db | python3 -m json.tool"
   echo "=========================================="
 }
 

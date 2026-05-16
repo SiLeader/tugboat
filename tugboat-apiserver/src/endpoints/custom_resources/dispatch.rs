@@ -304,19 +304,21 @@ pub(super) async fn patch_status(
     patch: serde_json::Value,
 ) -> Result<HttpResponse, Box<StatusResponse>> {
     let patch = patch_object(patch)?;
-    if !patch.keys().all(|key| key == "status") {
-        return Err(Box::new(StatusResponse::bad_request(
-            "PATCH /status must contain only status field.",
-            None,
-        )));
-    }
-
     let entry = lookup_status(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
     let current = get_existing(operator, &entry, namespace.as_deref(), &name).await?;
     let mut current_value = custom_data_to_value(current)?.expect("resource has raw JSON");
     let old_value = current_value.clone();
-    rfc7396_merge_patch(&mut current_value, &serde_json::Value::Object(patch));
+    let status_patch = patch.get("status").cloned().ok_or_else(|| {
+        Box::new(StatusResponse::bad_request(
+            "status field is required",
+            None,
+        ))
+    })?;
+    rfc7396_merge_patch(
+        &mut current_value,
+        &serde_json::json!({ "status": status_patch }),
+    );
     preserve_identity_metadata_from_value(&mut current_value, &old_value)?;
     validate_against_schema(&entry, &current_value)?;
     let meta = extract_metadata(&current_value)?;
@@ -856,6 +858,74 @@ fn rfc7396_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value
         }
         _ => {
             *target = patch.clone();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ensure_list_scope, ensure_write_scope, generation_tracked_fields, next_generation,
+    };
+    use crate::crd_registry::{CrdEntry, CrdScope, CrdVersionInfo};
+    use actix_web::ResponseError;
+    use actix_web::http::StatusCode;
+    use serde_json::json;
+
+    #[test]
+    fn write_scope_rejects_namespaced_resource_without_namespace() {
+        let err = ensure_write_scope(&entry(CrdScope::Namespaced), None)
+            .expect_err("namespaced resource should require namespace");
+
+        assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn write_scope_rejects_cluster_resource_with_namespace() {
+        let err = ensure_write_scope(&entry(CrdScope::Cluster), Some("default"))
+            .expect_err("cluster resource should reject namespace");
+
+        assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn list_scope_allows_cluster_collection_without_namespace() {
+        assert!(ensure_list_scope(&entry(CrdScope::Cluster), None).is_ok());
+    }
+
+    #[test]
+    fn generation_ignores_metadata_type_meta_and_status() {
+        let tracked = generation_tracked_fields(&json!({
+            "apiVersion": "example.com/v1",
+            "kind": "Widget",
+            "metadata": {"name": "demo"},
+            "spec": {"size": 1},
+            "status": {"phase": "Ready"}
+        }));
+
+        assert_eq!(
+            tracked,
+            serde_json::Map::from_iter([("spec".to_string(), json!({"size": 1}))])
+        );
+        assert_eq!(next_generation(Some(1)), Some(2));
+    }
+
+    fn entry(scope: CrdScope) -> CrdEntry {
+        CrdEntry {
+            group: "example.com".to_string(),
+            plural: "widgets".to_string(),
+            singular: "widget".to_string(),
+            kind: "Widget".to_string(),
+            list_kind: "WidgetList".to_string(),
+            scope,
+            version: CrdVersionInfo {
+                name: "v1".to_string(),
+                served: true,
+                storage: true,
+                schema_json: None,
+                compiled_schema: None,
+                status_subresource: false,
+            },
         }
     }
 }

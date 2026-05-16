@@ -20,6 +20,7 @@ use crate::operator::ApiOperator;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, delete, get, patch, post, put};
 use tugboat_resources::manifests::apiextensions::v1::CustomResourceDefinition;
+use tugboat_resources::validators::Validatable;
 
 #[utoipa::path(
         responses(
@@ -227,5 +228,13 @@ fn validate_custom_resource_definition_schema(
             format!("Invalid CustomResourceDefinition schema: {err}"),
             Some(serde_json::json!({ "reason": err })),
         ))
-    })
+    })?;
+    if crd.validate() {
+        Ok(())
+    } else {
+        Err(Box::new(StatusResponse::invalid(
+            "Invalid CustomResourceDefinition resource",
+            None,
+        )))
+    }
 }

@@ -371,4 +371,39 @@ mod tests {
             .expect_err("reserved group should be rejected");
         assert!(matches!(err, CrdRegistryError::ReservedGroup(group) if group == "core"));
     }
+
+    #[test]
+    fn upsert_lookup_and_remove_crd_keep_registry_in_sync() {
+        let crd = crd();
+        let registry = CrdRegistry::default();
+        let entry = CrdRegistry::from_crd(&crd).expect("valid CRD should convert");
+
+        registry.upsert(entry).expect("upsert should succeed");
+        assert!(registry.is_registered("example.com", "v1", "widgets"));
+        assert_eq!(
+            registry
+                .lookup("example.com", "v1", "widgets")
+                .map(|entry| entry.kind),
+            Some("Widget".to_string())
+        );
+
+        registry.remove_crd(&crd);
+        assert!(!registry.is_registered("example.com", "v1", "widgets"));
+    }
+
+    #[test]
+    fn replace_all_rejects_reserved_groups_without_partial_update() {
+        let registry = CrdRegistry::default();
+        let valid = CrdRegistry::from_crd(&crd()).expect("valid CRD should convert");
+        registry.upsert(valid).expect("upsert should succeed");
+
+        let mut reserved = CrdRegistry::from_crd(&crd()).expect("valid CRD should convert");
+        reserved.group = "apps".to_string();
+        let err = registry
+            .replace_all(vec![reserved])
+            .expect_err("reserved group should fail replace_all");
+
+        assert!(matches!(err, CrdRegistryError::ReservedGroup(group) if group == "apps"));
+        assert!(registry.is_registered("example.com", "v1", "widgets"));
+    }
 }

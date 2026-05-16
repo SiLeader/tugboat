@@ -164,6 +164,42 @@ pub mod apiextensions {
 
                 assert!(!crd.validate());
             }
+
+            #[test]
+            fn crd_rejects_missing_names() {
+                let mut crd = valid_crd();
+                crd.spec.as_mut().unwrap().names = None;
+
+                assert!(!crd.validate());
+            }
+
+            #[test]
+            fn crd_rejects_unsupported_scope() {
+                let mut crd = valid_crd();
+                crd.spec.as_mut().unwrap().scope = "Namespace".to_string();
+
+                assert!(!crd.validate());
+            }
+
+            #[test]
+            fn crd_rejects_multiple_versions_for_minimal_implementation() {
+                let mut crd = valid_crd();
+                let version = crd.spec.as_ref().unwrap().versions[0].clone();
+                crd.spec.as_mut().unwrap().versions.push(version);
+
+                assert!(!crd.validate());
+            }
+
+            #[test]
+            fn crd_rejects_unserved_or_nonstorage_version() {
+                let mut unserved = valid_crd();
+                unserved.spec.as_mut().unwrap().versions[0].served = false;
+                assert!(!unserved.validate());
+
+                let mut nonstorage = valid_crd();
+                nonstorage.spec.as_mut().unwrap().versions[0].storage = false;
+                assert!(!nonstorage.validate());
+            }
         }
     }
 }

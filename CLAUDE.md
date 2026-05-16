@@ -55,7 +55,8 @@ Use `docs/architecture.md` as the public overview of current crate boundaries an
 ```
 tugboat-apiserver (actix-web REST API)
   ├─ tugboat-resources (with "schema" feature for OpenAPI)
-  └─ tugboat-resource-store (etcd CRUD/watch wrapper)
+  ├─ tugboat-resource-store (etcd CRUD/watch wrapper)
+  └─ CrdRegistry + custom resource catch-all dispatcher
 
 tugboat-agent (node reconciler)
   ├─ tugboat-client (HTTP client)
@@ -100,6 +101,8 @@ API groups and their resources:
 - **apps/v1**: Deployment, ReplicaSet, Fleet
 - **authorization/v1**: Role, RoleBinding, ClusterRole, ClusterRoleBinding
 - **coordination/v1**: Lease
+- **snapshot/v1**: VolumeSnapshot, VolumeSnapshotContent, VolumeSnapshotClass, ShipSnapshot
+- **apiextensions/v1**: CustomResourceDefinition
 
 Resource API metadata lives in `tugboat-resources/src/resource_api.rs`. Generated resource types
 implement traits via the `apply_resource!` macro in `tugboat-resources/src/manifests/mod.rs`,
@@ -173,6 +176,8 @@ Follow `docs/resource-registration.md`. The short version is:
 5. Wire the descriptor to the endpoint wrapper in `tugboat-apiserver/src/endpoints/resource_registry.rs`
 6. Add the resource type to `tugboat-resource-store/src/serializer/mod.rs` via `protobuf_serializable!`
 7. Add or update descriptor, serializer, discovery, RBAC, and integration tests listed in `docs/resource-registration.md`
+
+If the resource should be supplied by users at runtime, prefer a `CustomResourceDefinition` instead of adding a built-in protobuf type. CRD-backed resources are registered through `apiextensions/v1`, resolved by the apiserver `CrdRegistry`, and documented in `docs/custom-resources.md`.
 
 ### Adding a Controller
 

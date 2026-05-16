@@ -55,7 +55,9 @@ Tugboatはこれらの問題を解決するために生まれました。
     - apiserver で適用される動詞・リソース単位の細粒度アクセス制御
     - 組み込みロール: `cluster-admin`、`admin`、`edit`、`view`
     - ServiceAccount ごとに不透明なベアラートークンを発行し Secret に保存
-- CRDに対応予定
+- CustomResourceDefinition (CRD) 対応
+    - Kubernetes 風の `CustomResourceDefinition` によるユーザー定義リソース
+    - OpenAPI v3 schema 検証、Namespaced/Cluster scope、任意の `/status` subresource
 - HA設計
     - apiserverは水平スケール可能
     - schedulerはLeaseによる調停
@@ -159,6 +161,36 @@ spec:
           image: ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04
           shipClass: lightweight
 ```
+
+### CustomResourceDefinition
+
+Tugboat は Kubernetes と同様に CustomResourceDefinition によるユーザー定義リソースをサポートします。CRD は resource group、version、kind、plural、scope、OpenAPI v3 schema、任意の status subresource を定義します。
+
+```yaml
+apiVersion: apiextensions/v1
+kind: CustomResourceDefinition
+metadata:
+  name: databases.example.com
+spec:
+  group: example.com
+  names:
+    plural: databases
+    singular: database
+    kind: Database
+    listKind: DatabaseList
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openApiV3Schema: |
+          {"type":"object","required":["spec"],"properties":{"spec":{"type":"object"}}}
+      subresources:
+        status: {}
+```
+
+詳しくは [docs/ja/custom-resources.md](./docs/ja/custom-resources.md) を参照してください。
 
 ### Deployment
 
@@ -526,10 +558,6 @@ spec:
   automountServiceAccountToken: true
 ```
 
-### 今後の拡張予定
-
-- **CRD (Custom Resource Definition)** — 予定。Tugboat のコアを変更することなく、ユーザーが独自のリソース型を定義可能にする
-
 ## Roadmap
 
 - [x] Runtime
@@ -612,7 +640,7 @@ spec:
     - [x] ShipSnapshot の volume fanout と agent による runtime snapshot reconcile
     - [x] QEMU と Cloud Hypervisor の runtime snapshot create/delete/restore/list
     - [x] `spec.dataSource` による PVC restore / clone
-- [ ] CRD
+- [x] CRD
 
 ## インストール
 
