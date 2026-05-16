@@ -14,6 +14,7 @@
 
 use crate::error::Error;
 use crate::serializer::StaticSerializable;
+use crate::serializer::custom_resource::CustomResourceSerializable;
 use crate::watch::WatchReceiver;
 use etcd_client::{
     Certificate, Client, Compare, CompareOp, ConnectOptions, DeleteOptions, GetOptions, Identity,
@@ -21,7 +22,7 @@ use etcd_client::{
 };
 use std::path::PathBuf;
 use tracing::{debug, info};
-use tugboat_resources::manifests::meta::v1::ObjectMeta;
+use tugboat_resources::manifests::meta::v1::{CustomResourceObject, ObjectMeta};
 use tugboat_resources::{ObjectMetaResource, StaticResource};
 
 pub mod error;
@@ -158,6 +159,20 @@ impl ResourceStore {
             format!("{BASE_PATH}/{}/{}/{ns}/", T::group(), T::plural())
         } else {
             format!("{BASE_PATH}/{}/{}/", T::group(), T::plural())
+        }
+    }
+
+    fn create_custom_key(group: &str, plural: &str, namespace: Option<&str>, name: &str) -> String {
+        match namespace {
+            Some(ns) => format!("{BASE_PATH}/{group}/{plural}/{ns}/{name}"),
+            None => format!("{BASE_PATH}/{group}/{plural}/{name}"),
+        }
+    }
+
+    fn create_custom_watch_key(group: &str, plural: &str, namespace: Option<&str>) -> String {
+        match namespace {
+            Some(ns) => format!("{BASE_PATH}/{group}/{plural}/{ns}/"),
+            None => format!("{BASE_PATH}/{group}/{plural}/"),
         }
     }
 
@@ -356,6 +371,106 @@ impl ResourceStore {
             revision: kv.mod_revision(),
         }))
     }
+
+    pub async fn put_custom(
+        &self,
+        group: &str,
+        plural: &str,
+        namespace: Option<&str>,
+        name: &str,
+        envelope: &CustomResourceObject,
+        expected_revision: Option<i64>,
+    ) -> Result<i64, Error> {
+        let key = Self::create_custom_key(group, plural, namespace, name);
+        let bytes = envelope.serialize()?;
+        debug!(
+            "Put custom resource key = {key}, value = {} bytes",
+            bytes.len()
+        );
+
+        let request = PutRequest {
+            key,
+            bytes,
+            expected_revision,
+        };
+        self.put_many(vec![request]).await
+    }
+
+    pub async fn get_custom(
+        &self,
+        group: &str,
+        plural: &str,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<Option<ContentData<CustomResourceObject>>, Error> {
+        let key = Self::create_custom_key(group, plural, namespace, name);
+        info!("Get custom resource: key = {key}");
+
+        let mut client = self.etcd.clone();
+        let res = client.get(key, None).await?;
+
+        let Some(kv) = res.kvs().first() else {
+            return Ok(None);
+        };
+        let value = CustomResourceObject::deserialize(kv.value())?;
+        Ok(Some(ContentData {
+            data: value,
+            revision: kv.mod_revision(),
+        }))
+    }
+
+    pub async fn list_custom(
+        &self,
+        group: &str,
+        plural: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ContentData<CustomResourceObject>>, Error> {
+        let key = Self::create_custom_watch_key(group, plural, namespace);
+        info!("List custom resources: key = {key}");
+
+        let mut client = self.etcd.clone();
+        let res = client
+            .get(key, Some(GetOptions::default().with_prefix()))
+            .await?;
+        let mut data = Vec::new();
+        for kv in res.kvs() {
+            let value = CustomResourceObject::deserialize(kv.value())?;
+            data.push(ContentData {
+                data: value,
+                revision: kv.mod_revision(),
+            });
+        }
+        Ok(data)
+    }
+
+    pub async fn delete_custom(
+        &self,
+        group: &str,
+        plural: &str,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<bool, Error> {
+        let key = Self::create_custom_key(group, plural, namespace, name);
+        info!("Delete custom resource: key = {key}");
+
+        let mut client = self.etcd.clone();
+        let response = client.delete(key, None).await?;
+        Ok(response.deleted() > 0)
+    }
+
+    pub async fn watch_custom(
+        &self,
+        group: &str,
+        plural: &str,
+        namespace: Option<&str>,
+        start_revision: Option<i64>,
+    ) -> Result<WatchReceiver, Error> {
+        let key = Self::create_custom_watch_key(group, plural, namespace);
+        info!("Watch custom resources: key = {key}");
+        self.watch_mux
+            .get_from_start_revision(&key, start_revision)
+            .await
+    }
 }
 
 fn build_connect_options(tls_config: EtcdTlsConfig) -> Result<ConnectOptions, Error> {
@@ -376,9 +491,10 @@ fn build_connect_options(tls_config: EtcdTlsConfig) -> Result<ConnectOptions, Er
 #[cfg(test)]
 mod tests {
     use super::ContentData;
+    use super::ResourceStore;
     use tugboat_resources::ObjectMetaResource;
     use tugboat_resources::manifests::core::v1::Ship;
-    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+    use tugboat_resources::manifests::meta::v1::{CustomResourceObject, ObjectMeta, TypeMeta};
 
     #[test]
     fn apply_revision_preserves_generation() {
@@ -407,6 +523,100 @@ mod tests {
         assert_eq!(
             ship.object_meta().as_ref().and_then(|meta| meta.generation),
             Some(7)
+        );
+    }
+
+    #[test]
+    fn custom_resource_keys_follow_registry_layout() {
+        assert_eq!(
+            ResourceStore::create_custom_key("example.com", "widgets", Some("default"), "demo"),
+            "/tugboat/registry/example.com/widgets/default/demo"
+        );
+        assert_eq!(
+            ResourceStore::create_custom_key("example.com", "widgets", None, "demo"),
+            "/tugboat/registry/example.com/widgets/demo"
+        );
+        assert_eq!(
+            ResourceStore::create_custom_watch_key("example.com", "widgets", Some("default")),
+            "/tugboat/registry/example.com/widgets/default/"
+        );
+        assert_eq!(
+            ResourceStore::create_custom_watch_key("example.com", "widgets", None),
+            "/tugboat/registry/example.com/widgets/"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_resource_crud_round_trip_when_etcd_endpoint_is_configured() {
+        let Ok(endpoint) =
+            std::env::var("TUGBOAT_TEST_ETCD_ENDPOINT").or_else(|_| std::env::var("ETCD_ENDPOINT"))
+        else {
+            return;
+        };
+
+        let store = ResourceStore::new_insecure(&[endpoint])
+            .await
+            .expect("connect to etcd");
+        let group = "test.example.com";
+        let plural = "widgets";
+        let namespace = format!("store-test-{}", std::process::id());
+        let name = "demo";
+        let raw_json = br#"{"apiVersion":"test.example.com/v1","kind":"Widget","metadata":{"name":"demo"},"spec":{"size":3}}"#.to_vec();
+        let envelope = CustomResourceObject {
+            type_meta: Some(TypeMeta {
+                api_version: Some("test.example.com/v1".to_string()),
+                kind: Some("Widget".to_string()),
+            }),
+            object_meta: Some(ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(namespace.clone()),
+                ..Default::default()
+            }),
+            raw_json: raw_json.clone(),
+        };
+
+        let _ = store
+            .delete_custom(group, plural, Some(namespace.as_str()), name)
+            .await;
+        let revision = store
+            .put_custom(
+                group,
+                plural,
+                Some(namespace.as_str()),
+                name,
+                &envelope,
+                None,
+            )
+            .await
+            .expect("put custom resource");
+        assert!(revision > 0);
+
+        let fetched = store
+            .get_custom(group, plural, Some(namespace.as_str()), name)
+            .await
+            .expect("get custom resource")
+            .expect("custom resource should exist");
+        assert_eq!(fetched.data.raw_json, raw_json);
+
+        let listed = store
+            .list_custom(group, plural, Some(namespace.as_str()))
+            .await
+            .expect("list custom resources");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].data.raw_json, raw_json);
+
+        assert!(
+            store
+                .delete_custom(group, plural, Some(namespace.as_str()), name)
+                .await
+                .expect("delete custom resource")
+        );
+        assert!(
+            store
+                .get_custom(group, plural, Some(namespace.as_str()), name)
+                .await
+                .expect("get deleted custom resource")
+                .is_none()
         );
     }
 }

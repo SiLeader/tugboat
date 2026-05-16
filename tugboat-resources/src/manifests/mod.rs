@@ -839,6 +839,31 @@ pub mod meta {
     pub mod v1 {
         include!(concat!(env!("OUT_DIR"), "/tugboat.meta.v1.rs"));
 
+        impl crate::Resource for CustomResourceObject {
+            fn type_meta() -> TypeMeta {
+                TypeMeta {
+                    api_version: Some("meta/v1".to_string()),
+                    kind: Some("CustomResourceObject".to_string()),
+                }
+            }
+        }
+
+        impl crate::ObjectMetaResource for CustomResourceObject {
+            fn object_meta(&self) -> &Option<ObjectMeta> {
+                &self.object_meta
+            }
+
+            fn object_meta_mut(&mut self) -> &mut Option<ObjectMeta> {
+                &mut self.object_meta
+            }
+        }
+
+        impl crate::SetTypeMeta for CustomResourceObject {
+            fn set_type_meta(&mut self, type_meta: TypeMeta) {
+                self.type_meta = Some(type_meta);
+            }
+        }
+
         impl Time {
             pub fn now() -> Self {
                 let now = std::time::SystemTime::now();

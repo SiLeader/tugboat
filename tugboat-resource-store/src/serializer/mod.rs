@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod custom_resource;
 mod protobuf;
 
 use crate::error::Error;
@@ -106,6 +107,7 @@ protobuf_serializable!(VolumeSnapshotClass);
 mod tests {
     use super::Serializable;
     use super::StaticSerializable;
+    use super::custom_resource::CustomResourceSerializable;
     use std::collections::BTreeSet;
     use std::collections::HashMap;
     use tugboat_resources::manifests::apiextensions::v1::{
@@ -124,7 +126,7 @@ mod tests {
         StorageClass, StorageClassSpec, TopologySelectorLabelRequirement, TopologySelectorTerm,
         VolumeNodeAffinity,
     };
-    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+    use tugboat_resources::manifests::meta::v1::{CustomResourceObject, ObjectMeta, TypeMeta};
     use tugboat_resources::manifests::snapshot::v1::{
         VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotClassSpec, VolumeSnapshotContent,
         VolumeSnapshotContentSource, VolumeSnapshotContentSpec, VolumeSnapshotSource,
@@ -237,6 +239,36 @@ mod tests {
             Some("widgets.example.com")
         );
         assert_eq!(decoded.spec.unwrap().group, "example.com");
+    }
+
+    #[test]
+    fn can_round_trip_custom_resource_object() {
+        let raw_json = br#"{"apiVersion":"example.com/v1","kind":"Widget","metadata":{"name":"demo","namespace":"default"},"spec":{"size":3},"status":{"phase":"Ready"}}"#.to_vec();
+        let envelope = CustomResourceObject {
+            type_meta: Some(TypeMeta {
+                api_version: Some("example.com/v1".to_string()),
+                kind: Some("Widget".to_string()),
+            }),
+            object_meta: Some(ObjectMeta {
+                name: Some("demo".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            }),
+            raw_json: raw_json.clone(),
+        };
+
+        let encoded = envelope.serialize().unwrap();
+        let decoded = CustomResourceObject::deserialize(&encoded).unwrap();
+
+        assert_eq!(
+            decoded.type_meta.and_then(|meta| meta.kind),
+            Some("Widget".to_string())
+        );
+        assert_eq!(
+            decoded.object_meta.unwrap().namespace.as_deref(),
+            Some("default")
+        );
+        assert_eq!(decoded.raw_json, raw_json);
     }
 
     #[test]
