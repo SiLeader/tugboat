@@ -16,6 +16,137 @@ fn default<T: Default + PartialEq>(t: &T) -> bool {
     *t == Default::default()
 }
 
+pub mod apiextensions {
+    pub mod v1 {
+        use crate::validators::{NamespaceProhibitedValidator, Validator};
+        use crate::{apply_resource, apply_validators, resource_api};
+
+        include!(concat!(env!("OUT_DIR"), "/tugboat.apiextensions.v1.rs"));
+
+        apply_resource!(
+            CustomResourceDefinition,
+            resource_api::CUSTOM_RESOURCE_DEFINITION,
+            cluster
+        );
+
+        apply_validators!(
+            CustomResourceDefinition,
+            validators NamespaceProhibitedValidator, CrdSpecValidator
+        );
+
+        pub struct CrdSpecValidator;
+
+        impl Validator<CustomResourceDefinition> for CrdSpecValidator {
+            fn validate(&self, value: &CustomResourceDefinition) -> bool {
+                let Some(spec) = value.spec.as_ref() else {
+                    return false;
+                };
+                if spec.group.is_empty() || !matches!(spec.scope.as_str(), "Namespaced" | "Cluster")
+                {
+                    return false;
+                }
+                if spec.versions.len() != 1 {
+                    return false;
+                }
+
+                let version = &spec.versions[0];
+                if version.name.is_empty() || !version.served || !version.storage {
+                    return false;
+                }
+
+                let Some(names) = spec.names.as_ref() else {
+                    return false;
+                };
+                if names.plural.is_empty() || names.kind.is_empty() {
+                    return false;
+                }
+
+                let expected_name = format!("{}.{}", names.plural, spec.group);
+                let actual_name = value
+                    .object_meta
+                    .as_ref()
+                    .and_then(|metadata| metadata.name.as_deref())
+                    .unwrap_or_default();
+                if actual_name != expected_name {
+                    return false;
+                }
+
+                if let Some(schema) = version.schema.as_ref()
+                    && serde_json::from_str::<serde_json::Value>(&schema.open_api_v3_schema)
+                        .is_err()
+                {
+                    return false;
+                }
+
+                true
+            }
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::{
+                CustomResourceDefinition, CustomResourceDefinitionNames,
+                CustomResourceDefinitionSpec, CustomResourceDefinitionVersion,
+                CustomResourceValidation,
+            };
+            use crate::manifests::meta::v1::ObjectMeta;
+            use crate::validators::Validatable;
+
+            fn valid_crd() -> CustomResourceDefinition {
+                CustomResourceDefinition {
+                    object_meta: Some(ObjectMeta {
+                        name: Some("widgets.example.com".to_string()),
+                        ..Default::default()
+                    }),
+                    spec: Some(CustomResourceDefinitionSpec {
+                        group: "example.com".to_string(),
+                        names: Some(CustomResourceDefinitionNames {
+                            plural: "widgets".to_string(),
+                            singular: "widget".to_string(),
+                            kind: "Widget".to_string(),
+                            list_kind: "WidgetList".to_string(),
+                        }),
+                        scope: "Namespaced".to_string(),
+                        versions: vec![CustomResourceDefinitionVersion {
+                            name: "v1".to_string(),
+                            served: true,
+                            storage: true,
+                            schema: Some(CustomResourceValidation {
+                                open_api_v3_schema: r#"{"type":"object"}"#.to_string(),
+                            }),
+                            ..Default::default()
+                        }],
+                    }),
+                    ..Default::default()
+                }
+            }
+
+            #[test]
+            fn crd_with_valid_spec_passes_validation() {
+                assert!(valid_crd().validate());
+            }
+
+            #[test]
+            fn crd_name_must_match_plural_dot_group() {
+                let mut crd = valid_crd();
+                crd.object_meta.as_mut().unwrap().name = Some("wrong.example.com".to_string());
+
+                assert!(!crd.validate());
+            }
+
+            #[test]
+            fn crd_rejects_invalid_schema_json() {
+                let mut crd = valid_crd();
+                crd.spec.as_mut().unwrap().versions[0].schema = Some(CustomResourceValidation {
+                    open_api_v3_schema: "{".to_string(),
+                });
+
+                assert!(!crd.validate());
+            }
+        }
+    }
+}
+
 pub mod core {
     pub mod v1 {
         use crate::validators::{

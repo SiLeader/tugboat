@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::endpoints::v1_apiextensions;
 use crate::endpoints::v1_apps;
 use crate::endpoints::v1_authorization;
 use crate::endpoints::v1_coordination;
@@ -19,6 +20,7 @@ use crate::endpoints::v1_core;
 use crate::endpoints::v1_snapshot;
 use std::ops::Deref;
 use tugboat_resources::StaticResource;
+use tugboat_resources::manifests::apiextensions::v1::CustomResourceDefinition;
 use tugboat_resources::manifests::apps::v1::{Deployment, Fleet, ReplicaSet};
 use tugboat_resources::manifests::authorization::v1::{
     ClusterRole, ClusterRoleBinding, Role, RoleBinding,
@@ -75,6 +77,10 @@ static ALL_RESOURCE_APIS: OnceLock<Vec<ResourceApiDescriptor>> = OnceLock::new()
 pub(crate) fn all_resource_apis() -> &'static [ResourceApiDescriptor] {
     ALL_RESOURCE_APIS.get_or_init(|| {
         vec![
+            ResourceApiDescriptor::new::<CustomResourceDefinition>(
+                &resource_api::CUSTOM_RESOURCE_DEFINITION,
+                v1_apiextensions::register_custom_resource_definition,
+            ),
             ResourceApiDescriptor::new::<ClusterRole>(
                 &resource_api::CLUSTER_ROLE,
                 v1_authorization::register_cluster_role,

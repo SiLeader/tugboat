@@ -27,6 +27,7 @@ fn main() {
     config.field_attribute("type_meta", "#[serde(flatten)]");
 
     let resources = [
+        ".tugboat.apiextensions.v1",
         ".tugboat.apps.v1",
         ".tugboat.authorization.v1",
         ".tugboat.core.v1",
@@ -60,6 +61,8 @@ fn main() {
     config
         .compile_protos(
             &[
+                // apiextensions/v1
+                "proto/apiextensions/v1/custom_resource_definition.proto",
                 // apps/v1
                 "proto/apps/v1/workload.proto",
                 "proto/apps/v1/replica_set.proto",

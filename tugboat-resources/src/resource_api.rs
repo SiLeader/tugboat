@@ -247,6 +247,15 @@ const NAMESPACED_RBAC_OPS: ResourceOperations = ResourceOperations {
     ..NAMESPACED_DEFAULT_OPS
 };
 
+const CRD_OPS: ResourceOperations = ResourceOperations {
+    patch: true,
+    update: true,
+    delete: true,
+    status_patch: true,
+    status_update: true,
+    ..CLUSTER_DEFAULT_OPS
+};
+
 macro_rules! descriptor {
     ($name:ident, $group:literal, $version:literal, $kind:literal, $plural:literal, $singular:literal, $scope:ident, $operations:expr) => {
         pub const $name: ResourceApiDescriptor = ResourceApiDescriptor {
@@ -261,6 +270,16 @@ macro_rules! descriptor {
     };
 }
 
+descriptor!(
+    CUSTOM_RESOURCE_DEFINITION,
+    "apiextensions",
+    "v1",
+    "CustomResourceDefinition",
+    "customresourcedefinitions",
+    "customresourcedefinition",
+    Cluster,
+    CRD_OPS
+);
 descriptor!(
     CONFIG_MAP,
     "core",
@@ -492,6 +511,7 @@ descriptor!(
 );
 
 pub const ALL_RESOURCE_DESCRIPTORS: &[ResourceApiDescriptor] = &[
+    CUSTOM_RESOURCE_DEFINITION,
     CLUSTER_ROLE,
     CLUSTER_ROLE_BINDING,
     DEPLOYMENT,
