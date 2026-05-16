@@ -48,6 +48,9 @@ pub struct CrdVersionInfo {
     pub name: String,
     pub served: bool,
     pub storage: bool,
+    /// Parsed schema document retained alongside `compiled_schema` for
+    /// introspection (tests, debug logs). Production validation uses
+    /// `compiled_schema` exclusively.
     pub schema_json: Option<Arc<serde_json::Value>>,
     pub compiled_schema: Option<Arc<CompiledSchema>>,
     pub status_subresource: bool,
@@ -310,9 +313,23 @@ fn apply_watch_event(registry: &CrdRegistry, event: tugboat_resource_store::watc
             }
         }
         tugboat_resource_store::watch::WatchEvent::Deleted(kv) => {
-            match CustomResourceDefinition::deserialize(kv.value.as_slice()) {
-                Ok(crd) => registry.remove_crd(&crd),
-                Err(err) => warn!("Failed to deserialize deleted CRD watch event: {err}"),
+            // The etcd key always ends with the CRD's metadata.name, which
+            // CrdSpecValidator pins to "{plural}.{group}". Use the key as the
+            // source of truth rather than the prev_kv payload, which may be
+            // missing, default-valued, or undecodable (etcd compaction,
+            // restart-window watch, corruption).
+            if let Some(crd_name) = kv
+                .key
+                .rsplit('/')
+                .next()
+                .filter(|segment| !segment.is_empty())
+            {
+                registry.remove_crd_name(crd_name);
+            } else {
+                warn!(
+                    "Ignoring CRD delete event with no name segment in key: {}",
+                    kv.key
+                );
             }
         }
     }
@@ -458,6 +475,30 @@ mod tests {
 
         assert!(matches!(err, CrdRegistryError::ReservedGroup(group) if group == "apps"));
         assert!(registry.is_registered("example.com", "v1", "widgets"));
+    }
+
+    #[test]
+    fn deleted_watch_event_falls_back_to_key_when_prev_value_is_missing() {
+        let registry = CrdRegistry::default();
+        registry
+            .upsert(CrdRegistry::from_crd(&crd()).expect("valid CRD should convert"))
+            .expect("upsert should succeed");
+        assert!(registry.is_registered("example.com", "v1", "widgets"));
+
+        // Simulate a delete event with an undecodable previous value (e.g.,
+        // etcd compaction wiped prev_kv).
+        apply_watch_event(
+            &registry,
+            WatchEvent::Deleted(KeyValue {
+                key:
+                    "/tugboat/registry/apiextensions/customresourcedefinitions/widgets.example.com"
+                        .to_string(),
+                value: Vec::new(),
+                revision: 7,
+            }),
+        );
+
+        assert!(!registry.is_registered("example.com", "v1", "widgets"));
     }
 
     #[test]

@@ -18,10 +18,10 @@ use super::envelope::{
 use super::merge::{patch_object, rfc7396_merge_patch};
 use super::metadata::{
     apply_new_metadata, extract_metadata, has_finalizers, inject_resource_version,
-    normalize_status_for_write, preserve_identity_and_maybe_status, preserve_identity_metadata,
-    preserve_identity_metadata_from_value, preserve_status, resource_version_as_revision,
-    set_deletion_timestamp, set_metadata, set_status, validate_create_name, validate_metadata_name,
-    validate_patch_name, value_with_revision,
+    normalize_status_for_write, parse_client_resource_version, preserve_identity_and_maybe_status,
+    preserve_identity_metadata, preserve_identity_metadata_from_value, preserve_status,
+    resource_version_as_revision, set_deletion_timestamp, set_metadata, set_status,
+    validate_create_name, validate_metadata_name, validate_patch_name, value_with_revision,
 };
 use super::validation::validate_against_schema;
 use super::watch::watch_custom;
@@ -162,6 +162,10 @@ pub(super) async fn replace(
 
     let current_meta = extract_metadata(&current_value)?;
     let mut replacement_meta = extract_metadata(&replacement)?;
+    // Capture the client-supplied resourceVersion before identity preservation
+    // overwrites it. When present, it drives optimistic concurrency control;
+    // when absent, we fall back to the value just read from the store.
+    let client_resource_version = replacement_meta.resource_version.clone();
     preserve_identity_metadata(&current_meta, &mut replacement_meta);
     replacement_meta.generation = compute_generation(&current_value, &replacement, &current_meta);
     if entry.version.status_subresource {
@@ -170,6 +174,9 @@ pub(super) async fn replace(
     set_metadata(&mut replacement, &replacement_meta)?;
     normalize_status_for_write(&entry, &mut replacement)?;
     validate_against_schema(&entry, &replacement)?;
+
+    let expected_revision = parse_client_resource_version(client_resource_version.as_deref())?
+        .or_else(|| resource_version_as_revision(&current_value));
 
     let envelope = envelope_from_value(&entry, &replacement, replacement_meta)?;
     let revision = operator
@@ -180,7 +187,7 @@ pub(super) async fn replace(
             namespace.as_deref(),
             &name,
             &envelope,
-            resource_version_as_revision(&current_value),
+            expected_revision,
         )
         .await?;
     inject_resource_version(&mut replacement, revision)?;
@@ -196,7 +203,13 @@ pub(super) async fn patch(
     name: String,
     patch: serde_json::Value,
 ) -> Result<HttpResponse, Box<StatusResponse>> {
-    let patch = patch_object(patch)?;
+    let mut patch = patch_object(patch)?;
+    // apiVersion and kind cannot be changed by a patch. Drop them before
+    // merging so a stale client-supplied value does not race against
+    // enforce_type_meta below; the type-meta is re-applied from the CRD
+    // registry entry, which is the only source of truth.
+    patch.remove("apiVersion");
+    patch.remove("kind");
     validate_patch_name(&patch, &name)?;
     let entry = lookup(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
@@ -319,6 +332,15 @@ pub(super) async fn patch_status(
     patch: serde_json::Value,
 ) -> Result<HttpResponse, Box<StatusResponse>> {
     let patch = patch_object(patch)?;
+    // The /status subresource only accepts changes to the status field.
+    // Rejecting other keys explicitly matches the built-in status_patch
+    // handler and prevents silent loss of client intent.
+    if !patch.keys().all(|key| key == "status") {
+        return Err(Box::new(StatusResponse::bad_request(
+            "PATCH /status must contain only the status field",
+            None,
+        )));
+    }
     let entry = lookup_status(operator, &group, &version, &plural)?;
     ensure_write_scope(&entry, namespace.as_deref())?;
     let current = get_existing(operator, &entry, namespace.as_deref(), &name).await?;

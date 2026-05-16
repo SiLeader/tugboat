@@ -22,6 +22,40 @@ use actix_web::{HttpResponse, delete, get, patch, post, put};
 use tugboat_resources::manifests::apiextensions::v1::CustomResourceDefinition;
 use tugboat_resources::validators::Validatable;
 
+async fn ensure_scope_unchanged(
+    operator: &ApiOperator,
+    name: &str,
+    new_scope: Option<&str>,
+) -> Result<(), Box<StatusResponse>> {
+    let Some(new_scope) = new_scope else {
+        return Ok(());
+    };
+    let current = operator
+        .store
+        .get::<CustomResourceDefinition>(None, name)
+        .await
+        .map_err(|err| Box::new(err.into()))?;
+    let Some(current) = current else {
+        return Ok(());
+    };
+    let Some(current_scope) = current.data.spec.as_ref().map(|spec| spec.scope.as_str()) else {
+        return Ok(());
+    };
+    if current_scope == new_scope {
+        return Ok(());
+    }
+    Err(Box::new(StatusResponse::invalid(
+        format!(
+            "CustomResourceDefinition spec.scope cannot be changed once set (current: \"{current_scope}\", requested: \"{new_scope}\")"
+        ),
+        Some(serde_json::json!({
+            "name": name,
+            "currentScope": current_scope,
+            "requestedScope": new_scope,
+        })),
+    )))
+}
+
 #[utoipa::path(
         responses(
             (status = 200, description = "Resource created", body = CustomResourceDefinition),
@@ -125,11 +159,14 @@ pub(super) async fn handle_custom_resource_definition_replace(
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<CustomResourceDefinition>, Box<StatusResponse>> {
     let replacement = replacement.into_inner();
+    let name = path.into_inner().name;
     validate_custom_resource_definition_schema(&replacement)?;
+    let new_scope = replacement.spec.as_ref().map(|spec| spec.scope.as_str());
+    ensure_scope_unchanged(&operator, &name, new_scope).await?;
     resource_handlers::replace_resource::<CustomResourceDefinition>(
         &operator,
         None,
-        path.into_inner().name,
+        name,
         replacement,
         ReplaceOptions {
             preserve_status: true,
@@ -156,11 +193,18 @@ pub(super) async fn handle_custom_resource_definition_patch(
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<CustomResourceDefinition>, Box<StatusResponse>> {
+    let name = path.into_inner().name;
+    let patch_inner = patch.into_inner();
+    let new_scope = patch_inner
+        .get("spec")
+        .and_then(|spec| spec.get("scope"))
+        .and_then(|scope| scope.as_str());
+    ensure_scope_unchanged(&operator, &name, new_scope).await?;
     resource_handlers::patch_resource_with_validation::<CustomResourceDefinition, _>(
         &operator,
         None,
-        path.into_inner().name,
-        patch.into_inner(),
+        name,
+        patch_inner,
         ReplaceOptions {
             preserve_status: true,
             use_client_resource_version: false,

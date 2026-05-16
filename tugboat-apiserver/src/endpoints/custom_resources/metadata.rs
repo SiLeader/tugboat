@@ -237,6 +237,20 @@ pub(super) fn resource_version_as_revision(value: &serde_json::Value) -> Option<
         .and_then(|rv| rv.parse::<i64>().ok())
 }
 
+pub(super) fn parse_client_resource_version(
+    value: Option<&str>,
+) -> Result<Option<i64>, Box<StatusResponse>> {
+    match value {
+        Some(raw) => raw.parse::<i64>().map(Some).map_err(|_| {
+            Box::new(StatusResponse::bad_request(
+                "metadata.resourceVersion must be a valid integer",
+                Some(serde_json::json!({ "resourceVersion": raw })),
+            ))
+        }),
+        None => Ok(None),
+    }
+}
+
 pub(super) fn generation_tracked_fields(
     value: &serde_json::Value,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -278,7 +292,10 @@ pub(super) fn set_deletion_timestamp(
 
 #[cfg(test)]
 mod tests {
-    use super::{generation_tracked_fields, next_generation, validate_create_name};
+    use super::{
+        generation_tracked_fields, next_generation, parse_client_resource_version,
+        validate_create_name,
+    };
     use serde_json::json;
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
@@ -327,5 +344,12 @@ mod tests {
         };
 
         assert!(validate_create_name(&meta).is_err());
+    }
+
+    #[test]
+    fn parse_client_resource_version_handles_present_absent_and_invalid() {
+        assert_eq!(parse_client_resource_version(None).unwrap(), None);
+        assert_eq!(parse_client_resource_version(Some("42")).unwrap(), Some(42));
+        assert!(parse_client_resource_version(Some("not-a-number")).is_err());
     }
 }

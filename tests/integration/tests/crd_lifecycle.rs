@@ -356,14 +356,25 @@ async fn crd_lifecycle_status_subresource_only_updates_status_when_enabled() -> 
     )
     .await?;
 
-    let patched = merge_patch_json(
+    // PATCH /status must only contain the status field. Non-status keys must
+    // be rejected so clients cannot accidentally mutate spec via the status
+    // subresource.
+    merge_patch_json(
         &client,
         &format!("{item}/status"),
-        &[StatusCode::OK],
+        &[StatusCode::BAD_REQUEST],
         json!({
             "status": {"phase": "Ready"},
             "spec": {"size": 99}
         }),
+    )
+    .await?;
+
+    let patched = merge_patch_json(
+        &client,
+        &format!("{item}/status"),
+        &[StatusCode::OK],
+        json!({"status": {"phase": "Ready"}}),
     )
     .await?;
     assert_eq!(patched["status"]["phase"], "Ready");

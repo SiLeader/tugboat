@@ -23,6 +23,11 @@ static NAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$").unwrap());
 static GENERATE_NAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("^[a-z0-9][-a-z0-9]*?$").unwrap());
+static DNS_SUBDOMAIN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$").unwrap()
+});
+static KIND_NAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Z][A-Za-z0-9]*$").unwrap());
 
 impl<T> Validator<T> for NameValidator
 where
@@ -50,6 +55,14 @@ impl NameValidator {
     pub fn is_valid_generate_name(name: &str) -> bool {
         !name.is_empty() && name.len() <= (253 - 5) && GENERATE_NAME_REGEX.is_match(name)
     }
+
+    pub fn is_valid_dns_subdomain(name: &str) -> bool {
+        !name.is_empty() && name.len() <= 253 && DNS_SUBDOMAIN_REGEX.is_match(name)
+    }
+
+    pub fn is_valid_kind_name(name: &str) -> bool {
+        !name.is_empty() && name.len() <= 253 && KIND_NAME_REGEX.is_match(name)
+    }
 }
 
 #[cfg(test)]
@@ -69,5 +82,28 @@ mod tests {
         assert!(NameValidator::is_valid_generate_name("valid-prefix-"));
         assert!(!NameValidator::is_valid_generate_name(""));
         assert!(!NameValidator::is_valid_generate_name("bad/prefix-"));
+    }
+
+    #[test]
+    fn validates_dns_subdomains() {
+        assert!(NameValidator::is_valid_dns_subdomain("example.com"));
+        assert!(NameValidator::is_valid_dns_subdomain("foo-bar.example.com"));
+        assert!(NameValidator::is_valid_dns_subdomain("widgets"));
+        assert!(!NameValidator::is_valid_dns_subdomain(""));
+        assert!(!NameValidator::is_valid_dns_subdomain("Example.com"));
+        assert!(!NameValidator::is_valid_dns_subdomain("example..com"));
+        assert!(!NameValidator::is_valid_dns_subdomain(".example.com"));
+        assert!(!NameValidator::is_valid_dns_subdomain("example/com"));
+    }
+
+    #[test]
+    fn validates_kind_names() {
+        assert!(NameValidator::is_valid_kind_name("Widget"));
+        assert!(NameValidator::is_valid_kind_name("WidgetList"));
+        assert!(NameValidator::is_valid_kind_name("ABC123"));
+        assert!(!NameValidator::is_valid_kind_name(""));
+        assert!(!NameValidator::is_valid_kind_name("widget"));
+        assert!(!NameValidator::is_valid_kind_name("Widget-A"));
+        assert!(!NameValidator::is_valid_kind_name("1Widget"));
     }
 }

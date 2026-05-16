@@ -18,7 +18,7 @@ fn default<T: Default + PartialEq>(t: &T) -> bool {
 
 pub mod apiextensions {
     pub mod v1 {
-        use crate::validators::{NamespaceProhibitedValidator, Validator};
+        use crate::validators::{NameValidator, NamespaceProhibitedValidator, Validator};
         use crate::{apply_resource, apply_validators, resource_api};
 
         include!(concat!(env!("OUT_DIR"), "/tugboat.apiextensions.v1.rs"));
@@ -50,8 +50,10 @@ pub mod apiextensions {
                 let Some(spec) = value.spec.as_ref() else {
                     return false;
                 };
-                if spec.group.is_empty() || !matches!(spec.scope.as_str(), "Namespaced" | "Cluster")
-                {
+                if !matches!(spec.scope.as_str(), "Namespaced" | "Cluster") {
+                    return false;
+                }
+                if !NameValidator::is_valid_dns_subdomain(&spec.group) {
                     return false;
                 }
                 if RESERVED_GROUPS.contains(&spec.group.as_str()) {
@@ -62,14 +64,25 @@ pub mod apiextensions {
                 }
 
                 let version = &spec.versions[0];
-                if version.name.is_empty() || !version.served || !version.storage {
+                if !NameValidator::is_valid_name(&version.name)
+                    || !version.served
+                    || !version.storage
+                {
                     return false;
                 }
 
                 let Some(names) = spec.names.as_ref() else {
                     return false;
                 };
-                if names.plural.is_empty() || names.kind.is_empty() {
+                if !NameValidator::is_valid_name(&names.plural)
+                    || !NameValidator::is_valid_name(&names.singular)
+                    || !NameValidator::is_valid_kind_name(&names.kind)
+                {
+                    return false;
+                }
+                if !names.list_kind.is_empty()
+                    && !NameValidator::is_valid_kind_name(&names.list_kind)
+                {
                     return false;
                 }
 
@@ -199,6 +212,29 @@ pub mod apiextensions {
                 let mut nonstorage = valid_crd();
                 nonstorage.spec.as_mut().unwrap().versions[0].storage = false;
                 assert!(!nonstorage.validate());
+            }
+
+            #[test]
+            fn crd_rejects_group_that_is_not_a_dns_subdomain() {
+                let mut crd = valid_crd();
+                crd.object_meta.as_mut().unwrap().name = Some("widgets.Example.com".to_string());
+                crd.spec.as_mut().unwrap().group = "Example.com".to_string();
+                assert!(!crd.validate());
+            }
+
+            #[test]
+            fn crd_rejects_plural_with_uppercase() {
+                let mut crd = valid_crd();
+                crd.object_meta.as_mut().unwrap().name = Some("Widgets.example.com".to_string());
+                crd.spec.as_mut().unwrap().names.as_mut().unwrap().plural = "Widgets".to_string();
+                assert!(!crd.validate());
+            }
+
+            #[test]
+            fn crd_rejects_kind_with_lowercase_initial() {
+                let mut crd = valid_crd();
+                crd.spec.as_mut().unwrap().names.as_mut().unwrap().kind = "widget".to_string();
+                assert!(!crd.validate());
             }
         }
     }
