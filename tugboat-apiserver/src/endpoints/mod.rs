@@ -24,6 +24,7 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use utoipa_actix_web::service_config::ServiceConfig;
 
+mod custom_resources;
 mod discovery;
 mod openid;
 mod resource_handlers;

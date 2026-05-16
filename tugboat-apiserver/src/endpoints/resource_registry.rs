@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::endpoints::custom_resources;
 use crate::endpoints::v1_apiextensions;
 use crate::endpoints::v1_apps;
 use crate::endpoints::v1_authorization;
@@ -185,6 +186,7 @@ pub(crate) fn register_resource_apis(service: &mut ServiceConfig) {
     for resource in all_resource_apis() {
         resource.register(service);
     }
+    custom_resources::register_custom_resource_routes(service);
 }
 
 #[cfg(test)]
