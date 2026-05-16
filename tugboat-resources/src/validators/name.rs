@@ -33,9 +33,9 @@ where
             return false;
         };
         if let Some(name) = &meta.name {
-            self.validate_name(name)
+            Self::is_valid_name(name)
         } else if let Some(generate_name) = &meta.generate_name {
-            self.validate_generate_name(generate_name)
+            Self::is_valid_generate_name(generate_name)
         } else {
             false
         }
@@ -43,11 +43,31 @@ where
 }
 
 impl NameValidator {
-    fn validate_name(&self, name: &str) -> bool {
+    pub fn is_valid_name(name: &str) -> bool {
         !name.is_empty() && name.len() <= 253 && NAME_REGEX.is_match(name)
     }
 
-    fn validate_generate_name(&self, name: &str) -> bool {
+    pub fn is_valid_generate_name(name: &str) -> bool {
         !name.is_empty() && name.len() <= (253 - 5) && GENERATE_NAME_REGEX.is_match(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NameValidator;
+
+    #[test]
+    fn validates_resource_names() {
+        assert!(NameValidator::is_valid_name("valid-name-1"));
+        assert!(!NameValidator::is_valid_name(""));
+        assert!(!NameValidator::is_valid_name("a/b"));
+        assert!(!NameValidator::is_valid_name("BadName"));
+    }
+
+    #[test]
+    fn validates_generate_names() {
+        assert!(NameValidator::is_valid_generate_name("valid-prefix-"));
+        assert!(!NameValidator::is_valid_generate_name(""));
+        assert!(!NameValidator::is_valid_generate_name("bad/prefix-"));
     }
 }

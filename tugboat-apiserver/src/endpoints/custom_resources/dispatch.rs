@@ -20,8 +20,8 @@ use super::metadata::{
     apply_new_metadata, extract_metadata, has_finalizers, inject_resource_version,
     normalize_status_for_write, preserve_identity_and_maybe_status, preserve_identity_metadata,
     preserve_identity_metadata_from_value, preserve_status, resource_version_as_revision,
-    set_deletion_timestamp, set_metadata, set_status, validate_metadata_name, validate_patch_name,
-    value_with_revision,
+    set_deletion_timestamp, set_metadata, set_status, validate_create_name, validate_metadata_name,
+    validate_patch_name, value_with_revision,
 };
 use super::validation::validate_against_schema;
 use super::watch::watch_custom;
@@ -72,7 +72,10 @@ pub(super) async fn create(
                 None,
             )));
         };
+        validate_create_name(&meta)?;
         meta.name = Some(operator.name_generator.generate(&generate_name).await);
+    } else {
+        validate_create_name(&meta)?;
     }
     meta = apply_new_metadata(meta);
     set_metadata(&mut value, &meta)?;

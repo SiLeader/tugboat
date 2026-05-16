@@ -142,6 +142,14 @@ impl CrdRegistry {
         }
     }
 
+    pub fn remove_crd_name(&self, crd_name: &str) {
+        self.inner
+            .write()
+            .expect("CRD registry lock poisoned")
+            .by_group_version_plural
+            .retain(|_, entry| !entry.matches_crd_name(crd_name));
+    }
+
     pub fn replace_all(&self, entries: Vec<CrdEntry>) -> Result<(), CrdRegistryError> {
         let mut by_group_version_plural = HashMap::with_capacity(entries.len());
         for entry in entries {
@@ -208,6 +216,14 @@ impl CrdEntry {
             self.version.name.clone(),
             self.plural.clone(),
         )
+    }
+
+    fn matches_crd_name(&self, crd_name: &str) -> bool {
+        crd_name == self.crd_name()
+    }
+
+    fn crd_name(&self) -> String {
+        format!("{}.{}", self.plural, self.group)
     }
 }
 
@@ -276,11 +292,19 @@ fn apply_watch_event(registry: &CrdRegistry, event: tugboat_resource_store::watc
             match CustomResourceDefinition::deserialize(kv.value.as_slice()) {
                 Ok(crd) => match CrdRegistry::from_crd(&crd) {
                     Some(entry) => {
+                        let crd_name = crd_name_from_crd_or_key(&crd, &kv.key)
+                            .unwrap_or_else(|| entry.crd_name());
+                        registry.remove_crd_name(&crd_name);
                         if let Err(err) = registry.upsert(entry) {
                             warn!("Ignoring CRD registry update: {err}");
                         }
                     }
-                    None => warn!("Ignoring invalid CRD watch event"),
+                    None => {
+                        if let Some(crd_name) = crd_name_from_crd_or_key(&crd, &kv.key) {
+                            registry.remove_crd_name(&crd_name);
+                        }
+                        warn!("Ignoring invalid CRD watch event");
+                    }
                 },
                 Err(err) => warn!("Failed to deserialize CRD watch event: {err}"),
             }
@@ -294,6 +318,19 @@ fn apply_watch_event(registry: &CrdRegistry, event: tugboat_resource_store::watc
     }
 }
 
+fn crd_name_from_crd_or_key(crd: &CustomResourceDefinition, key: &str) -> Option<String> {
+    crd.object_meta
+        .as_ref()
+        .and_then(|metadata| metadata.name.as_deref())
+        .map(str::to_string)
+        .or_else(|| {
+            key.rsplit('/')
+                .next()
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        })
+}
+
 fn ensure_group_allowed(group: &str) -> Result<(), CrdRegistryError> {
     if RESERVED_GROUPS.contains(&group) {
         Err(CrdRegistryError::ReservedGroup(group.to_string()))
@@ -304,7 +341,9 @@ fn ensure_group_allowed(group: &str) -> Result<(), CrdRegistryError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CrdRegistry, CrdRegistryError, CrdScope};
+    use super::{CrdRegistry, CrdRegistryError, CrdScope, apply_watch_event};
+    use tugboat_resource_store::serializer::Serializable;
+    use tugboat_resource_store::watch::{KeyValue, WatchEvent};
     use tugboat_resources::manifests::apiextensions::v1::{
         CustomResourceDefinition, CustomResourceDefinitionNames, CustomResourceDefinitionSpec,
         CustomResourceDefinitionVersion, CustomResourceSubresourceStatus,
@@ -419,5 +458,31 @@ mod tests {
 
         assert!(matches!(err, CrdRegistryError::ReservedGroup(group) if group == "apps"));
         assert!(registry.is_registered("example.com", "v1", "widgets"));
+    }
+
+    #[test]
+    fn modified_watch_event_removes_stale_key_for_same_crd_name() {
+        let registry = CrdRegistry::default();
+        let original = crd();
+        let mut updated = crd();
+        updated.spec.as_mut().unwrap().versions[0].name = "v2".to_string();
+
+        registry
+            .upsert(CrdRegistry::from_crd(&original).expect("valid CRD should convert"))
+            .expect("upsert should succeed");
+        assert!(registry.is_registered("example.com", "v1", "widgets"));
+
+        apply_watch_event(
+            &registry,
+            WatchEvent::Modified(KeyValue {
+                key: "/registry/apiextensions/customresourcedefinitions/widgets.example.com"
+                    .to_string(),
+                value: updated.serialize().expect("CRD should serialize"),
+                revision: 2,
+            }),
+        );
+
+        assert!(!registry.is_registered("example.com", "v1", "widgets"));
+        assert!(registry.is_registered("example.com", "v2", "widgets"));
     }
 }

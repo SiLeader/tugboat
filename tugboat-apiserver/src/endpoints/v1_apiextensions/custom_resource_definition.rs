@@ -156,7 +156,7 @@ pub(super) async fn handle_custom_resource_definition_patch(
     patch: Json<serde_json::Map<String, serde_json::Value>>,
     operator: Data<ApiOperator>,
 ) -> Result<ModifyResponse<CustomResourceDefinition>, Box<StatusResponse>> {
-    resource_handlers::patch_resource::<CustomResourceDefinition>(
+    resource_handlers::patch_resource_with_validation::<CustomResourceDefinition, _>(
         &operator,
         None,
         path.into_inner().name,
@@ -166,6 +166,7 @@ pub(super) async fn handle_custom_resource_definition_patch(
             use_client_resource_version: false,
             update_generation: true,
         },
+        validate_custom_resource_definition_schema,
     )
     .await
 }
@@ -236,5 +237,51 @@ fn validate_custom_resource_definition_schema(
             "Invalid CustomResourceDefinition resource",
             None,
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_custom_resource_definition_schema;
+    use tugboat_resources::manifests::apiextensions::v1::{
+        CustomResourceDefinition, CustomResourceDefinitionNames, CustomResourceDefinitionSpec,
+        CustomResourceDefinitionVersion, CustomResourceValidation,
+    };
+    use tugboat_resources::manifests::meta::v1::ObjectMeta;
+
+    fn crd_with_schema(schema: &str) -> CustomResourceDefinition {
+        CustomResourceDefinition {
+            object_meta: Some(ObjectMeta {
+                name: Some("widgets.example.com".to_string()),
+                ..Default::default()
+            }),
+            spec: Some(CustomResourceDefinitionSpec {
+                group: "example.com".to_string(),
+                names: Some(CustomResourceDefinitionNames {
+                    plural: "widgets".to_string(),
+                    singular: "widget".to_string(),
+                    kind: "Widget".to_string(),
+                    list_kind: "WidgetList".to_string(),
+                }),
+                scope: "Namespaced".to_string(),
+                versions: vec![CustomResourceDefinitionVersion {
+                    name: "v1".to_string(),
+                    served: true,
+                    storage: true,
+                    schema: Some(CustomResourceValidation {
+                        open_api_v3_schema: schema.to_string(),
+                    }),
+                    subresources: None,
+                }],
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn validate_custom_resource_definition_schema_rejects_invalid_json_schema() {
+        let crd = crd_with_schema(r#"{"type":"not-a-json-schema-type"}"#);
+
+        assert!(validate_custom_resource_definition_schema(&crd).is_err());
     }
 }

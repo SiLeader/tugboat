@@ -15,6 +15,7 @@
 use crate::crd_registry::CrdEntry;
 use crate::data::StatusResponse;
 use tugboat_resources::manifests::meta::v1::{ObjectMeta, Time};
+use tugboat_resources::validators::NameValidator;
 use uuid::Uuid;
 
 pub(super) fn extract_metadata(
@@ -52,6 +53,32 @@ pub(super) fn apply_new_metadata(mut meta: ObjectMeta) -> ObjectMeta {
     meta.generation = Some(1);
     meta.resource_version = None;
     meta
+}
+
+pub(super) fn validate_create_name(meta: &ObjectMeta) -> Result<(), Box<StatusResponse>> {
+    if let Some(name) = meta.name.as_deref() {
+        return if NameValidator::is_valid_name(name) {
+            Ok(())
+        } else {
+            Err(Box::new(StatusResponse::bad_request(
+                "metadata.name is invalid",
+                Some(serde_json::json!({ "name": name })),
+            )))
+        };
+    }
+
+    if let Some(generate_name) = meta.generate_name.as_deref() {
+        return if NameValidator::is_valid_generate_name(generate_name) {
+            Ok(())
+        } else {
+            Err(Box::new(StatusResponse::bad_request(
+                "metadata.generateName is invalid",
+                Some(serde_json::json!({ "generateName": generate_name })),
+            )))
+        };
+    }
+
+    Ok(())
 }
 
 pub(super) fn preserve_identity_metadata(current: &ObjectMeta, next: &mut ObjectMeta) {
@@ -251,8 +278,9 @@ pub(super) fn set_deletion_timestamp(
 
 #[cfg(test)]
 mod tests {
-    use super::{generation_tracked_fields, next_generation};
+    use super::{generation_tracked_fields, next_generation, validate_create_name};
     use serde_json::json;
+    use tugboat_resources::manifests::meta::v1::ObjectMeta;
 
     #[test]
     fn generation_ignores_metadata_type_meta_and_status() {
@@ -269,5 +297,35 @@ mod tests {
             serde_json::Map::from_iter([("spec".to_string(), json!({"size": 1}))])
         );
         assert_eq!(next_generation(Some(1)), Some(2));
+    }
+
+    #[test]
+    fn validate_create_name_rejects_path_separators() {
+        let meta = ObjectMeta {
+            name: Some("a/b".to_string()),
+            ..Default::default()
+        };
+
+        assert!(validate_create_name(&meta).is_err());
+    }
+
+    #[test]
+    fn validate_create_name_rejects_empty_name() {
+        let meta = ObjectMeta {
+            name: Some(String::new()),
+            ..Default::default()
+        };
+
+        assert!(validate_create_name(&meta).is_err());
+    }
+
+    #[test]
+    fn validate_create_name_rejects_invalid_generate_name() {
+        let meta = ObjectMeta {
+            generate_name: Some("bad/prefix-".to_string()),
+            ..Default::default()
+        };
+
+        assert!(validate_create_name(&meta).is_err());
     }
 }
