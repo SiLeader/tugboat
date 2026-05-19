@@ -271,7 +271,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use tugboat_vm_runtime_interface::run::{
-        VmCpuConfig, VmExecUser, VmMemoryConfig, VmRunRequest, VmUefiConfig, VmVolumeConfig,
+        VmCpuConfig, VmDiskImageFormat, VmExecUser, VmMemoryConfig, VmRunRequest, VmUefiConfig,
+        VmVolumeConfig,
     };
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -301,6 +302,7 @@ mod tests {
     ) -> VmRunRequest {
         VmRunRequest {
             image: image.to_string_lossy().into_owned(),
+            image_format: VmDiskImageFormat::Qcow2,
             cpu: VmCpuConfig {
                 architecture: "x86_64".to_string(),
                 cores: 1,

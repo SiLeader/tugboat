@@ -20,8 +20,10 @@ use crate::runtime::inner::Runtime;
 use tracing::{debug, info};
 use tugboat_resources::manifests::core::v1::{ShipClass, ShipSpec};
 use tugboat_resources::sized::SizedString;
+use tugboat_vm_image::Format as VmImageFormat;
 use tugboat_vm_runtime_interface::run::{
-    VmCpuConfig, VmMemoryConfig, VmNetworkConfig, VmRunRequest, VmUefiConfig, VmVolumeConfig,
+    VmCpuConfig, VmDiskImageFormat, VmMemoryConfig, VmNetworkConfig, VmRunRequest, VmUefiConfig,
+    VmVolumeConfig,
 };
 
 pub(crate) struct RuntimeCreateRequest<'a> {
@@ -92,6 +94,7 @@ impl RuntimeOperator {
         let vm_config = VmRunRequest {
             id: ship_id.clone(),
             image: image.location,
+            image_format: runtime_image_format(image.format),
             cpu: VmCpuConfig {
                 architecture: cpu.architecture,
                 cores: cpu.cores,
@@ -124,5 +127,29 @@ impl RuntimeOperator {
             ),
         );
         Ok(pid)
+    }
+}
+
+fn runtime_image_format(format: VmImageFormat) -> VmDiskImageFormat {
+    match format {
+        VmImageFormat::Qcow2 => VmDiskImageFormat::Qcow2,
+        VmImageFormat::Raw => VmDiskImageFormat::Raw,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VmDiskImageFormat, VmImageFormat, runtime_image_format};
+
+    #[test]
+    fn runtime_image_format_maps_pulled_image_format() {
+        assert_eq!(
+            runtime_image_format(VmImageFormat::Qcow2),
+            VmDiskImageFormat::Qcow2
+        );
+        assert_eq!(
+            runtime_image_format(VmImageFormat::Raw),
+            VmDiskImageFormat::Raw
+        );
     }
 }

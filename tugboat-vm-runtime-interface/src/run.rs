@@ -24,6 +24,8 @@ pub fn mount_namespace_path(id: &str) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct VmRunRequest {
     pub image: String,
+    #[serde(default = "default_vm_disk_image_format")]
+    pub image_format: VmDiskImageFormat,
     pub cpu: VmCpuConfig,
     pub memory: VmMemoryConfig,
     pub id: String,
@@ -38,6 +40,17 @@ pub struct VmRunRequest {
     pub restore_source_id: Option<String>,
     #[serde(default)]
     pub user: VmExecUser,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VmDiskImageFormat {
+    Qcow2,
+    Raw,
+}
+
+fn default_vm_disk_image_format() -> VmDiskImageFormat {
+    VmDiskImageFormat::Qcow2
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -132,7 +145,10 @@ fn default_vm_volume_format() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::mount_namespace_path;
+    use super::{
+        VmCpuConfig, VmDiskImageFormat, VmExecUser, VmMemoryConfig, VmRunRequest, VmUefiConfig,
+    };
+    use super::{VmVolumeConfig, mount_namespace_path};
 
     #[test]
     fn can_build_mount_namespace_path() {
@@ -140,5 +156,53 @@ mod tests {
             mount_namespace_path("ship-uid"),
             "/var/run/tugboat/mntns/ship-uid"
         );
+    }
+
+    #[test]
+    fn vm_run_request_serializes_image_format() {
+        let request = VmRunRequest {
+            image: "/images/disk.raw".to_string(),
+            image_format: VmDiskImageFormat::Raw,
+            cpu: VmCpuConfig {
+                architecture: "x86_64".to_string(),
+                cores: 2,
+            },
+            memory: VmMemoryConfig { size: 1024 },
+            id: "ship-uid".to_string(),
+            networks: Vec::new(),
+            volumes: vec![VmVolumeConfig::block("/data/disk.raw", "raw", true)],
+            uefi: VmUefiConfig { enabled: false },
+            incoming: None,
+            restore_handle: None,
+            restore_source_id: None,
+            user: VmExecUser::default(),
+        };
+
+        let value = serde_json::to_value(request).expect("serialize");
+
+        assert_eq!(value["imageFormat"], "raw");
+    }
+
+    #[test]
+    fn vm_run_request_defaults_missing_image_format_to_qcow2() {
+        let request: VmRunRequest = serde_json::from_value(serde_json::json!({
+            "image": "/images/disk.qcow2",
+            "cpu": {
+                "architecture": "x86_64",
+                "cores": 2
+            },
+            "memory": {
+                "size": 1024
+            },
+            "id": "ship-uid",
+            "networks": [],
+            "volumes": [],
+            "uefi": {
+                "enabled": false
+            }
+        }))
+        .expect("deserialize");
+
+        assert_eq!(request.image_format, VmDiskImageFormat::Qcow2);
     }
 }

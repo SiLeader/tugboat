@@ -322,7 +322,8 @@ mod tests {
     use super::volume_copy::BootDisk;
     use crate::{CloudHypervisorBootConfig, CloudHypervisorVmConfig};
     use tugboat_vm_runtime_interface::run::{
-        VmCpuConfig, VmMemoryConfig, VmNetworkConfig, VmRunRequest, VmUefiConfig, VmVolumeConfig,
+        VmCpuConfig, VmDiskImageFormat, VmMemoryConfig, VmNetworkConfig, VmRunRequest,
+        VmUefiConfig, VmVolumeConfig,
     };
 
     fn vm_config() -> CloudHypervisorVmConfig {
@@ -341,6 +342,7 @@ mod tests {
     fn run_request(uefi_enabled: bool) -> VmRunRequest {
         VmRunRequest {
             image: "/images/base.raw".into(),
+            image_format: VmDiskImageFormat::Raw,
             cpu: VmCpuConfig {
                 architecture: "x86_64".into(),
                 cores: 4,
