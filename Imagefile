@@ -15,4 +15,5 @@
 FROM ./ubuntu-server-24.04.qcow2
 
 ARCH x64
+# Supported values: qcow2, raw.
 FORMAT qcow2

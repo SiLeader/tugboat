@@ -32,3 +32,6 @@ base64.workspace = true
 tokio = { workspace = true, features = ["fs", "process", "io-util"] }
 
 flate2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

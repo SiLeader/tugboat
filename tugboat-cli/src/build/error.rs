@@ -16,7 +16,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub(crate) enum BuildError {
-    #[error("Invalid Imagefile format: {0}")]
+    #[error("Invalid Imagefile format: {0} (supported values: qcow2, raw)")]
     InvalidFormat(String),
     #[error("Invalid Imagefile arch: {0}")]
     InvalidArch(String),

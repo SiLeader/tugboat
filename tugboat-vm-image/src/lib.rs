@@ -22,6 +22,8 @@ use oci_distribution::errors::OciDistributionError;
 use oci_distribution::{Client, ParseError};
 use thiserror::Error;
 
+pub(crate) const METADATA_MEDIA_TYPE: &str = "application/vnd.tugboat.metadata.v1+json";
+
 pub(crate) const MAX_DISK_IMAGE_UNCOMPRESSED_BYTES: u64 = 128 * 1024 * 1024 * 1024;
 
 #[derive(Clone)]
@@ -55,9 +57,51 @@ pub enum Arch {
     X64,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Format {
     Qcow2,
+    Raw,
+}
+
+impl Format {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Qcow2 => "qcow2",
+            Self::Raw => "raw",
+        }
+    }
+
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::Qcow2 => "disk.qcow2",
+            Self::Raw => "disk.raw",
+        }
+    }
+
+    pub fn media_type(self) -> &'static str {
+        match self {
+            Self::Qcow2 => "application/vnd.tugboat.disk.qcow2.v1+gzip",
+            Self::Raw => "application/vnd.tugboat.disk.raw.v1+gzip",
+        }
+    }
+}
+
+impl std::fmt::Display for Format {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for Format {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "qcow2" => Ok(Self::Qcow2),
+            "raw" => Ok(Self::Raw),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -74,6 +118,40 @@ pub enum Error {
     FileLocationEncode,
     #[error("Disk image '{0}' is missing")]
     DiskImageMissing(String),
+    #[error("Image '{0}' contains multiple supported disk image layers")]
+    MultipleDiskImageLayers(String),
     #[error("Disk image layer exceeds maximum uncompressed size of {limit} bytes")]
     ImageLayerTooLarge { limit: u64 },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Format;
+    use std::str::FromStr;
+
+    #[test]
+    fn format_helpers_return_external_values() {
+        assert_eq!(Format::Qcow2.as_str(), "qcow2");
+        assert_eq!(Format::Qcow2.file_name(), "disk.qcow2");
+        assert_eq!(
+            Format::Qcow2.media_type(),
+            "application/vnd.tugboat.disk.qcow2.v1+gzip"
+        );
+
+        assert_eq!(Format::Raw.as_str(), "raw");
+        assert_eq!(Format::Raw.file_name(), "disk.raw");
+        assert_eq!(
+            Format::Raw.media_type(),
+            "application/vnd.tugboat.disk.raw.v1+gzip"
+        );
+    }
+
+    #[test]
+    fn format_from_str_accepts_exact_lowercase_values() {
+        assert_eq!(Format::from_str("qcow2"), Ok(Format::Qcow2));
+        assert_eq!(Format::from_str("raw"), Ok(Format::Raw));
+        assert!(Format::from_str("QCOW2").is_err());
+        assert!(Format::from_str("Raw").is_err());
+        assert!(Format::from_str("vmdk").is_err());
+    }
 }
