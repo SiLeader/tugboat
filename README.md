@@ -47,7 +47,8 @@ Existing VM orchestration systems come with significant challenges:
 - Clear separation of agent and runtime responsibilities
     - Similar to Kubernetes’ kubelet/runtime model
 - VM images as OCI artifacts
-    - `Imagefile → build → push to registry → referenced by Ship`
+    - `Imagefile -> build -> push to registry -> referenced by Ship`
+    - Supports `qcow2` and `raw` boot disk formats
 - CNI support
     - `NetworkClass` / `ClusterNetworkClass` based network configuration
     - agent publishes plugin readiness to `Node.status.cniPlugins`
@@ -71,6 +72,8 @@ Existing VM orchestration systems come with significant challenges:
 The current crate and extension boundaries are documented in
 [docs/architecture.md](./docs/architecture.md). Contributor-facing resource registration steps are documented in
 [docs/resource-registration.md](./docs/resource-registration.md).
+VM image build, format, runtime support, and cache layout details are documented in
+[docs/vm-images.md](./docs/vm-images.md).
 
 ### Mapping to Kubernetes Concepts
 

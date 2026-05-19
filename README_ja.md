@@ -45,7 +45,8 @@ Tugboatはこれらの問題を解決するために生まれました。
 - agent / runtimeの責務分離
     - Kubernetesのkubelet / runtimeと同じ思想
 - OCIアーティファクトとしてのVMイメージ
-    - Imagefile → build → registryにpush → Shipから参照
+    - Imagefile -> build -> registryにpush -> Shipから参照
+    - boot disk format は `qcow2` と `raw` に対応
 - CNIに対応
     - `NetworkClass` / `ClusterNetworkClass`によるネットワーク設定
     - agent が `Node.status.cniPlugins` に plugin readiness を公開
@@ -65,6 +66,9 @@ Tugboatはこれらの問題を解決するために生まれました。
 ## Architecture overview
 
 ![architecture overview](./docs/images/tugboat-structure.svg)
+
+crate 境界は [docs/architecture.md](./docs/architecture.md)、VM image の build、format、runtime 対応状況、cache layout は
+[docs/ja/vm-images.md](./docs/ja/vm-images.md) にまとめています。
 
 ### Kubernetesリソースとの対応
 

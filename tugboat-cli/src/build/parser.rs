@@ -52,10 +52,8 @@ impl FromStr for Imagefile {
                 };
             } else if line.starts_with("FORMAT ") {
                 let format_str = line.trim_start_matches("FORMAT ").trim();
-                format = match format_str {
-                    "qcow2" => Format::Qcow2,
-                    _ => return Err(BuildError::InvalidFormat(format_str.to_string())),
-                };
+                format = Format::from_str(format_str)
+                    .map_err(|_| BuildError::InvalidFormat(format_str.to_string()))?;
             }
         }
         if image.is_empty() {
@@ -81,5 +79,36 @@ impl Imagefile {
         debug!("Reading disk image from: {}", self.from);
         let image = self.disk_path(context);
         tokio::fs::read(image).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Imagefile;
+    use crate::build::error::BuildError;
+    use std::str::FromStr;
+    use tugboat_vm_image::Format;
+
+    #[test]
+    fn parses_raw_format() {
+        let imagefile =
+            Imagefile::from_str("FROM ./disk.raw\nARCH x64\nFORMAT raw\n").expect("imagefile");
+
+        assert_eq!(imagefile.format, Format::Raw);
+    }
+
+    #[test]
+    fn missing_format_defaults_to_qcow2() {
+        let imagefile = Imagefile::from_str("FROM ./disk.qcow2\nARCH x64\n").expect("imagefile");
+
+        assert_eq!(imagefile.format, Format::Qcow2);
+    }
+
+    #[test]
+    fn invalid_format_errors() {
+        let err = Imagefile::from_str("FROM ./disk.vmdk\nFORMAT vmdk\n")
+            .expect_err("invalid format should fail");
+
+        assert!(matches!(err, BuildError::InvalidFormat(format) if format == "vmdk"));
     }
 }

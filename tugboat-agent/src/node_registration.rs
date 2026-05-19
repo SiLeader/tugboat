@@ -13,9 +13,11 @@
 // limitations under the License.
 
 use crate::config::TopologyConfig;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 use tugboat_client::{Api, TugboatClient};
@@ -29,6 +31,7 @@ use tugboat_resources::{
     NODE_ARCH_LABEL_KEY, NODE_HOSTNAME_LABEL_KEY, NODE_REGION_LABEL_KEY,
     NODE_RUNTIME_CLASS_LABEL_KEY, NODE_ZONE_LABEL_KEY,
 };
+use tugboat_vm_image::Format as VmImageFormat;
 
 const PROC_CPUINFO_PATH: &str = "/proc/cpuinfo";
 const PROC_MEMINFO_PATH: &str = "/proc/meminfo";
@@ -42,6 +45,13 @@ const DEFAULT_FLANNEL_SUBNET_FILE: &str = "/run/flannel/subnet.env";
 const DEFAULT_FLANNEL_DATA_DIR: &str = "/var/lib/cni/flannel";
 const REQUIRED_CNI_PLUGINS: [&str; 2] = ["bridge", "loopback"];
 const OPTIONAL_CNI_PLUGINS: [&str; 2] = ["flannel", "portmap"];
+
+#[derive(Debug, Deserialize)]
+struct ImageCacheMetadata {
+    image: String,
+    format: String,
+    disk: String,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum NodeRegistrationError {
@@ -373,23 +383,102 @@ fn probe_cached_images(image_cache_dir: &Path) -> Result<Vec<NodeImageStatus>, i
         if !entry.file_type()?.is_dir() {
             continue;
         }
-        let reference_path = entry.path().join("reference");
-        if !reference_path.try_exists()? {
-            continue;
+        let entry_path = entry.path();
+        if entry_path.join("metadata.json").try_exists()? {
+            if let Some(image) = probe_cached_image_metadata(&entry_path)? {
+                images.push(image);
+            }
+        } else if let Some(image) = probe_legacy_cached_image(&entry_path)? {
+            images.push(image);
         }
-        let image = std::fs::read_to_string(&reference_path)?.trim().to_string();
-        if image.is_empty() {
-            continue;
-        }
-        let disk_path = entry.path().join("disk.qcow2");
-        let size_bytes = std::fs::metadata(disk_path)
-            .ok()
-            .and_then(|metadata| i64::try_from(metadata.len()).ok())
-            .filter(|size| *size > 0);
-        images.push(NodeImageStatus { image, size_bytes });
     }
     images.sort_by(|a, b| a.image.cmp(&b.image));
     Ok(images)
+}
+
+fn probe_cached_image_metadata(
+    cache_entry_dir: &Path,
+) -> Result<Option<NodeImageStatus>, io::Error> {
+    let metadata_path = cache_entry_dir.join("metadata.json");
+    if !metadata_path.try_exists()? {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&metadata_path)?;
+    let metadata = match serde_json::from_str::<ImageCacheMetadata>(&content) {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            warn!(
+                "Ignoring image cache metadata '{}': {err}",
+                metadata_path.display()
+            );
+            return Ok(None);
+        }
+    };
+    let image = metadata.image.trim().to_string();
+    if image.is_empty() {
+        return Ok(None);
+    }
+    if VmImageFormat::from_str(&metadata.format).is_err() {
+        warn!(
+            "Ignoring image cache metadata '{}' with unsupported format '{}'",
+            metadata_path.display(),
+            metadata.format
+        );
+        return Ok(None);
+    }
+    let mut disk_components = Path::new(&metadata.disk).components();
+    if !matches!(disk_components.next(), Some(Component::Normal(_)))
+        || disk_components.next().is_some()
+    {
+        warn!(
+            "Ignoring image cache metadata '{}' with invalid disk path '{}'",
+            metadata_path.display(),
+            metadata.disk
+        );
+        return Ok(None);
+    }
+    let disk_path = cache_entry_dir.join(&metadata.disk);
+    cached_image_status(image, &disk_path)
+}
+
+fn probe_legacy_cached_image(cache_entry_dir: &Path) -> Result<Option<NodeImageStatus>, io::Error> {
+    let reference_path = cache_entry_dir.join("reference");
+    if !reference_path.try_exists()? {
+        return Ok(None);
+    }
+    let image = std::fs::read_to_string(&reference_path)?.trim().to_string();
+    if image.is_empty() {
+        return Ok(None);
+    }
+    cached_image_status(image, &cache_entry_dir.join("disk.qcow2"))
+}
+
+fn cached_image_status(
+    image: String,
+    disk_path: &Path,
+) -> Result<Option<NodeImageStatus>, io::Error> {
+    let metadata = match std::fs::metadata(disk_path) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(_) => {
+            warn!(
+                "Ignoring cached image '{}' because disk path '{}' is not a file",
+                image,
+                disk_path.display()
+            );
+            return Ok(None);
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            warn!(
+                "Ignoring cached image '{}' because disk file '{}' is missing",
+                image,
+                disk_path.display()
+            );
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
+    let size_bytes = i64::try_from(metadata.len()).ok().filter(|size| *size > 0);
+    Ok(Some(NodeImageStatus { image, size_bytes }))
 }
 
 fn probe_plugin_binary(bin_dir: &str, plugin: &str) -> Result<NodeCniPluginStatus, io::Error> {
@@ -906,6 +995,108 @@ mod tests {
         cleanup_test_dir(&base);
     }
 
+    #[test]
+    fn probe_cached_images_reports_legacy_qcow2_entries() {
+        let base = test_dir("cached-images-legacy");
+        let entry = base.join("sha256-legacy");
+        std::fs::create_dir_all(&entry).unwrap();
+        std::fs::write(entry.join("reference"), "registry.example/app:qcow2\n").unwrap();
+        std::fs::write(entry.join("disk.qcow2"), b"qcow2-disk").unwrap();
+
+        let images = probe_cached_images(&base).unwrap();
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].image, "registry.example/app:qcow2");
+        assert_eq!(images[0].size_bytes, Some(10));
+        cleanup_test_dir(&base);
+    }
+
+    #[test]
+    fn probe_cached_images_reports_metadata_entries_for_each_format() {
+        let base = test_dir("cached-images-metadata");
+        create_cached_image_metadata(
+            &base.join("sha256-qcow2"),
+            "registry.example/app:qcow2",
+            "qcow2",
+            "disk.qcow2",
+            b"qcow2-disk",
+        );
+        create_cached_image_metadata(
+            &base.join("sha256-raw"),
+            "registry.example/app:raw",
+            "raw",
+            "disk.raw",
+            b"raw-disk",
+        );
+
+        let images = probe_cached_images(&base).unwrap();
+
+        assert_eq!(
+            images
+                .iter()
+                .map(|image| (image.image.as_str(), image.size_bytes))
+                .collect::<Vec<_>>(),
+            vec![
+                ("registry.example/app:qcow2", Some(10)),
+                ("registry.example/app:raw", Some(8)),
+            ]
+        );
+        cleanup_test_dir(&base);
+    }
+
+    #[test]
+    fn probe_cached_images_ignores_broken_metadata_and_missing_disks() {
+        let base = test_dir("cached-images-broken");
+        let invalid_json = base.join("invalid-json");
+        std::fs::create_dir_all(&invalid_json).unwrap();
+        std::fs::write(invalid_json.join("metadata.json"), "{not-json").unwrap();
+
+        let unsupported_format = base.join("unsupported-format");
+        std::fs::create_dir_all(&unsupported_format).unwrap();
+        std::fs::write(
+            unsupported_format.join("metadata.json"),
+            r#"{"image":"registry.example/app:vmdk","format":"vmdk","disk":"disk.vmdk"}"#,
+        )
+        .unwrap();
+
+        let missing_disk = base.join("missing-disk");
+        std::fs::create_dir_all(&missing_disk).unwrap();
+        std::fs::write(
+            missing_disk.join("metadata.json"),
+            r#"{"image":"registry.example/app:raw","format":"raw","disk":"disk.raw"}"#,
+        )
+        .unwrap();
+
+        let dot_disk = base.join("dot-disk");
+        std::fs::create_dir_all(&dot_disk).unwrap();
+        std::fs::write(
+            dot_disk.join("metadata.json"),
+            r#"{"image":"registry.example/app:dot","format":"raw","disk":"."}"#,
+        )
+        .unwrap();
+
+        let directory_disk = base.join("directory-disk");
+        std::fs::create_dir_all(directory_disk.join("disk.raw")).unwrap();
+        std::fs::write(
+            directory_disk.join("metadata.json"),
+            r#"{"image":"registry.example/app:dir","format":"raw","disk":"disk.raw"}"#,
+        )
+        .unwrap();
+
+        let legacy_missing_disk = base.join("legacy-missing-disk");
+        std::fs::create_dir_all(&legacy_missing_disk).unwrap();
+        std::fs::write(
+            legacy_missing_disk.join("reference"),
+            "registry.example/app:legacy\n",
+        )
+        .unwrap();
+
+        let images = probe_cached_images(&base).unwrap();
+
+        assert!(images.is_empty());
+        cleanup_test_dir(&base);
+    }
+
     fn test_cni_config(bin_dir: &Path) -> CniOperatorConfig {
         toml::from_str(&format!(
             r#"[location]
@@ -918,6 +1109,22 @@ netns = "{}"
             bin_dir.join("netns").display()
         ))
         .unwrap()
+    }
+
+    fn create_cached_image_metadata(
+        entry: &Path,
+        image: &str,
+        format: &str,
+        disk: &str,
+        disk_content: &[u8],
+    ) {
+        std::fs::create_dir_all(entry).unwrap();
+        std::fs::write(entry.join(disk), disk_content).unwrap();
+        std::fs::write(
+            entry.join("metadata.json"),
+            format!(r#"{{"image":"{image}","format":"{format}","disk":"{disk}"}}"#),
+        )
+        .unwrap();
     }
 
     fn test_dir(name: &str) -> PathBuf {
