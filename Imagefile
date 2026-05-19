@@ -12,8 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# qcow2 example:
 FROM ./ubuntu-server-24.04.qcow2
 
 ARCH x64
 # Supported values: qcow2, raw.
 FORMAT qcow2
+
+# raw example:
+# FROM ./ubuntu-server-24.04.raw
+# ARCH x64
+# FORMAT raw
