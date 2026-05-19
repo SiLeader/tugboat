@@ -16,7 +16,7 @@ use crate::config::TopologyConfig;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -426,7 +426,10 @@ fn probe_cached_image_metadata(
         );
         return Ok(None);
     }
-    if Path::new(&metadata.disk).components().count() != 1 {
+    let mut disk_components = Path::new(&metadata.disk).components();
+    if !matches!(disk_components.next(), Some(Component::Normal(_)))
+        || disk_components.next().is_some()
+    {
         warn!(
             "Ignoring image cache metadata '{}' with invalid disk path '{}'",
             metadata_path.display(),
@@ -454,18 +457,27 @@ fn cached_image_status(
     image: String,
     disk_path: &Path,
 ) -> Result<Option<NodeImageStatus>, io::Error> {
-    if !disk_path.try_exists()? {
-        warn!(
-            "Ignoring cached image '{}' because disk file '{}' is missing",
-            image,
-            disk_path.display()
-        );
-        return Ok(None);
-    }
-    let size_bytes = std::fs::metadata(disk_path)
-        .ok()
-        .and_then(|metadata| i64::try_from(metadata.len()).ok())
-        .filter(|size| *size > 0);
+    let metadata = match std::fs::metadata(disk_path) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(_) => {
+            warn!(
+                "Ignoring cached image '{}' because disk path '{}' is not a file",
+                image,
+                disk_path.display()
+            );
+            return Ok(None);
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            warn!(
+                "Ignoring cached image '{}' because disk file '{}' is missing",
+                image,
+                disk_path.display()
+            );
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
+    let size_bytes = i64::try_from(metadata.len()).ok().filter(|size| *size > 0);
     Ok(Some(NodeImageStatus { image, size_bytes }))
 }
 
@@ -1052,6 +1064,22 @@ mod tests {
         std::fs::write(
             missing_disk.join("metadata.json"),
             r#"{"image":"registry.example/app:raw","format":"raw","disk":"disk.raw"}"#,
+        )
+        .unwrap();
+
+        let dot_disk = base.join("dot-disk");
+        std::fs::create_dir_all(&dot_disk).unwrap();
+        std::fs::write(
+            dot_disk.join("metadata.json"),
+            r#"{"image":"registry.example/app:dot","format":"raw","disk":"."}"#,
+        )
+        .unwrap();
+
+        let directory_disk = base.join("directory-disk");
+        std::fs::create_dir_all(directory_disk.join("disk.raw")).unwrap();
+        std::fs::write(
+            directory_disk.join("metadata.json"),
+            r#"{"image":"registry.example/app:dir","format":"raw","disk":"disk.raw"}"#,
         )
         .unwrap();
 
