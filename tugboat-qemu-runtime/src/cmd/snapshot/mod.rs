@@ -13,12 +13,14 @@
 // limitations under the License.
 
 use crate::cmd::qmp::{connect_qmp, execute_with_timeout};
-use crate::execute::vm::QemuVmConfig;
+use crate::execute::vm::{BootDiskState, QemuVmConfig, boot_disk_extension};
 use clap::Parser;
 use qapi::qmp::human_monitor_command;
+use std::path::PathBuf;
 use tugboat_runtime_common::config::load_config;
 use tugboat_runtime_common::snapshot::ship_snapshot_dir;
 use tugboat_runtime_common::validate::validate_safe_id;
+use tugboat_vm_runtime_interface::run::VmDiskImageFormat;
 use tugboat_vm_runtime_interface::snapshot::{
     VmSnapshotCreateRequest, VmSnapshotCreateResponse, VmSnapshotDeleteRequest, VmSnapshotEntry,
     VmSnapshotListRequest, VmSnapshotListResponse, VmSnapshotMode, VmSnapshotRestoreRequest,
@@ -55,6 +57,7 @@ pub async fn snapshot_create(config: QemuVmConfig, args: SnapshotCreateArgs) -> 
     req.validate()
         .map_err(|e| crate::Error::Validation(e.to_string()))?;
     validate_safe_id(&req.ship_id, "vm id")?;
+    ensure_internal_snapshots_supported(&config, &req.ship_id)?;
 
     let handle = derive_snapshot_handle(&req.ship_id);
     // Ensure the per-Ship staging directory exists, even though internal
@@ -86,6 +89,7 @@ pub async fn snapshot_delete(config: QemuVmConfig, args: SnapshotDeleteArgs) -> 
     req.validate()
         .map_err(|e| crate::Error::Validation(e.to_string()))?;
     validate_safe_id(&req.ship_id, "vm id")?;
+    ensure_internal_snapshots_supported(&config, &req.ship_id)?;
 
     let hmp = format!("delvm {}", req.handle);
     run_hmp(&config, &req.ship_id, &hmp, "Timed out issuing delvm").await?;
@@ -100,6 +104,7 @@ pub async fn snapshot_restore(
     req.validate()
         .map_err(|e| crate::Error::Validation(e.to_string()))?;
     validate_safe_id(&req.ship_id, "vm id")?;
+    ensure_internal_snapshots_supported(&config, &req.ship_id)?;
 
     let hmp = format!("loadvm {}", req.handle);
     run_hmp(&config, &req.ship_id, &hmp, "Timed out issuing loadvm").await?;
@@ -111,6 +116,7 @@ pub async fn snapshot_list(config: QemuVmConfig, args: SnapshotListArgs) -> crat
     req.validate()
         .map_err(|e| crate::Error::Validation(e.to_string()))?;
     validate_safe_id(&req.ship_id, "vm id")?;
+    ensure_internal_snapshots_supported(&config, &req.ship_id)?;
 
     let output = run_hmp(
         &config,
@@ -160,6 +166,51 @@ fn derive_snapshot_handle(ship_id: &str) -> String {
     let suffix = &suffix[..8];
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
     format!("{ship_id}-{timestamp}-{suffix}")
+}
+
+fn boot_disk_state_path(config: &QemuVmConfig, ship_id: &str) -> PathBuf {
+    PathBuf::from(&config.disk_image_location).join(format!("{ship_id}.boot.json"))
+}
+
+fn boot_disk_path(config: &QemuVmConfig, ship_id: &str, format: VmDiskImageFormat) -> PathBuf {
+    PathBuf::from(&config.disk_image_location)
+        .join(format!("{ship_id}.{}", boot_disk_extension(format)))
+}
+
+fn read_boot_disk_state(
+    config: &QemuVmConfig,
+    ship_id: &str,
+) -> crate::Result<Option<BootDiskState>> {
+    let state_path = boot_disk_state_path(config, ship_id);
+    match std::fs::read_to_string(&state_path) {
+        Ok(contents) => serde_json::from_str(&contents)
+            .map(Some)
+            .map_err(crate::Error::Json),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(crate::Error::Io(e)),
+    }
+}
+
+fn ensure_internal_snapshots_supported(config: &QemuVmConfig, ship_id: &str) -> crate::Result<()> {
+    if let Some(state) = read_boot_disk_state(config, ship_id)? {
+        return match state.format {
+            VmDiskImageFormat::Qcow2 => Ok(()),
+            VmDiskImageFormat::Raw => Err(raw_snapshot_error(ship_id)),
+        };
+    }
+
+    let raw_disk = boot_disk_path(config, ship_id, VmDiskImageFormat::Raw);
+    if raw_disk.exists() {
+        return Err(raw_snapshot_error(ship_id));
+    }
+
+    Ok(())
+}
+
+fn raw_snapshot_error(ship_id: &str) -> crate::Error {
+    crate::Error::ActionFailed(format!(
+        "QEMU internal snapshots are not supported for raw-backed VM '{ship_id}'; use qcow2 boot images or add external raw snapshot support"
+    ))
 }
 
 /// Parse the textual output of `info snapshots` into snapshot entries.
@@ -231,7 +282,34 @@ fn parse_size_to_bytes(value: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_snapshot_handle, parse_info_snapshots, parse_size_to_bytes};
+    use super::{
+        derive_snapshot_handle, ensure_internal_snapshots_supported, parse_info_snapshots,
+        parse_size_to_bytes,
+    };
+    use crate::execute::vm::{
+        BootDiskState, QemuVmConfig, QemuVmConfigExecutables, QemuVmConfigKvm,
+    };
+    use std::path::{Path, PathBuf};
+    use tugboat_vm_runtime_interface::run::VmDiskImageFormat;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tugboat-qemu-snapshot-{name}-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    fn test_config(disk_dir: &Path) -> QemuVmConfig {
+        QemuVmConfig {
+            executables: QemuVmConfigExecutables {
+                qemu: "qemu-system-x86_64".to_string(),
+            },
+            disk_image_location: disk_dir.to_string_lossy().into_owned(),
+            kvm: QemuVmConfigKvm { enabled: false },
+            uefi: None,
+            snapshot_dir: None,
+        }
+    }
 
     #[test]
     fn derive_snapshot_handle_starts_with_ship_id() {
@@ -261,5 +339,68 @@ mod tests {
         assert_eq!(parse_size_to_bytes("1G"), Some(1024 * 1024 * 1024));
         assert_eq!(parse_size_to_bytes("512"), Some(512));
         assert_eq!(parse_size_to_bytes("garbage"), None);
+    }
+
+    #[test]
+    fn internal_snapshots_reject_raw_boot_disk_state() {
+        let dir = temp_dir("raw-state");
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = BootDiskState {
+            path: dir.join("ship-a.raw").to_string_lossy().into_owned(),
+            format: VmDiskImageFormat::Raw,
+        };
+        std::fs::write(
+            dir.join("ship-a.boot.json"),
+            serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+
+        let err = ensure_internal_snapshots_supported(&test_config(&dir), "ship-a").unwrap_err();
+
+        match err {
+            crate::Error::ActionFailed(message) => {
+                assert!(message.contains("raw-backed VM 'ship-a'"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn internal_snapshots_reject_legacy_raw_disk_without_state() {
+        let dir = temp_dir("legacy-raw");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ship-a.raw"), b"raw-disk").unwrap();
+
+        let err = ensure_internal_snapshots_supported(&test_config(&dir), "ship-a").unwrap_err();
+
+        match err {
+            crate::Error::ActionFailed(message) => {
+                assert!(message.contains("raw-backed VM 'ship-a'"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn internal_snapshots_allow_qcow2_boot_disk_state() {
+        let dir = temp_dir("qcow2-state");
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = BootDiskState {
+            path: dir.join("ship-a.qcow2").to_string_lossy().into_owned(),
+            format: VmDiskImageFormat::Qcow2,
+        };
+        std::fs::write(
+            dir.join("ship-a.boot.json"),
+            serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+
+        ensure_internal_snapshots_supported(&test_config(&dir), "ship-a").unwrap();
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

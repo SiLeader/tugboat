@@ -17,17 +17,59 @@ use std::path::PathBuf;
 use tokio::fs::{copy, metadata};
 use tracing::{debug, info};
 use tugboat_runtime_common::validate::validate_safe_id;
+use tugboat_vm_runtime_interface::run::VmDiskImageFormat;
 
-pub struct BootDisk(pub String);
+#[derive(Debug, Clone)]
+pub struct BootDisk {
+    pub path: String,
+    pub format: VmDiskImageFormat,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BootDiskState {
+    pub path: String,
+    pub format: VmDiskImageFormat,
+}
+
+pub(crate) fn boot_disk_extension(format: VmDiskImageFormat) -> &'static str {
+    match format {
+        VmDiskImageFormat::Qcow2 => "qcow2",
+        VmDiskImageFormat::Raw => "raw",
+    }
+}
+
+pub(crate) fn boot_disk_format_name(format: VmDiskImageFormat) -> &'static str {
+    match format {
+        VmDiskImageFormat::Qcow2 => "qcow2",
+        VmDiskImageFormat::Raw => "raw",
+    }
+}
 
 impl QemuVm<'_> {
-    fn boot_disk_path(&self, id: &str) -> PathBuf {
-        PathBuf::from(&self.config.disk_image_location).join(format!("{id}.qcow2"))
+    pub(crate) fn boot_disk_path(&self, id: &str, format: VmDiskImageFormat) -> PathBuf {
+        PathBuf::from(&self.config.disk_image_location)
+            .join(format!("{id}.{}", boot_disk_extension(format)))
+    }
+
+    pub(crate) fn boot_disk_state_path(&self, id: &str) -> PathBuf {
+        PathBuf::from(&self.config.disk_image_location).join(format!("{id}.boot.json"))
+    }
+
+    async fn write_boot_disk_state(&self, disk: &std::path::Path) -> crate::Result<()> {
+        let state = BootDiskState {
+            path: disk.to_string_lossy().into_owned(),
+            format: self.args.image_format,
+        };
+        let state_path = self.boot_disk_state_path(&self.args.id);
+        let contents = serde_json::to_vec(&state)?;
+        tokio::fs::write(state_path, contents).await?;
+        Ok(())
     }
 
     pub async fn create_boot_disk(&self) -> crate::Result<BootDisk> {
         info!("Creating boot disk");
-        let disk = self.boot_disk_path(&self.args.id);
+        let disk = self.boot_disk_path(&self.args.id, self.args.image_format);
         if self.args.restore_handle.is_some() {
             let source_id = self
                 .args
@@ -35,7 +77,7 @@ impl QemuVm<'_> {
                 .as_deref()
                 .unwrap_or(&self.args.id);
             validate_safe_id(source_id, "restore source vm id")?;
-            let source_disk = self.boot_disk_path(source_id);
+            let source_disk = self.boot_disk_path(source_id, self.args.image_format);
             if source_disk == disk {
                 metadata(&disk).await?;
             } else {
@@ -50,7 +92,11 @@ impl QemuVm<'_> {
             // child.wait().await?;
             copy(path, &disk).await?;
         }
+        self.write_boot_disk_state(&disk).await?;
         debug!("Boot disk prepared");
-        Ok(BootDisk(disk.to_string_lossy().into_owned()))
+        Ok(BootDisk {
+            path: disk.to_string_lossy().into_owned(),
+            format: self.args.image_format,
+        })
     }
 }

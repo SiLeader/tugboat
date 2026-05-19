@@ -17,10 +17,12 @@ mod volume_copy;
 
 use crate::execute::vm::RunVm;
 use crate::execute::vm::qemu::spawner::QemuVmConfigUefi;
-use crate::execute::vm::qemu::volume_copy::BootDisk;
+use crate::execute::vm::qemu::volume_copy::{BootDisk, boot_disk_format_name};
 use crate::validate::validate_qemu_option_value;
 use async_trait::async_trait;
 pub use spawner::{QemuVmBuilder, QemuVmConfig};
+#[cfg(test)]
+pub(crate) use spawner::{QemuVmConfigExecutables, QemuVmConfigKvm};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, info};
@@ -29,6 +31,7 @@ use tugboat_vm_runtime_interface::run::{
     VmCpuConfig, VmIncomingMigrationConfig, VmMemoryConfig, VmNetworkConfig, VmRunRequest,
     VmVolumeConfig, VmVolumeKind,
 };
+pub(crate) use volume_copy::{BootDiskState, boot_disk_extension};
 
 #[derive(Debug, Clone)]
 struct QemuVm<'a> {
@@ -145,7 +148,11 @@ impl QemuArgs<VmMemoryConfig> for Command {
 
 impl QemuArgs<BootDisk> for Command {
     fn qemu_args(&mut self, value: &BootDisk) -> &mut Self {
-        let opts = format!("if=virtio,format=qcow2,index=0,media=disk,file={}", value.0);
+        let opts = format!(
+            "if=virtio,format={},index=0,media=disk,file={}",
+            boot_disk_format_name(value.format),
+            value.path
+        );
         self.arg("-drive").arg(opts)
     }
 }
@@ -300,9 +307,25 @@ mod tests {
         restore_handle: Option<&str>,
         restore_source_id: Option<&str>,
     ) -> VmRunRequest {
+        run_request_with_format(
+            id,
+            image,
+            VmDiskImageFormat::Qcow2,
+            restore_handle,
+            restore_source_id,
+        )
+    }
+
+    fn run_request_with_format(
+        id: &str,
+        image: &Path,
+        image_format: VmDiskImageFormat,
+        restore_handle: Option<&str>,
+        restore_source_id: Option<&str>,
+    ) -> VmRunRequest {
         VmRunRequest {
             image: image.to_string_lossy().into_owned(),
-            image_format: VmDiskImageFormat::Qcow2,
+            image_format,
             cpu: VmCpuConfig {
                 architecture: "x86_64".to_string(),
                 cores: 1,
@@ -319,6 +342,52 @@ mod tests {
             restore_source_id: restore_source_id.map(str::to_string),
             user: VmExecUser::default(),
         }
+    }
+
+    #[test]
+    fn qcow2_boot_disk_uses_qcow2_drive_format() {
+        let mut command = Command::new("qemu-system-x86_64");
+        command.qemu_args(&super::BootDisk {
+            path: "/var/lib/tugboat/ship-a.qcow2".to_string(),
+            format: VmDiskImageFormat::Qcow2,
+        });
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "-drive".to_string(),
+                "if=virtio,format=qcow2,index=0,media=disk,file=/var/lib/tugboat/ship-a.qcow2"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_boot_disk_uses_raw_drive_format() {
+        let mut command = Command::new("qemu-system-x86_64");
+        command.qemu_args(&super::BootDisk {
+            path: "/var/lib/tugboat/ship-a.raw".to_string(),
+            format: VmDiskImageFormat::Raw,
+        });
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "-drive".to_string(),
+                "if=virtio,format=raw,index=0,media=disk,file=/var/lib/tugboat/ship-a.raw"
+                    .to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -370,6 +439,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn raw_boot_disk_copy_uses_raw_extension() {
+        let dir = temp_dir("raw-boot-disk");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base_image = dir.join("base.raw");
+        std::fs::write(&base_image, b"raw-image").unwrap();
+
+        let config = test_config(&dir);
+        let args =
+            run_request_with_format("ship-raw", &base_image, VmDiskImageFormat::Raw, None, None);
+        let vm = QemuVm::new(&config, args);
+        let boot_disk = vm.create_boot_disk().await.unwrap();
+
+        assert_eq!(boot_disk.path, dir.join("ship-raw.raw").to_string_lossy());
+        assert_eq!(boot_disk.format, VmDiskImageFormat::Raw);
+        assert_eq!(
+            std::fs::read(dir.join("ship-raw.raw")).unwrap(),
+            b"raw-image"
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn restore_boot_disk_is_copied_from_source_ship_disk() {
         let dir = temp_dir("restore-source");
         std::fs::create_dir_all(&dir).unwrap();
@@ -388,7 +480,7 @@ mod tests {
         let vm = QemuVm::new(&config, args);
         let boot_disk = vm.create_boot_disk().await.unwrap();
 
-        assert_eq!(std::fs::read(boot_disk.0).unwrap(), b"snapshot-disk");
+        assert_eq!(std::fs::read(boot_disk.path).unwrap(), b"snapshot-disk");
         assert_eq!(
             std::fs::read(dir.join("target-ship.qcow2")).unwrap(),
             b"snapshot-disk"
@@ -416,8 +508,37 @@ mod tests {
         let vm = QemuVm::new(&config, args);
         let boot_disk = vm.create_boot_disk().await.unwrap();
 
-        assert_eq!(std::fs::read(boot_disk.0).unwrap(), b"snapshot-disk");
+        assert_eq!(std::fs::read(boot_disk.path).unwrap(), b"snapshot-disk");
         assert_eq!(std::fs::read(existing_disk).unwrap(), b"snapshot-disk");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn raw_restore_boot_disk_is_copied_from_raw_source_disk() {
+        let dir = temp_dir("restore-raw-source");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base_image = dir.join("base.raw");
+        let source_disk = dir.join("source-ship.raw");
+        std::fs::write(&base_image, b"base-image").unwrap();
+        std::fs::write(&source_disk, b"raw-snapshot-disk").unwrap();
+
+        let config = test_config(&dir);
+        let args = run_request_with_format(
+            "target-ship",
+            &base_image,
+            VmDiskImageFormat::Raw,
+            Some("source-ship-snapshot"),
+            Some("source-ship"),
+        );
+        let vm = QemuVm::new(&config, args);
+        let boot_disk = vm.create_boot_disk().await.unwrap();
+
+        assert_eq!(std::fs::read(boot_disk.path).unwrap(), b"raw-snapshot-disk");
+        assert_eq!(
+            std::fs::read(dir.join("target-ship.raw")).unwrap(),
+            b"raw-snapshot-disk"
+        );
 
         std::fs::remove_dir_all(dir).unwrap();
     }

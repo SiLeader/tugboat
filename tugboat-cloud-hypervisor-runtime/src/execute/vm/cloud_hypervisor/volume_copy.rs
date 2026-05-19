@@ -13,16 +13,47 @@
 // limitations under the License.
 
 use crate::execute::vm::cloud_hypervisor::CloudHypervisorVm;
+use std::path::PathBuf;
 use tokio::fs::copy;
 use tracing::info;
+use tugboat_vm_runtime_interface::run::VmDiskImageFormat;
 
-pub struct BootDisk(pub String);
+#[derive(Debug, Clone)]
+pub struct BootDisk {
+    pub path: String,
+    pub format: VmDiskImageFormat,
+}
+
+pub(crate) fn boot_disk_extension(format: VmDiskImageFormat) -> &'static str {
+    match format {
+        VmDiskImageFormat::Raw => "raw",
+        VmDiskImageFormat::Qcow2 => "qcow2",
+    }
+}
 
 impl CloudHypervisorVm<'_> {
+    fn boot_disk_path(&self) -> PathBuf {
+        PathBuf::from(&self.config.disk_image_location).join(format!(
+            "{}.{}",
+            self.args.id,
+            boot_disk_extension(self.args.image_format)
+        ))
+    }
+
     pub async fn create_boot_disk(&self) -> crate::Result<BootDisk> {
+        if self.args.image_format != VmDiskImageFormat::Raw {
+            return Err(crate::Error::Validation(
+                "Cloud Hypervisor runtime supports raw boot images only; use imageFormat=raw"
+                    .to_string(),
+            ));
+        }
+
         info!("Creating boot disk");
-        let disk = format!("{}/{}.img", self.config.disk_image_location, self.args.id);
+        let disk = self.boot_disk_path();
         copy(&self.args.image, &disk).await?;
-        Ok(BootDisk(disk))
+        Ok(BootDisk {
+            path: disk.to_string_lossy().into_owned(),
+            format: self.args.image_format,
+        })
     }
 }

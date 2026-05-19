@@ -27,7 +27,7 @@ use std::process::Command;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 use tugboat_runtime_common::validate::validate_safe_id;
-use tugboat_vm_runtime_interface::run::{VmRunRequest, VmVolumeKind};
+use tugboat_vm_runtime_interface::run::{VmDiskImageFormat, VmRunRequest, VmVolumeKind};
 use volume_copy::BootDisk;
 
 #[derive(Debug, Clone)]
@@ -42,7 +42,13 @@ impl<'a> CloudHypervisorVm<'a> {
     }
 
     fn validate_ch_inputs(&self, boot_disk: &BootDisk) -> crate::Result<()> {
-        validate_ch_option_value(&boot_disk.0, "boot disk path")?;
+        if boot_disk.format != VmDiskImageFormat::Raw {
+            return Err(crate::Error::Validation(
+                "Cloud Hypervisor runtime supports raw boot images only; use imageFormat=raw"
+                    .to_string(),
+            ));
+        }
+        validate_ch_option_value(&boot_disk.path, "boot disk path")?;
         for (idx, network) in self.args.networks.iter().enumerate() {
             validate_ch_option_value(&network.iface_name, &format!("networks[{idx}].iface_name"))?;
             validate_ch_option_value(
@@ -133,7 +139,7 @@ impl<'a> CloudHypervisorVm<'a> {
         }
 
         args.push("--disk".into());
-        args.push(format!("path={}", boot_disk.0));
+        args.push(format!("path={}", boot_disk.path));
 
         for network in &self.args.networks {
             args.push("--net".into());
@@ -321,15 +327,23 @@ mod tests {
     use super::CloudHypervisorVm;
     use super::volume_copy::BootDisk;
     use crate::{CloudHypervisorBootConfig, CloudHypervisorVmConfig};
+    use std::path::{Path, PathBuf};
     use tugboat_vm_runtime_interface::run::{
         VmCpuConfig, VmDiskImageFormat, VmMemoryConfig, VmNetworkConfig, VmRunRequest,
         VmUefiConfig, VmVolumeConfig,
     };
 
-    fn vm_config() -> CloudHypervisorVmConfig {
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tugboat-cloud-hypervisor-runtime-{name}-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    fn vm_config_with_disk_dir(disk_dir: impl Into<String>) -> CloudHypervisorVmConfig {
         CloudHypervisorVmConfig {
             executable: "/usr/bin/cloud-hypervisor".into(),
-            disk_image_location: "/var/lib/tugboat".into(),
+            disk_image_location: disk_dir.into(),
             boot: CloudHypervisorBootConfig {
                 kernel: Some("/var/lib/tugboat/vmlinux".into()),
                 initramfs: Some("/var/lib/tugboat/initramfs.img".into()),
@@ -339,10 +353,26 @@ mod tests {
         }
     }
 
+    fn vm_config() -> CloudHypervisorVmConfig {
+        vm_config_with_disk_dir("/var/lib/tugboat")
+    }
+
     fn run_request(uefi_enabled: bool) -> VmRunRequest {
+        run_request_with_format(
+            uefi_enabled,
+            VmDiskImageFormat::Raw,
+            Path::new("/images/base.raw"),
+        )
+    }
+
+    fn run_request_with_format(
+        uefi_enabled: bool,
+        image_format: VmDiskImageFormat,
+        image: &Path,
+    ) -> VmRunRequest {
         VmRunRequest {
-            image: "/images/base.raw".into(),
-            image_format: VmDiskImageFormat::Raw,
+            image: image.to_string_lossy().into_owned(),
+            image_format,
             cpu: VmCpuConfig {
                 architecture: "x86_64".into(),
                 cores: 4,
@@ -371,7 +401,10 @@ mod tests {
         let config = vm_config();
         let vm = CloudHypervisorVm::new(&config, run_request(false));
         let args = vm
-            .build_cli_args(&BootDisk("/var/lib/tugboat/vm-01.img".into()))
+            .build_cli_args(&BootDisk {
+                path: "/var/lib/tugboat/vm-01.raw".into(),
+                format: VmDiskImageFormat::Raw,
+            })
             .unwrap();
 
         assert_eq!(
@@ -390,7 +423,7 @@ mod tests {
                 "--initramfs",
                 "/var/lib/tugboat/initramfs.img",
                 "--disk",
-                "path=/var/lib/tugboat/vm-01.img",
+                "path=/var/lib/tugboat/vm-01.raw",
                 "--net",
                 "tap=tap0,mac=02:00:00:00:00:01",
                 "--disk",
@@ -408,7 +441,10 @@ mod tests {
         let config = vm_config();
         let vm = CloudHypervisorVm::new(&config, run_request(true));
         let args = vm
-            .build_cli_args(&BootDisk("/var/lib/tugboat/vm-01.img".into()))
+            .build_cli_args(&BootDisk {
+                path: "/var/lib/tugboat/vm-01.raw".into(),
+                format: VmDiskImageFormat::Raw,
+            })
             .unwrap();
 
         assert!(args.windows(2).any(|window| {
@@ -426,7 +462,10 @@ mod tests {
         let vm = CloudHypervisorVm::new(&config, request);
 
         let err = vm
-            .build_cli_args(&BootDisk("/var/lib/tugboat/vm-01.img".into()))
+            .build_cli_args(&BootDisk {
+                path: "/var/lib/tugboat/vm-01.raw".into(),
+                format: VmDiskImageFormat::Raw,
+            })
             .unwrap_err();
 
         assert!(matches!(err, crate::Error::Validation(_)));
@@ -442,12 +481,82 @@ mod tests {
         let vm = CloudHypervisorVm::new(&config, request);
 
         let err = vm
-            .build_cli_args(&BootDisk("/var/lib/tugboat/vm-01.img".into()))
+            .build_cli_args(&BootDisk {
+                path: "/var/lib/tugboat/vm-01.raw".into(),
+                format: VmDiskImageFormat::Raw,
+            })
             .unwrap_err();
 
         match err {
             crate::Error::ActionFailed(message) => {
                 assert!(message.contains("filesystem volumes are not supported"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_boot_disk_copy_uses_raw_extension() {
+        let dir = temp_dir("raw-boot-disk");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base_image = dir.join("base.raw");
+        std::fs::write(&base_image, b"raw-image").unwrap();
+
+        let config = vm_config_with_disk_dir(dir.to_string_lossy());
+        let vm = CloudHypervisorVm::new(
+            &config,
+            run_request_with_format(false, VmDiskImageFormat::Raw, &base_image),
+        );
+
+        let boot_disk = vm.create_boot_disk().await.unwrap();
+
+        assert_eq!(boot_disk.path, dir.join("vm-01.raw").to_string_lossy());
+        assert_eq!(boot_disk.format, VmDiskImageFormat::Raw);
+        assert_eq!(std::fs::read(dir.join("vm-01.raw")).unwrap(), b"raw-image");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn qcow2_boot_disk_is_rejected() {
+        let dir = temp_dir("qcow2-boot-disk");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base_image = dir.join("base.qcow2");
+        std::fs::write(&base_image, b"qcow2-image").unwrap();
+
+        let config = vm_config_with_disk_dir(dir.to_string_lossy());
+        let vm = CloudHypervisorVm::new(
+            &config,
+            run_request_with_format(false, VmDiskImageFormat::Qcow2, &base_image),
+        );
+
+        let err = vm.create_boot_disk().await.unwrap_err();
+
+        match err {
+            crate::Error::Validation(message) => {
+                assert!(message.contains("supports raw boot images only"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn qcow2_boot_disk_args_are_rejected() {
+        let config = vm_config();
+        let vm = CloudHypervisorVm::new(&config, run_request(false));
+
+        let err = vm
+            .build_cli_args(&BootDisk {
+                path: "/var/lib/tugboat/vm-01.qcow2".into(),
+                format: VmDiskImageFormat::Qcow2,
+            })
+            .unwrap_err();
+
+        match err {
+            crate::Error::Validation(message) => {
+                assert!(message.contains("supports raw boot images only"));
             }
             other => panic!("unexpected error: {other:?}"),
         }
