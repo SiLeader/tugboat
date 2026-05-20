@@ -84,7 +84,7 @@ async-stream = "0.3.6"
 tokio-util = "0.7.18"
 
 # tls
-openssl = "0.10.79"
+openssl = "0.10.80"
 
 # rand
 rand = "0.10.1"
