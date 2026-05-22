@@ -1,0 +1,20 @@
+---
+- name: Validate Tugboat CSI hostpath settings
+  ansible.builtin.assert:
+    that:
+      - tugboat_csi_hostpath_install_mode in ['build', 'binary']
+      - tugboat_csi_hostpath_node_id | length > 0
+      - tugboat_csi_hostpath_data_dir | length > 0
+    fail_msg: "Tugboat CSI hostpath variables are incomplete or invalid."
+
+- name: Validate Tugboat CSI hostpath binary path
+  ansible.builtin.assert:
+    that:
+      - tugboat_csi_hostpath_binary | length > 0
+    fail_msg: "tugboat_csi_hostpath_binary is required when install mode is binary."
+  when: tugboat_csi_hostpath_install_mode == 'binary'
+
+- name: CSI hostpath role placeholder
+  ansible.builtin.debug:
+    msg: "Task 05+ will invoke or replace install-csi-hostpath.sh."
+  changed_when: false

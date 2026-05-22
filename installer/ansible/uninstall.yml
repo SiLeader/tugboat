@@ -1,0 +1,6 @@
+---
+- name: Uninstall Tugboat components
+  hosts: tugboat_control_plane:tugboat_workers:tugboat_csi_hostpath
+  become: true
+  roles:
+    - uninstall

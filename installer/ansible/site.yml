@@ -1,0 +1,22 @@
+---
+- name: Install Tugboat control plane
+  hosts: tugboat_control_plane
+  become: true
+  roles:
+    - common
+    - pki_bootstrap
+    - control_plane
+
+- name: Install Tugboat workers
+  hosts: tugboat_workers
+  become: true
+  roles:
+    - common
+    - worker
+
+- name: Install Tugboat CSI hostpath
+  hosts: tugboat_csi_hostpath
+  become: true
+  roles:
+    - role: csi_hostpath
+      when: tugboat_csi_hostpath_enabled | bool

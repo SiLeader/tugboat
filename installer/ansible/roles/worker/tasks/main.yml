@@ -1,0 +1,12 @@
+---
+- name: Validate Tugboat worker settings
+  ansible.builtin.assert:
+    that:
+      - tugboat_apiserver_advertise_url | length > 0
+      - tugboat_node_name | length > 0
+    fail_msg: "Tugboat worker variables are incomplete or invalid."
+
+- name: Worker role placeholder
+  ansible.builtin.debug:
+    msg: "Task 02+ will invoke or replace install-worker.sh."
+  changed_when: false

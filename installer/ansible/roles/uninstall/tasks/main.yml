@@ -1,0 +1,11 @@
+---
+- name: Validate Tugboat uninstall target
+  ansible.builtin.assert:
+    that:
+      - tugboat_uninstall_control_plane | bool or tugboat_uninstall_worker | bool
+    fail_msg: "At least one of tugboat_uninstall_control_plane or tugboat_uninstall_worker must be true."
+
+- name: Uninstall role placeholder
+  ansible.builtin.debug:
+    msg: "Task 05+ will invoke or replace uninstall.sh."
+  changed_when: false
