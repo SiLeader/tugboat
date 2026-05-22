@@ -177,8 +177,8 @@
         [tugboat_bootstrap_remote_installer_dir ~ '/setup-pki.sh']
         + ['--pki-dir', tugboat_pki_dir]
         + (['--force'] if tugboat_force_pki | bool else [])
-        + (tugboat_bootstrap_apiserver_host_candidates | map('regex_replace', '^(.*)$', '--apiserver-host=\\1') | list)
-        + (tugboat_bootstrap_apiserver_ip_candidates | map('regex_replace', '^(.*)$', '--apiserver-ip=\\1') | list)
+        + (tugboat_bootstrap_apiserver_host_candidates | map('regex_replace', '^', '--apiserver-host=') | list)
+        + (tugboat_bootstrap_apiserver_ip_candidates | map('regex_replace', '^', '--apiserver-ip=') | list)
       }}
   when:
     - tugboat_secure | bool
@@ -202,10 +202,10 @@
         [tugboat_bootstrap_remote_installer_dir ~ '/setup-etcd-pki.sh']
         + ['--pki-dir', tugboat_etcd_pki_dir]
         + (['--force'] if tugboat_force_pki | bool else [])
-        + (tugboat_bootstrap_etcd_server_hosts | map('regex_replace', '^(.*)$', '--server-host=\\1') | list)
-        + (tugboat_bootstrap_etcd_server_ips | map('regex_replace', '^(.*)$', '--server-ip=\\1') | list)
-        + (tugboat_bootstrap_etcd_peer_hosts | map('regex_replace', '^(.*)$', '--peer-host=\\1') | list)
-        + (tugboat_bootstrap_etcd_peer_ips | map('regex_replace', '^(.*)$', '--peer-ip=\\1') | list)
+        + (tugboat_bootstrap_etcd_server_hosts | map('regex_replace', '^', '--server-host=') | list)
+        + (tugboat_bootstrap_etcd_server_ips | map('regex_replace', '^', '--server-ip=') | list)
+        + (tugboat_bootstrap_etcd_peer_hosts | map('regex_replace', '^', '--peer-host=') | list)
+        + (tugboat_bootstrap_etcd_peer_ips | map('regex_replace', '^', '--peer-ip=') | list)
       }}
   when: tugboat_bootstrap_stage in ['all', 'pki']
 

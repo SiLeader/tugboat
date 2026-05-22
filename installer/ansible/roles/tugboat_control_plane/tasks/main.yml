@@ -22,8 +22,8 @@
         + ['--listen', tugboat_apiserver_listen]
         + ['--pki-dir', tugboat_pki_dir]
         + (['--force-pki'] if tugboat_force_pki | bool else [])
-        + (tugboat_apiserver_cert_hosts | map('regex_replace', '^(.*)$', '--apiserver-host=\\1') | list)
-        + (tugboat_apiserver_cert_ips | map('regex_replace', '^(.*)$', '--apiserver-ip=\\1') | list)
+        + (tugboat_apiserver_cert_hosts | map('regex_replace', '^', '--apiserver-host=') | list)
+        + (tugboat_apiserver_cert_ips | map('regex_replace', '^', '--apiserver-ip=') | list)
         + ['--etcd-listen', tugboat_etcd_listen]
         + ['--etcd-peer-listen', tugboat_etcd_peer_listen]
         + ['--etcd-node-name', tugboat_etcd_node_name]
@@ -31,7 +31,7 @@
         + ['--etcd-initial-advertise-peer-url', tugboat_etcd_initial_advertise_peer_url]
         + ['--etcd-initial-cluster', tugboat_etcd_initial_cluster]
         + ['--etcd-initial-cluster-state', tugboat_etcd_initial_cluster_state]
-        + (tugboat_etcd_endpoints | map('regex_replace', '^(.*)$', '--etcd-endpoint=\\1') | list)
+        + (tugboat_etcd_endpoints | map('regex_replace', '^', '--etcd-endpoint=') | list)
         + ['--data-dir', tugboat_etcd_data_dir]
       }}
 

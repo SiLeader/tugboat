@@ -1,0 +1,29 @@
+---
+all:
+  children:
+    tugboat_control_plane:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_become: false
+          tugboat_build_mode: prebuilt
+          tugboat_prebuilt_bin_dir: /var/cache/tugboat-prebuilt
+          tugboat_cargo_manifest_dir: /workspace
+          tugboat_secure: false
+          tugboat_apiserver_listen: 0.0.0.0:8080
+          tugboat_apiserver_advertise_url: http://control-plane:8080
+          tugboat_etcd_listen: 127.0.0.1:2379
+          tugboat_etcd_peer_listen: 127.0.0.1:2380
+          tugboat_etcd_node_name: control-plane
+          tugboat_etcd_advertise_client_url: https://127.0.0.1:2379
+          tugboat_etcd_initial_advertise_peer_url: https://127.0.0.1:2380
+          tugboat_etcd_initial_cluster: control-plane=https://127.0.0.1:2380
+          tugboat_etcd_endpoints:
+            - https://127.0.0.1:2379
+          tugboat_node_name: worker
+    tugboat_workers:
+      hosts:
+        localhost:
+    tugboat_csi_hostpath:
+      hosts:
+        localhost:

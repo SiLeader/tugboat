@@ -21,6 +21,54 @@ ansible-playbook --syntax-check -i inventory.example.yml site.yml
 ansible-playbook -i inventory.example.yml site.yml
 ```
 
+## Test
+
+The Ansible installer reuses the Docker systemd environment from
+`installer/systemd/test`. The containers run Ubuntu 24.04 with systemd as PID 1
+and execute `ansible-playbook` inside the target container with a local
+connection.
+
+Run every Ansible installer scenario:
+
+```bash
+installer/ansible/test/run-tests.sh
+```
+
+Run one scenario:
+
+```bash
+installer/ansible/test/run-tests.sh --scenario 01-control-plane-only
+```
+
+Keep containers and volumes for debugging:
+
+```bash
+installer/ansible/test/run-tests.sh --scenario 02-worker-join --keep
+```
+
+Clean up manually after a kept run:
+
+```bash
+docker compose -f installer/systemd/test/docker-compose.test.yml -p tugboat-ansible-test down -v
+```
+
+The runner performs shell checks, `ansible-playbook --syntax-check` for
+`site.yml` and `uninstall.yml`, then runs the Docker scenarios. Scenario logs and
+service journals are collected under `installer/ansible/test/artifacts/` on
+failure. CI currently runs the syntax checks only; privileged Docker scenarios
+remain a local validation path.
+
+Covered scenarios map to the systemd installer names:
+
+- `01-control-plane-only`
+- `02-worker-join`
+- `05-tls-pki`
+- `06-serviceaccount-rbac`
+- `07-etcd-client-tls`
+- `09-flanneld-daemon`
+- `10-csi-hostpath`
+- `11-idempotency`
+
 ## Inventory Model
 
 The public inventory groups are:
