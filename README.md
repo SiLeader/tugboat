@@ -643,6 +643,11 @@ spec:
     - [x] CSI hostpath provisioner installer (`install-csi-hostpath.sh`)
     - [x] `uninstall.sh` — stops and removes all Tugboat units, binaries, and configs
     - [x] Docker-based isolated test environment with scenario scripts (`installer/systemd/test/`)
+- [x] Installer (Ansible)
+    - [x] Inventory-driven control-plane, worker, and CSI hostpath roles
+    - [x] Secure-mode PKI and ServiceAccount material distribution
+    - [x] Idempotency markers and service health checks around the systemd installers
+    - [x] `site.yml` and `uninstall.yml` playbooks with Docker scenario tests
 - [x] Snapshot
     - [x] `VolumeSnapshot`, `VolumeSnapshotContent`, and `VolumeSnapshotClass` resource definitions and API (`snapshot/v1`)
     - [x] `ShipSnapshot` resource definition and API (`snapshot/v1`)
@@ -684,11 +689,54 @@ spec:
 
 ## Installation
 
-The `installer/systemd/` directory contains shell scripts that install and configure
-Tugboat on a Debian/Ubuntu host using systemd.  Root access and a working
-`apt-get` are required.
+Tugboat currently ships two systemd-based installation paths:
 
-### Control plane
+- `installer/ansible/` provides inventory-driven playbooks for one or more
+  Ubuntu 24.04 hosts. Use this path for repeatable installs across
+  control-plane, worker, and CSI hostpath nodes.
+- `installer/systemd/` provides the lower-level shell scripts that install and
+  configure one host at a time on Debian/Ubuntu.
+
+Detailed guides:
+
+- [Ansible installer guide](./docs/en/installation/ansible.md)
+- [systemd installer guide](./docs/en/installation/systemd.md)
+
+### Ansible
+
+Install a single-node or multi-node inventory with:
+
+```bash
+cd installer/ansible
+ansible-playbook -i inventory.example.yml site.yml
+```
+
+The playbooks install the control plane, workers, and CSI hostpath provisioner
+based on inventory group membership:
+
+- `tugboat_control_plane`: etcd, apiserver, scheduler, controller-manager
+- `tugboat_workers`: agent, VM runtime, CNI plugins, optional Flannel daemon
+- `tugboat_csi_hostpath`: CSI hostpath provisioner
+
+Secure mode is enabled by default. The bootstrap role generates PKI on the first
+control-plane host, distributes shared control-plane certificates, bootstraps
+ServiceAccount/RBAC data, and copies worker CA/token material when workers are
+in the same inventory.
+
+Uninstall through the same inventory:
+
+```bash
+cd installer/ansible
+ansible-playbook -i inventory.example.yml uninstall.yml
+```
+
+### systemd scripts
+
+The `installer/systemd/` directory contains shell scripts that install and
+configure Tugboat on a Debian/Ubuntu host. Root access and a working `apt-get`
+are required.
+
+#### Control plane
 
 ```bash
 sudo installer/systemd/install-control-plane.sh \
@@ -705,7 +753,7 @@ Pass `--insecure` to use plain HTTP on port 8080 instead.
 Use `--use-prebuilt --bin-dir <path>` in place of `--build` to supply
 pre-compiled binaries.
 
-### Worker
+#### Worker
 
 ```bash
 sudo installer/systemd/install-worker.sh \
@@ -720,7 +768,7 @@ or `--runtime cloud-hypervisor`).  CNI plugins are installed automatically.
 Flannel mode is controlled by `--flannel-mode static|vxlan|host-gw` (default:
 `static`, which writes `/run/flannel/subnet.env` without running flanneld).
 
-### Uninstall
+#### Uninstall
 
 ```bash
 sudo installer/systemd/uninstall.sh --control-plane   # control-plane node
@@ -728,13 +776,19 @@ sudo installer/systemd/uninstall.sh --worker          # worker node
 sudo installer/systemd/uninstall.sh --control-plane --worker --purge  # full cleanup
 ```
 
-### Testing the installer
+### Testing the installers
 
-The `installer/systemd/test/` directory provides a Docker-based isolation
-environment (Ubuntu 24.04 with systemd as PID 1).  Run all scenarios with:
+The installer test suites use Docker-based Ubuntu 24.04 systemd containers.
+Run the systemd scenarios with:
 
 ```bash
 installer/systemd/test/run-tests.sh
+```
+
+Run the Ansible scenarios with:
+
+```bash
+installer/ansible/test/run-tests.sh
 ```
 
 ## Contributing

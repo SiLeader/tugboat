@@ -5,6 +5,11 @@ systemd-based hosts. The first implementation is intentionally shaped around the
 existing `installer/systemd` scripts, and later roles will replace shell-backed
 steps where native Ansible tasks are safer.
 
+The full user guide lives at
+[`docs/en/installation/ansible.md`](../../docs/en/installation/ansible.md). This
+file is a quick reference for contributors working directly in
+`installer/ansible`.
+
 ## Requirements
 
 - Ansible Core 2.16 or newer on the control machine.
