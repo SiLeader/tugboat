@@ -2,10 +2,33 @@
 - name: Validate Tugboat uninstall target
   ansible.builtin.assert:
     that:
-      - tugboat_uninstall_control_plane | bool or tugboat_uninstall_worker | bool
-    fail_msg: "At least one of tugboat_uninstall_control_plane or tugboat_uninstall_worker must be true."
+      - >
+        tugboat_uninstall_control_plane | bool
+        or tugboat_uninstall_worker | bool
+        or tugboat_uninstall_csi_hostpath | bool
+    fail_msg: "At least one Tugboat uninstall target must be true."
 
-- name: Uninstall role placeholder
-  ansible.builtin.debug:
-    msg: "Task 05+ will invoke or replace uninstall.sh."
-  changed_when: false
+- name: Build Tugboat uninstall argument list
+  ansible.builtin.set_fact:
+    tugboat_uninstall_argv: >-
+      {{
+        [tugboat_uninstall_remote_installer_dir ~ '/uninstall.sh']
+        + (['--control-plane'] if tugboat_uninstall_control_plane | bool else [])
+        + (['--worker'] if tugboat_uninstall_worker | bool else [])
+        + (['--csi-hostpath'] if tugboat_uninstall_csi_hostpath | bool else [])
+        + (['--purge'] if tugboat_uninstall_purge | bool else [])
+      }}
+
+- name: Stage systemd installer scripts for uninstall
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../systemd/"
+    dest: "{{ tugboat_uninstall_remote_installer_dir }}/"
+    owner: root
+    group: root
+    mode: preserve
+
+- name: Uninstall Tugboat components through systemd uninstaller
+  ansible.builtin.command:
+    argv: "{{ tugboat_uninstall_argv }}"
+  register: tugboat_uninstall_result
+  changed_when: true

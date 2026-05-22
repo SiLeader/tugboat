@@ -1,0 +1,3 @@
+---
+# Remote path used for the shell-backed first-pass uninstall workflow.
+tugboat_uninstall_remote_installer_dir: /var/lib/tugboat/ansible/systemd-installer

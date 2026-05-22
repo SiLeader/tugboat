@@ -28,7 +28,8 @@ The public inventory groups are:
 - `tugboat_control_plane`: hosts that run etcd, the API server, scheduler, and
   controller manager.
 - `tugboat_workers`: hosts that run the Tugboat agent and VM runtime.
-- `tugboat_csi_hostpath`: hosts that run the CSI hostpath provisioner.
+- `tugboat_csi_hostpath`: hosts that run the CSI hostpath provisioner through
+  the `tugboat_csi_hostpath` role.
 
 A single host can be in multiple groups. Worker-only hosts can join an existing
 API server by setting `tugboat_apiserver_advertise_url` and omitting the host
@@ -235,6 +236,16 @@ Remove only worker components from a worker-only inventory:
 ```yaml
 tugboat_uninstall_control_plane: false
 tugboat_uninstall_worker: true
+tugboat_uninstall_csi_hostpath: false
+tugboat_uninstall_purge: false
+```
+
+Remove only the CSI hostpath provisioner from a CSI inventory:
+
+```yaml
+tugboat_uninstall_control_plane: false
+tugboat_uninstall_worker: false
+tugboat_uninstall_csi_hostpath: true
 tugboat_uninstall_purge: false
 ```
 
@@ -245,8 +256,8 @@ cd installer/ansible
 ansible-playbook -i inventory.example.yml uninstall.yml -e tugboat_uninstall_purge=true
 ```
 
-The uninstall variables map to `uninstall.sh --control-plane`, `--worker`, and
-`--purge`.
+The uninstall variables map to `uninstall.sh --control-plane`, `--worker`,
+`--csi-hostpath`, and `--purge`.
 
 ## Variable Mapping
 
@@ -269,3 +280,5 @@ The most important direct mappings to `installer/systemd` are:
 - `tugboat_cni_subnet`: `install-worker.sh --cni-subnet`.
 - `tugboat_flannel_mode`: `install-worker.sh --flannel-mode`.
 - `tugboat_csi_hostpath_*`: the matching `install-csi-hostpath.sh` options.
+- `tugboat_uninstall_*`: the matching `uninstall.sh` component and purge
+  options.

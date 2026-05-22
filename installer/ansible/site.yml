@@ -23,5 +23,5 @@
   hosts: tugboat_csi_hostpath
   become: true
   roles:
-    - role: csi_hostpath
+    - role: tugboat_csi_hostpath
       when: tugboat_csi_hostpath_enabled | bool

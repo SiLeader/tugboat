@@ -95,7 +95,8 @@ tugboat_csi_hostpath_node_id: "{{ tugboat_node_name | default(inventory_hostname
 tugboat_csi_hostpath_data_dir: /var/lib/tugboat-csi-hostpath
 
 # Uninstall behavior.
-# Maps to uninstall.sh: --control-plane, --worker, and --purge.
+# Maps to uninstall.sh: --control-plane, --worker, --csi-hostpath, and --purge.
 tugboat_uninstall_control_plane: "{{ inventory_hostname in groups.get('tugboat_control_plane', []) }}"
 tugboat_uninstall_worker: "{{ inventory_hostname in groups.get('tugboat_workers', []) }}"
+tugboat_uninstall_csi_hostpath: "{{ inventory_hostname in groups.get('tugboat_csi_hostpath', []) }}"
 tugboat_uninstall_purge: false
