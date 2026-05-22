@@ -1,4 +1,0 @@
----
-- name: Run Tugboat control-plane role
-  ansible.builtin.import_role:
-    name: tugboat_control_plane

@@ -11,7 +11,6 @@ ARTIFACT_DIR="${SCRIPT_DIR}/artifacts"
 PREBUILT_BIN_DIR="/var/cache/tugboat-prebuilt"
 SCENARIO=""
 KEEP=0
-USE_PREBUILT=1
 ENV_STARTED=0
 
 BINARIES=(
@@ -25,7 +24,7 @@ BINARIES=(
 
 usage() {
     cat <<'USAGE'
-Usage: run-tests.sh [--scenario <name>] [--keep] [--use-prebuilt]
+Usage: run-tests.sh [--scenario <name>] [--keep]
 
 Runs installer/ansible tests in the Docker systemd environment. Scenario names
 may be passed with or without the .sh suffix, for example:
@@ -34,7 +33,6 @@ may be passed with or without the .sh suffix, for example:
 Options:
   --scenario <name>  Run one scenario instead of every scenario.
   --keep             Keep Docker containers and volumes after the run.
-  --use-prebuilt     Build host release binaries and expose them in containers.
 USAGE
 }
 
@@ -50,10 +48,6 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --keep)
             KEEP=1
-            shift
-            ;;
-        --use-prebuilt)
-            USE_PREBUILT=1
             shift
             ;;
         -h|--help)
@@ -121,10 +115,6 @@ require_docker() {
 build_release_binaries() {
     local binary
 
-    if [[ "${USE_PREBUILT}" -ne 1 ]]; then
-        return 0
-    fi
-
     for binary in "${BINARIES[@]}"; do
         if [[ ! -x "${REPO_DIR}/target/release/${binary}" ]]; then
             cargo build --release "${BINARIES[@]/#/--package=}"
@@ -157,9 +147,7 @@ start_environment() {
     compose exec -T control-plane bash -lc "timeout 60 bash -c 'until state=\$(systemctl is-system-running); [[ \"\${state}\" == running || \"\${state}\" == degraded ]]; do sleep 1; done'"
     compose exec -T worker bash -lc "timeout 60 bash -c 'until state=\$(systemctl is-system-running); [[ \"\${state}\" == running || \"\${state}\" == degraded ]]; do sleep 1; done'"
 
-    if [[ "${USE_PREBUILT}" -eq 1 ]]; then
-        copy_prebuilt_binaries
-    fi
+    copy_prebuilt_binaries
 }
 
 collect_journals() {

@@ -303,6 +303,9 @@ def cluster_roles():
             rule(["core"], ["serviceaccounts", "secrets", "persistentvolumeclaims", "persistentvolumes"], write),
             rule(["core"], ["serviceaccounts/token"], ["create"]),
             rule(["core"], ["persistentvolumeclaims/status", "persistentvolumes/status"], status),
+            # Full write (incl. create/delete) is required so the Ansible installer's
+            # bootstrap step can POST the default flannel ClusterNetworkClass using
+            # the controller-manager ServiceAccount token.
             rule(["core"], ["networkclasses", "clusternetworkclasses"], write),
             rule(["core"], ["networkclasses/status", "clusternetworkclasses/status"], status),
             rule(["core"], ["ships"], write),

@@ -1,4 +1,0 @@
----
-- name: Run renamed Tugboat CSI hostpath role
-  ansible.builtin.include_role:
-    name: tugboat_csi_hostpath

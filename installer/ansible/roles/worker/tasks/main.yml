@@ -1,4 +1,0 @@
----
-- name: Run Tugboat worker role
-  ansible.builtin.include_role:
-    name: tugboat_worker

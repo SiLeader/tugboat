@@ -177,6 +177,18 @@ control-plane host, distributes the shared PKI to all control-plane hosts, and
 copies worker CA/token material from the first control-plane host when workers
 are in the same inventory.
 
+PKI files already present on a target are preserved by default. To rotate PKI
+on the bootstrap host and push the new material to the other control-plane and
+worker hosts, set `tugboat_force_pki: true` for that run.
+
+### SSH host key checking
+
+`installer/ansible/ansible.cfg` sets `host_key_checking = False` so the first
+installer run does not block on unknown host keys. Verify each target's SSH
+host key out of band (for example, populate `~/.ssh/known_hosts` from a trusted
+source) before running the playbook against production hosts, or override the
+setting in your own `ansible.cfg`.
+
 ### Insecure mode
 
 Use insecure mode only for local development or isolated tests:
