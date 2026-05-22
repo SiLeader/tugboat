@@ -17,7 +17,7 @@
   become: true
   roles:
     - common
-    - worker
+    - tugboat_worker
 
 - name: Install Tugboat CSI hostpath
   hosts: tugboat_csi_hostpath
