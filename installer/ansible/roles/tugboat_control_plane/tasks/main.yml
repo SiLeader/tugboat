@@ -1,0 +1,178 @@
+---
+- name: Validate Tugboat control-plane settings
+  ansible.builtin.assert:
+    that:
+      - tugboat_build_mode in ['build', 'prebuilt']
+      - tugboat_apiserver_listen | length > 0
+      - tugboat_etcd_listen | length > 0
+      - tugboat_etcd_peer_listen | length > 0
+      - tugboat_etcd_initial_cluster_state in ['new', 'existing']
+      - tugboat_etcd_endpoints is iterable
+      - not (tugboat_build_mode == 'prebuilt' and (tugboat_prebuilt_bin_dir | length == 0))
+      - tugboat_etcd_pki_dir == tugboat_pki_dir ~ '/etcd'
+    fail_msg: "Tugboat control-plane variables are incomplete or invalid."
+
+- name: Build control-plane installer argument list
+  ansible.builtin.set_fact:
+    tugboat_control_plane_install_argv: >-
+      {{
+        [tugboat_control_plane_remote_installer_dir ~ '/install-control-plane.sh']
+        + (['--build'] if tugboat_build_mode == 'build' else ['--use-prebuilt', '--bin-dir', tugboat_prebuilt_bin_dir])
+        + ([('--secure' if tugboat_secure | bool else '--insecure')])
+        + ['--listen', tugboat_apiserver_listen]
+        + ['--pki-dir', tugboat_pki_dir]
+        + (['--force-pki'] if tugboat_force_pki | bool else [])
+        + (tugboat_apiserver_cert_hosts | map('regex_replace', '^(.*)$', '--apiserver-host=\\1') | list)
+        + (tugboat_apiserver_cert_ips | map('regex_replace', '^(.*)$', '--apiserver-ip=\\1') | list)
+        + ['--etcd-listen', tugboat_etcd_listen]
+        + ['--etcd-peer-listen', tugboat_etcd_peer_listen]
+        + ['--etcd-node-name', tugboat_etcd_node_name]
+        + ['--etcd-advertise-client-url', tugboat_etcd_advertise_client_url]
+        + ['--etcd-initial-advertise-peer-url', tugboat_etcd_initial_advertise_peer_url]
+        + ['--etcd-initial-cluster', tugboat_etcd_initial_cluster]
+        + ['--etcd-initial-cluster-state', tugboat_etcd_initial_cluster_state]
+        + (tugboat_etcd_endpoints | map('regex_replace', '^(.*)$', '--etcd-endpoint=\\1') | list)
+        + ['--data-dir', tugboat_etcd_data_dir]
+      }}
+
+- name: Build control-plane installer checksum
+  ansible.builtin.set_fact:
+    tugboat_control_plane_install_checksum: "{{ tugboat_control_plane_install_argv | to_json | hash('sha256') }}"
+
+- name: Ensure Tugboat Ansible state directory exists
+  ansible.builtin.file:
+    path: "{{ tugboat_control_plane_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Stage systemd installer scripts on target
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../systemd/"
+    dest: "{{ tugboat_control_plane_remote_installer_dir }}/"
+    owner: root
+    group: root
+    mode: preserve
+  register: tugboat_control_plane_installer_copy
+
+- name: Check existing control-plane install marker
+  ansible.builtin.stat:
+    path: "{{ tugboat_control_plane_marker_file }}"
+  register: tugboat_control_plane_marker_stat
+
+- name: Read existing control-plane install marker
+  ansible.builtin.slurp:
+    path: "{{ tugboat_control_plane_marker_file }}"
+  register: tugboat_control_plane_marker_slurp
+  when: tugboat_control_plane_marker_stat.stat.exists
+
+- name: Remember existing control-plane install checksum
+  ansible.builtin.set_fact:
+    tugboat_control_plane_installed_checksum: >-
+      {{
+        (tugboat_control_plane_marker_slurp.content | b64decode | trim)
+        if tugboat_control_plane_marker_stat.stat.exists
+        else ''
+      }}
+
+- name: Build control-plane health URL facts
+  ansible.builtin.set_fact:
+    tugboat_control_plane_health_scheme: "{{ 'https' if tugboat_secure | bool else 'http' }}"
+    tugboat_control_plane_health_port: "{{ (tugboat_apiserver_listen | regex_replace('^https?://', '') | regex_replace('^.*:', '')) }}"
+    tugboat_control_plane_health_host_raw: "{{ (tugboat_apiserver_listen | regex_replace('^https?://', '') | regex_replace(':[^:]*$', '')) }}"
+
+- name: Build control-plane health URL
+  ansible.builtin.set_fact:
+    tugboat_control_plane_health_url: >-
+      {{ tugboat_control_plane_health_scheme }}://{{
+        '127.0.0.1'
+        if tugboat_control_plane_health_host_raw in ['0.0.0.0', '::']
+        else tugboat_control_plane_health_host_raw
+      }}:{{ tugboat_control_plane_health_port }}/healthz
+
+- name: Check API server health
+  ansible.builtin.uri:
+    url: "{{ tugboat_control_plane_health_url }}"
+    status_code: 200
+    ca_path: "{{ (tugboat_pki_dir ~ '/ca.crt') if tugboat_secure | bool else omit }}"
+    validate_certs: "{{ tugboat_secure | bool }}"
+  register: tugboat_control_plane_health_check
+  failed_when: false
+  changed_when: false
+
+- name: Decide whether control-plane installer must run
+  ansible.builtin.set_fact:
+    tugboat_control_plane_install_required: >-
+      {{
+        tugboat_control_plane_installer_copy.changed
+        or tugboat_control_plane_installed_checksum != tugboat_control_plane_install_checksum
+        or (tugboat_control_plane_health_check.status | default(0)) != 200
+      }}
+
+- name: Install Tugboat control plane through systemd installer
+  when: tugboat_control_plane_install_required | bool
+  block:
+    - name: Run control-plane installer
+      ansible.builtin.command:
+        argv: "{{ tugboat_control_plane_install_argv }}"
+      environment:
+        CARGO_MANIFEST_DIR: "{{ tugboat_cargo_manifest_dir }}"
+      register: tugboat_control_plane_install_result
+
+    - name: Write successful control-plane install marker
+      ansible.builtin.copy:
+        dest: "{{ tugboat_control_plane_marker_file }}"
+        content: "{{ tugboat_control_plane_install_checksum }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+  rescue:
+    - name: Collect control-plane service journal after failed install
+      ansible.builtin.command:
+        argv:
+          - journalctl
+          - --no-pager
+          - -u
+          - etcd.service
+          - -u
+          - tugboat-apiserver.service
+          - -u
+          - tugboat-scheduler.service
+          - -u
+          - tugboat-controller-manager.service
+      register: tugboat_control_plane_failed_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Report failed control-plane installer invocation
+      ansible.builtin.fail:
+        msg: |
+          Tugboat control-plane installer failed.
+          argv={{ tugboat_control_plane_install_argv | to_json }}
+          stdout={{ tugboat_control_plane_install_result.stdout | default('') }}
+          stderr={{ tugboat_control_plane_install_result.stderr | default('') }}
+          journal={{ tugboat_control_plane_failed_journal.stdout | default('') }}
+
+- name: Wait for Tugboat API server health
+  ansible.builtin.uri:
+    url: "{{ tugboat_control_plane_health_url }}"
+    status_code: 200
+    ca_path: "{{ (tugboat_pki_dir ~ '/ca.crt') if tugboat_secure | bool else omit }}"
+    validate_certs: "{{ tugboat_secure | bool }}"
+  register: tugboat_control_plane_final_health
+  retries: 30
+  delay: 2
+  until: tugboat_control_plane_final_health.status == 200
+  changed_when: false
+
+- name: Verify installed control-plane systemd units
+  ansible.builtin.command:
+    argv:
+      - systemd-analyze
+      - verify
+      - /etc/systemd/system/etcd.service
+      - /etc/systemd/system/tugboat-apiserver.service
+      - /etc/systemd/system/tugboat-scheduler.service
+      - /etc/systemd/system/tugboat-controller-manager.service
+  changed_when: false

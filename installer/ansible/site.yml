@@ -5,7 +5,7 @@
   roles:
     - common
     - pki_bootstrap
-    - control_plane
+    - tugboat_control_plane
 
 - name: Install Tugboat workers
   hosts: tugboat_workers

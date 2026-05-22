@@ -1,0 +1,11 @@
+---
+# Remote path used for the shell-backed first-pass installer.
+tugboat_control_plane_remote_installer_dir: /var/lib/tugboat/ansible/systemd-installer
+
+# Remote state used to decide whether the wrapped installer needs to run again.
+tugboat_control_plane_state_dir: /var/lib/tugboat/ansible
+tugboat_control_plane_marker_file: "{{ tugboat_control_plane_state_dir }}/control-plane.install.sha256"
+
+# Build mode needs the repository on the target. The Docker test environment
+# mounts the repo at /workspace; other remote installs can override this path.
+tugboat_cargo_manifest_dir: "{{ playbook_dir }}/../.."

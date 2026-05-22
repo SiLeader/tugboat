@@ -178,6 +178,7 @@ Build Tugboat binaries on each target:
 
 ```yaml
 tugboat_build_mode: build
+tugboat_cargo_manifest_dir: /workspace
 ```
 
 Use prebuilt binaries from a directory on each target:
@@ -189,6 +190,8 @@ tugboat_prebuilt_bin_dir: /opt/tugboat/bin
 
 These map to `--build` or `--use-prebuilt --bin-dir` in
 `install-control-plane.sh` and `install-worker.sh`.
+The shell-backed control-plane role runs on the target, so build mode requires
+the Tugboat repository to exist at `tugboat_cargo_manifest_dir` on that target.
 
 ## Worker and Flannel Settings
 

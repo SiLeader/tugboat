@@ -1,14 +1,4 @@
 ---
-- name: Validate Tugboat control-plane settings
-  ansible.builtin.assert:
-    that:
-      - tugboat_apiserver_listen | length > 0
-      - tugboat_etcd_listen | length > 0
-      - tugboat_etcd_peer_listen | length > 0
-      - tugboat_etcd_initial_cluster_state in ['new', 'existing']
-    fail_msg: "Tugboat control-plane variables are incomplete or invalid."
-
-- name: Control-plane role placeholder
-  ansible.builtin.debug:
-    msg: "Task 02+ will invoke or replace install-control-plane.sh."
-  changed_when: false
+- name: Run Tugboat control-plane role
+  ansible.builtin.import_role:
+    name: tugboat_control_plane
