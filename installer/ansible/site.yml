@@ -4,8 +4,13 @@
   become: true
   roles:
     - common
-    - pki_bootstrap
+    - role: tugboat_bootstrap
+      vars:
+        tugboat_bootstrap_stage: pki
     - tugboat_control_plane
+    - role: tugboat_bootstrap
+      vars:
+        tugboat_bootstrap_stage: post
 
 - name: Install Tugboat workers
   hosts: tugboat_workers

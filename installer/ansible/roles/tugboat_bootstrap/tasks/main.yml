@@ -1,0 +1,412 @@
+---
+- name: Validate Tugboat bootstrap settings
+  ansible.builtin.assert:
+    that:
+      - tugboat_bootstrap_stage in ['all', 'pki', 'post']
+      - tugboat_pki_dir | length > 0
+      - tugboat_etcd_pki_dir | length > 0
+      - tugboat_apiserver_cert_hosts is iterable
+      - tugboat_apiserver_cert_ips is iterable
+      - tugboat_etcd_server_cert_hosts is iterable
+      - tugboat_etcd_server_cert_ips is iterable
+      - tugboat_etcd_peer_cert_hosts is iterable
+      - tugboat_etcd_peer_cert_ips is iterable
+      - tugboat_service_account_token_root | length > 0
+      - tugboat_scheduler_service_account_token | length > 0
+      - tugboat_controller_manager_service_account_token | length > 0
+      - tugboat_agent_service_account_token | length > 0
+    fail_msg: "Tugboat bootstrap variables are incomplete or invalid."
+
+- name: Expose Tugboat bootstrap token paths
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_scheduler_token: "{{ tugboat_scheduler_service_account_token }}"
+    tugboat_bootstrap_controller_manager_token: "{{ tugboat_controller_manager_service_account_token }}"
+    tugboat_bootstrap_agent_token: "{{ tugboat_agent_service_account_token }}"
+
+- name: Ensure Tugboat bootstrap installer directory exists
+  ansible.builtin.file:
+    path: "{{ tugboat_bootstrap_remote_installer_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Stage systemd bootstrap scripts on target
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../systemd/"
+    dest: "{{ tugboat_bootstrap_remote_installer_dir }}/"
+    owner: root
+    group: root
+    mode: preserve
+
+- name: Build Tugboat bootstrap URL facts
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_apiserver_scheme: "{{ 'https' if tugboat_secure | bool else 'http' }}"
+    tugboat_bootstrap_apiserver_port: "{{ tugboat_apiserver_listen | regex_replace('^https?://', '') | regex_replace('^.*:', '') }}"
+    tugboat_bootstrap_apiserver_listen_host: "{{ tugboat_apiserver_listen | regex_replace('^https?://', '') | regex_replace(':[^:]*$', '') }}"
+    tugboat_bootstrap_advertise_host: "{{ tugboat_apiserver_advertise_url | regex_replace('^https?://', '') | regex_replace('/.*$', '') | regex_replace(':[^:]*$', '') }}"
+
+- name: Build Tugboat bootstrap local API URL
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_apiserver_url: >-
+      {{ tugboat_bootstrap_apiserver_scheme }}://{{
+        'localhost'
+        if tugboat_bootstrap_apiserver_listen_host in ['0.0.0.0', '::']
+        else tugboat_bootstrap_apiserver_listen_host
+      }}:{{ tugboat_bootstrap_apiserver_port }}
+
+- name: Build Tugboat API server certificate SANs
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_apiserver_host_candidates: >-
+      {{
+        (
+          tugboat_apiserver_cert_hosts
+          + ['localhost', 'control-plane', inventory_hostname, tugboat_bootstrap_advertise_host]
+          + groups.get('tugboat_control_plane', [])
+        )
+        | reject('equalto', '')
+        | reject('equalto', '0.0.0.0')
+        | reject('equalto', '::')
+        | reject('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        | unique
+        | list
+      }}
+    tugboat_bootstrap_apiserver_ip_candidates: >-
+      {{
+        (
+          tugboat_apiserver_cert_ips
+          + ['127.0.0.1', tugboat_bootstrap_advertise_host]
+        )
+        | reject('equalto', '')
+        | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        | unique
+        | list
+      }}
+
+- name: Build Tugboat etcd certificate SANs
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_etcd_url_hosts: >-
+      {{
+        (
+          [tugboat_etcd_advertise_client_url, tugboat_etcd_initial_advertise_peer_url]
+          + tugboat_etcd_endpoints
+          + (tugboat_etcd_initial_cluster.split(',') | map('regex_replace', '^[^=]+=','') | list)
+        )
+        | map('regex_replace', '^https?://', '')
+        | map('regex_replace', '/.*$', '')
+        | map('regex_replace', ':[^:]*$', '')
+        | reject('equalto', '')
+        | reject('equalto', '0.0.0.0')
+        | reject('equalto', '::')
+        | list
+      }}
+
+- name: Build Tugboat etcd certificate host and IP lists
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_etcd_server_hosts: >-
+      {{
+        (
+          tugboat_etcd_server_cert_hosts
+          + ['localhost', inventory_hostname]
+          + groups.get('tugboat_control_plane', [])
+          + (tugboat_bootstrap_etcd_url_hosts | reject('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$') | list)
+        )
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+    tugboat_bootstrap_etcd_server_ips: >-
+      {{
+        (
+          tugboat_etcd_server_cert_ips
+          + ['127.0.0.1']
+          + (tugboat_bootstrap_etcd_url_hosts | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$') | list)
+        )
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+    tugboat_bootstrap_etcd_peer_hosts: >-
+      {{
+        (
+          tugboat_etcd_peer_cert_hosts
+          + ['localhost', inventory_hostname]
+          + groups.get('tugboat_control_plane', [])
+          + (tugboat_bootstrap_etcd_url_hosts | reject('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$') | list)
+        )
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+    tugboat_bootstrap_etcd_peer_ips: >-
+      {{
+        (
+          tugboat_etcd_peer_cert_ips
+          + ['127.0.0.1']
+          + (tugboat_bootstrap_etcd_url_hosts | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$') | list)
+        )
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+
+- name: Ensure OpenSSL is installed for PKI bootstrap
+  ansible.builtin.apt:
+    name: openssl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Ensure Tugboat PKI directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ tugboat_pki_dir }}"
+    - "{{ tugboat_etcd_pki_dir }}"
+  when: tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Build Tugboat API server PKI command
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_apiserver_pki_argv: >-
+      {{
+        [tugboat_bootstrap_remote_installer_dir ~ '/setup-pki.sh']
+        + ['--pki-dir', tugboat_pki_dir]
+        + (['--force'] if tugboat_force_pki | bool else [])
+        + (tugboat_bootstrap_apiserver_host_candidates | map('regex_replace', '^(.*)$', '--apiserver-host=\\1') | list)
+        + (tugboat_bootstrap_apiserver_ip_candidates | map('regex_replace', '^(.*)$', '--apiserver-ip=\\1') | list)
+      }}
+  when:
+    - tugboat_secure | bool
+    - tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Generate Tugboat API server PKI
+  ansible.builtin.command:
+    argv: "{{ tugboat_bootstrap_apiserver_pki_argv }}"
+  register: tugboat_bootstrap_apiserver_pki_result
+  changed_when: "'Generated Tugboat' in tugboat_bootstrap_apiserver_pki_result.stderr"
+  run_once: true
+  delegate_to: "{{ groups.get('tugboat_control_plane', [inventory_hostname])[0] }}"
+  when:
+    - tugboat_secure | bool
+    - tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Build Tugboat etcd PKI command
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_etcd_pki_argv: >-
+      {{
+        [tugboat_bootstrap_remote_installer_dir ~ '/setup-etcd-pki.sh']
+        + ['--pki-dir', tugboat_etcd_pki_dir]
+        + (['--force'] if tugboat_force_pki | bool else [])
+        + (tugboat_bootstrap_etcd_server_hosts | map('regex_replace', '^(.*)$', '--server-host=\\1') | list)
+        + (tugboat_bootstrap_etcd_server_ips | map('regex_replace', '^(.*)$', '--server-ip=\\1') | list)
+        + (tugboat_bootstrap_etcd_peer_hosts | map('regex_replace', '^(.*)$', '--peer-host=\\1') | list)
+        + (tugboat_bootstrap_etcd_peer_ips | map('regex_replace', '^(.*)$', '--peer-ip=\\1') | list)
+      }}
+  when: tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Generate Tugboat etcd PKI
+  ansible.builtin.command:
+    argv: "{{ tugboat_bootstrap_etcd_pki_argv }}"
+  register: tugboat_bootstrap_etcd_pki_result
+  changed_when: "'Generated etcd PKI' in tugboat_bootstrap_etcd_pki_result.stderr"
+  run_once: true
+  delegate_to: "{{ groups.get('tugboat_control_plane', [inventory_hostname])[0] }}"
+  when: tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Build Tugboat shared PKI file list
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_shared_pki_files: >-
+      {{
+        (
+          [
+            {'path': tugboat_etcd_pki_dir ~ '/ca.crt', 'mode': '0644'},
+            {'path': tugboat_etcd_pki_dir ~ '/ca.key', 'mode': '0600'},
+            {'path': tugboat_etcd_pki_dir ~ '/server.crt', 'mode': '0644'},
+            {'path': tugboat_etcd_pki_dir ~ '/server.key', 'mode': '0600'},
+            {'path': tugboat_etcd_pki_dir ~ '/peer.crt', 'mode': '0644'},
+            {'path': tugboat_etcd_pki_dir ~ '/peer.key', 'mode': '0600'},
+            {'path': tugboat_etcd_pki_dir ~ '/client.crt', 'mode': '0644'},
+            {'path': tugboat_etcd_pki_dir ~ '/client.key', 'mode': '0600'}
+          ]
+        )
+        + (
+          [
+            {'path': tugboat_pki_dir ~ '/ca.crt', 'mode': '0644'},
+            {'path': tugboat_pki_dir ~ '/ca.key', 'mode': '0600'},
+            {'path': tugboat_pki_dir ~ '/apiserver.crt', 'mode': '0644'},
+            {'path': tugboat_pki_dir ~ '/apiserver.key', 'mode': '0600'},
+            {'path': tugboat_pki_dir ~ '/tugboat-apiserver-sa-signing.key', 'mode': '0600'},
+            {'path': tugboat_pki_dir ~ '/tugboat-apiserver-sa-signing.pub', 'mode': '0644'}
+          ]
+          if tugboat_secure | bool
+          else []
+        )
+      }}
+  when: tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Read Tugboat shared PKI files from bootstrap host
+  ansible.builtin.slurp:
+    path: "{{ item.path }}"
+  loop: "{{ tugboat_bootstrap_shared_pki_files | default([]) }}"
+  register: tugboat_bootstrap_shared_pki_slurp
+  run_once: true
+  delegate_to: "{{ groups.get('tugboat_control_plane', [inventory_hostname])[0] }}"
+  when: tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Distribute Tugboat shared PKI files
+  ansible.builtin.copy:
+    dest: "{{ item.item.path }}"
+    content: "{{ item.content | b64decode }}"
+    owner: root
+    group: root
+    mode: "{{ item.item.mode }}"
+    force: "{{ tugboat_force_pki | bool }}"
+  loop: "{{ tugboat_bootstrap_shared_pki_slurp.results | default([]) }}"
+  no_log: true
+  when: tugboat_bootstrap_stage in ['all', 'pki']
+
+- name: Enforce Tugboat PKI ownership after control-plane users exist
+  when: tugboat_bootstrap_stage in ['all', 'post']
+  block:
+    - name: Set API server private key ownership
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: tugboat-apiserver
+        group: tugboat-apiserver
+        mode: "0600"
+      loop:
+        - "{{ tugboat_pki_dir }}/apiserver.key"
+        - "{{ tugboat_pki_dir }}/tugboat-apiserver-sa-signing.key"
+      when: tugboat_secure | bool
+
+    - name: Set etcd server private key ownership
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: tugboat-etcd
+        group: tugboat-etcd
+        mode: "0600"
+      loop:
+        - "{{ tugboat_etcd_pki_dir }}/server.key"
+        - "{{ tugboat_etcd_pki_dir }}/peer.key"
+
+    - name: Set etcd client private key ownership
+      ansible.builtin.file:
+        path: "{{ tugboat_etcd_pki_dir }}/client.key"
+        owner: tugboat-apiserver
+        group: tugboat-apiserver
+        mode: "0600"
+
+- name: Bootstrap Tugboat ServiceAccount and RBAC data
+  ansible.builtin.command:
+    argv:
+      - "{{ tugboat_bootstrap_remote_installer_dir }}/bootstrap-rbac.sh"
+      - --apiserver-url
+      - "{{ tugboat_bootstrap_apiserver_url }}"
+      - --ca-cert
+      - "{{ tugboat_pki_dir }}/ca.crt"
+      - --token-output-root
+      - "{{ tugboat_bootstrap_service_account_token_root }}"
+      - --token-owner-group
+      - "{{ tugboat_bootstrap_token_owner_group }}"
+  register: tugboat_bootstrap_rbac_result
+  changed_when: "'Bootstrapped Tugboat ServiceAccount tokens' in tugboat_bootstrap_rbac_result.stderr"
+  when:
+    - tugboat_secure | bool
+    - tugboat_bootstrap_stage in ['all', 'post']
+
+- name: Read Tugboat controller-manager token for secure flannel bootstrap
+  ansible.builtin.slurp:
+    path: "{{ tugboat_controller_manager_service_account_token }}"
+  register: tugboat_bootstrap_flannel_token
+  no_log: true
+  when:
+    - tugboat_bootstrap_flannel_enabled | bool
+    - tugboat_secure | bool
+    - tugboat_bootstrap_stage in ['all', 'post']
+
+- name: Build Tugboat flannel bootstrap auth headers
+  ansible.builtin.set_fact:
+    tugboat_bootstrap_flannel_auth_headers:
+      Authorization: "Bearer {{ tugboat_bootstrap_flannel_token.content | b64decode | trim }}"
+  no_log: true
+  when:
+    - tugboat_bootstrap_flannel_enabled | bool
+    - tugboat_secure | bool
+    - tugboat_bootstrap_stage in ['all', 'post']
+
+- name: Check Tugboat flannel ClusterNetworkClass
+  ansible.builtin.uri:
+    url: "{{ tugboat_bootstrap_apiserver_url }}/api/v1/clusternetworkclasses/{{ tugboat_cluster_network_class_name }}"
+    method: GET
+    status_code:
+      - 200
+      - 404
+    ca_path: "{{ (tugboat_pki_dir ~ '/ca.crt') if tugboat_secure | bool else omit }}"
+    validate_certs: "{{ tugboat_secure | bool }}"
+    headers: "{{ tugboat_bootstrap_flannel_auth_headers | default(omit) }}"
+  register: tugboat_bootstrap_flannel_check
+  changed_when: false
+  no_log: "{{ tugboat_secure | bool }}"
+  when:
+    - tugboat_bootstrap_flannel_enabled | bool
+    - tugboat_bootstrap_stage in ['all', 'post']
+
+- name: Create Tugboat flannel ClusterNetworkClass
+  ansible.builtin.uri:
+    url: "{{ tugboat_bootstrap_apiserver_url }}/api/v1/clusternetworkclasses"
+    method: POST
+    body_format: json
+    body:
+      apiVersion: v1
+      kind: ClusterNetworkClass
+      metadata:
+        name: "{{ tugboat_cluster_network_class_name }}"
+      spec:
+        cniPlugin: flannel
+        flannel:
+          subnetFile: /run/flannel/subnet.env
+          dataDir: /var/lib/cni/flannel
+          hairpinMode: true
+          defaultGateway: true
+        subnet: "{{ tugboat_cni_subnet }}"
+    status_code:
+      - 200
+      - 201
+      - 409
+    ca_path: "{{ (tugboat_pki_dir ~ '/ca.crt') if tugboat_secure | bool else omit }}"
+    validate_certs: "{{ tugboat_secure | bool }}"
+    headers: "{{ tugboat_bootstrap_flannel_auth_headers | default(omit) }}"
+  register: tugboat_bootstrap_flannel_create
+  changed_when: tugboat_bootstrap_flannel_create.status in [200, 201]
+  no_log: "{{ tugboat_secure | bool }}"
+  when:
+    - tugboat_bootstrap_flannel_enabled | bool
+    - tugboat_bootstrap_stage in ['all', 'post']
+    - (tugboat_bootstrap_flannel_check.status | default(0)) == 404
+
+- name: Bootstrap Tugboat flannel etcd network config
+  ansible.builtin.command:
+    argv:
+      - "{{ tugboat_bootstrap_remote_installer_dir }}/bootstrap-flannel-etcd.sh"
+      - --backend
+      - "{{ tugboat_flannel_mode }}"
+      - --subnet
+      - "{{ tugboat_cni_subnet }}"
+      - --flannel-etcd-endpoints
+      - "{{ tugboat_flannel_etcd_endpoints }}"
+      - --flannel-etcd-ca
+      - "{{ tugboat_flannel_etcd_ca }}"
+      - --flannel-etcd-cert
+      - "{{ tugboat_flannel_etcd_cert }}"
+      - --flannel-etcd-key
+      - "{{ tugboat_flannel_etcd_key }}"
+  register: tugboat_bootstrap_flannel_etcd_result
+  changed_when: "'Wrote Flannel etcd config' in tugboat_bootstrap_flannel_etcd_result.stderr"
+  when:
+    - tugboat_bootstrap_flannel_etcd_enabled | bool
+    - tugboat_bootstrap_stage in ['all', 'post']

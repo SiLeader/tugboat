@@ -30,9 +30,13 @@ tugboat_apiserver_cert_ips:
   - 127.0.0.1
 tugboat_ca_cert: "{{ tugboat_pki_dir }}/ca.crt"
 
-# ServiceAccount token path copied to worker hosts in secure mode.
-# Maps to install-worker.sh: --service-account-token.
-tugboat_service_account_token: /var/run/secrets/tugboat.cloud/serviceaccount/agent/token
+# ServiceAccount token paths used by control-plane components and worker hosts.
+# The agent token maps to install-worker.sh: --service-account-token.
+tugboat_service_account_token_root: /var/run/secrets/tugboat.cloud/serviceaccount
+tugboat_scheduler_service_account_token: "{{ tugboat_service_account_token_root }}/scheduler/token"
+tugboat_controller_manager_service_account_token: "{{ tugboat_service_account_token_root }}/controller-manager/token"
+tugboat_agent_service_account_token: "{{ tugboat_service_account_token_root }}/agent/token"
+tugboat_service_account_token: "{{ tugboat_agent_service_account_token }}"
 
 # etcd client and peer configuration for control-plane hosts.
 # Maps to install-control-plane.sh: --etcd-listen, --etcd-peer-listen,
@@ -72,8 +76,8 @@ tugboat_cni_subnet: 10.244.0.0/16
 tugboat_flannel_etcd_endpoints: "{{ tugboat_etcd_endpoints | join(',') }}"
 tugboat_flannel_etcd_prefix: /coreos.com/network
 tugboat_flannel_etcd_ca: "{{ tugboat_etcd_pki_dir }}/ca.crt"
-tugboat_flannel_etcd_cert: "{{ tugboat_etcd_pki_dir }}/flannel.crt"
-tugboat_flannel_etcd_key: "{{ tugboat_etcd_pki_dir }}/flannel.key"
+tugboat_flannel_etcd_cert: "{{ tugboat_etcd_pki_dir }}/client.crt"
+tugboat_flannel_etcd_key: "{{ tugboat_etcd_pki_dir }}/client.key"
 
 # Worker runtime settings.
 # Maps to install-worker.sh: --runtime and --node-name.

@@ -1,19 +1,4 @@
 ---
-- name: Validate Tugboat PKI settings
-  ansible.builtin.assert:
-    that:
-      - tugboat_pki_dir | length > 0
-      - tugboat_apiserver_cert_hosts is iterable
-      - tugboat_apiserver_cert_ips is iterable
-      - tugboat_etcd_pki_dir | length > 0
-      - tugboat_etcd_server_cert_hosts is iterable
-      - tugboat_etcd_server_cert_ips is iterable
-      - tugboat_etcd_peer_cert_hosts is iterable
-      - tugboat_etcd_peer_cert_ips is iterable
-    fail_msg: "Tugboat PKI variables must be defined before installing the control plane."
-  when: tugboat_secure | bool
-
-- name: PKI/bootstrap role placeholder
-  ansible.builtin.debug:
-    msg: "Task 02+ will install PKI and bootstrap assets."
-  changed_when: false
+- name: Run Tugboat bootstrap compatibility role
+  ansible.builtin.import_role:
+    name: tugboat_bootstrap

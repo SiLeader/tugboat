@@ -303,7 +303,7 @@ def cluster_roles():
             rule(["core"], ["serviceaccounts", "secrets", "persistentvolumeclaims", "persistentvolumes"], write),
             rule(["core"], ["serviceaccounts/token"], ["create"]),
             rule(["core"], ["persistentvolumeclaims/status", "persistentvolumes/status"], status),
-            rule(["core"], ["networkclasses", "clusternetworkclasses"], ["get", "list", "watch", "update", "patch"]),
+            rule(["core"], ["networkclasses", "clusternetworkclasses"], write),
             rule(["core"], ["networkclasses/status", "clusternetworkclasses/status"], status),
             rule(["core"], ["ships"], write),
             rule(["core"], ["ships/status"], status),
@@ -427,10 +427,16 @@ install_token() {
     local mode="$5"
     local dir="${TOKEN_OUTPUT_ROOT}/${component}"
     local token_file="${dir}/token"
+    local tmp_file
 
     install -d -m 0750 -- "${dir}"
-    printf '%s\n' "${token}" > "${token_file}"
-    chown "${owner}:${group}" "${token_file}" "${dir}"
+    tmp_file="$(mktemp -p "${dir}" .token.XXXXXXXXXX)"
+    printf '%s\n' "${token}" > "${tmp_file}"
+    if [[ ! -f "${token_file}" ]] || ! cmp -s "${tmp_file}" "${token_file}"; then
+        install -m "${mode}" -- "${tmp_file}" "${token_file}"
+    fi
+    rm -f -- "${tmp_file}"
+    chown "${owner}:${group}" "${dir}" "${token_file}"
     chmod "${mode}" "${token_file}"
 }
 
