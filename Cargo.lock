@@ -2633,9 +2633,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
+checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3606,7 +3606,7 @@ dependencies = [
  "openssl",
  "rand",
  "rand_xorshift",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3645,7 +3645,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "futures",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3734,7 +3734,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "openssl",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde_json",
  "tokio",
  "tracing-subscriber",
