@@ -1,0 +1,184 @@
+---
+- name: Validate Tugboat CSI hostpath settings
+  ansible.builtin.assert:
+    that:
+      - tugboat_csi_hostpath_install_mode in ['build', 'binary']
+      - tugboat_csi_hostpath_node_id | length > 0
+      - tugboat_csi_hostpath_data_dir | length > 0
+      - tugboat_csi_hostpath_version | length > 0
+    fail_msg: "Tugboat CSI hostpath variables are incomplete or invalid."
+
+- name: Validate Tugboat CSI hostpath binary path
+  ansible.builtin.assert:
+    that:
+      - tugboat_csi_hostpath_binary | length > 0
+    fail_msg: "tugboat_csi_hostpath_binary is required when install mode is binary."
+  when: tugboat_csi_hostpath_install_mode == 'binary'
+
+- name: Check configured hostpathplugin binary
+  ansible.builtin.stat:
+    path: "{{ tugboat_csi_hostpath_binary }}"
+  register: tugboat_csi_hostpath_source_binary_stat
+  when: tugboat_csi_hostpath_install_mode == 'binary'
+
+- name: Fail when configured hostpathplugin binary is missing
+  ansible.builtin.fail:
+    msg: "hostpathplugin binary not found on target: {{ tugboat_csi_hostpath_binary }}"
+  when: >
+    tugboat_csi_hostpath_install_mode == 'binary'
+    and not (tugboat_csi_hostpath_source_binary_stat.stat.exists | default(false))
+
+- name: Build CSI hostpath installer argument list
+  ansible.builtin.set_fact:
+    tugboat_csi_hostpath_install_argv: >-
+      {{
+        [tugboat_csi_hostpath_remote_installer_dir ~ '/install-csi-hostpath.sh']
+        + (['--build'] if tugboat_csi_hostpath_install_mode == 'build' else ['--binary', tugboat_csi_hostpath_binary])
+        + ['--version', tugboat_csi_hostpath_version]
+        + ['--node-id', tugboat_csi_hostpath_node_id]
+        + ['--data-dir', tugboat_csi_hostpath_data_dir]
+      }}
+
+- name: Build CSI hostpath installer checksum
+  ansible.builtin.set_fact:
+    tugboat_csi_hostpath_install_checksum: "{{ tugboat_csi_hostpath_install_argv | to_json | hash('sha256') }}"
+
+- name: Ensure Tugboat Ansible state directory exists
+  ansible.builtin.file:
+    path: "{{ tugboat_csi_hostpath_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Stage systemd installer scripts on CSI hostpath node
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../systemd/"
+    dest: "{{ tugboat_csi_hostpath_remote_installer_dir }}/"
+    owner: root
+    group: root
+    mode: preserve
+  register: tugboat_csi_hostpath_installer_copy
+
+- name: Check existing CSI hostpath install marker
+  ansible.builtin.stat:
+    path: "{{ tugboat_csi_hostpath_marker_file }}"
+  register: tugboat_csi_hostpath_marker_stat
+
+- name: Read existing CSI hostpath install marker
+  ansible.builtin.slurp:
+    path: "{{ tugboat_csi_hostpath_marker_file }}"
+  register: tugboat_csi_hostpath_marker_slurp
+  when: tugboat_csi_hostpath_marker_stat.stat.exists
+
+- name: Remember existing CSI hostpath install checksum
+  ansible.builtin.set_fact:
+    tugboat_csi_hostpath_installed_checksum: >-
+      {{
+        (tugboat_csi_hostpath_marker_slurp.content | b64decode | trim)
+        if tugboat_csi_hostpath_marker_stat.stat.exists
+        else ''
+      }}
+
+- name: Check CSI hostpath binary and unit installation state
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/local/bin/hostpathplugin
+    - /etc/systemd/system/hostpath-provisioner.service
+  register: tugboat_csi_hostpath_install_stats
+
+- name: Check CSI hostpath service state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - hostpath-provisioner.service
+  register: tugboat_csi_hostpath_service_active
+  changed_when: false
+  failed_when: false
+
+- name: Check CSI hostpath socket
+  ansible.builtin.stat:
+    path: /var/run/csi/csi.sock
+  register: tugboat_csi_hostpath_socket_stat
+
+- name: Decide whether CSI hostpath installer must run
+  ansible.builtin.set_fact:
+    tugboat_csi_hostpath_install_required: >-
+      {{
+        tugboat_csi_hostpath_installer_copy.changed
+        or tugboat_csi_hostpath_installed_checksum != tugboat_csi_hostpath_install_checksum
+        or (tugboat_csi_hostpath_install_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0)
+        or ((tugboat_csi_hostpath_service_active.rc | default(1)) != 0)
+        or (not tugboat_csi_hostpath_socket_stat.stat.issock | default(false))
+      }}
+
+- name: Install Tugboat CSI hostpath through systemd installer
+  when: tugboat_csi_hostpath_install_required | bool
+  block:
+    - name: Run CSI hostpath installer
+      ansible.builtin.command:
+        argv: "{{ tugboat_csi_hostpath_install_argv }}"
+      register: tugboat_csi_hostpath_install_result
+
+    - name: Write successful CSI hostpath install marker
+      ansible.builtin.copy:
+        dest: "{{ tugboat_csi_hostpath_marker_file }}"
+        content: "{{ tugboat_csi_hostpath_install_checksum }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+  rescue:
+    - name: Collect CSI hostpath service journal after failed install
+      ansible.builtin.command:
+        argv:
+          - journalctl
+          - --no-pager
+          - -u
+          - hostpath-provisioner.service
+      register: tugboat_csi_hostpath_failed_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Report failed CSI hostpath installer invocation
+      ansible.builtin.fail:
+        msg: |
+          Tugboat CSI hostpath installer failed.
+          argv={{ tugboat_csi_hostpath_install_argv | to_json }}
+          stdout={{ tugboat_csi_hostpath_install_result.stdout | default('') }}
+          stderr={{ tugboat_csi_hostpath_install_result.stderr | default('') }}
+          journal={{ tugboat_csi_hostpath_failed_journal.stdout | default('') }}
+
+- name: Wait for CSI hostpath service
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - hostpath-provisioner.service
+  register: tugboat_csi_hostpath_service_wait
+  retries: 30
+  delay: 2
+  until: tugboat_csi_hostpath_service_wait.rc == 0
+  changed_when: false
+
+- name: Wait for CSI hostpath socket
+  ansible.builtin.stat:
+    path: /var/run/csi/csi.sock
+  register: tugboat_csi_hostpath_socket_wait
+  retries: 30
+  delay: 2
+  until:
+    - tugboat_csi_hostpath_socket_wait.stat.exists
+    - tugboat_csi_hostpath_socket_wait.stat.issock | default(false)
+  changed_when: false
+
+- name: Verify installed CSI hostpath systemd unit
+  ansible.builtin.command:
+    argv:
+      - systemd-analyze
+      - verify
+      - /etc/systemd/system/hostpath-provisioner.service
+  changed_when: false

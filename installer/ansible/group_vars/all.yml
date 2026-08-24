@@ -1,0 +1,102 @@
+---
+# Tugboat binary installation mode.
+# Maps to install-control-plane.sh/install-worker.sh: --build or --use-prebuilt.
+tugboat_build_mode: build
+
+# Directory containing prebuilt Tugboat binaries when tugboat_build_mode is prebuilt.
+# Maps to: --bin-dir.
+tugboat_prebuilt_bin_dir: "{{ playbook_dir }}/../../target/release"
+
+# API server listen address on control-plane hosts.
+# Maps to install-control-plane.sh: --listen.
+tugboat_apiserver_listen: "{{ '0.0.0.0:8443' if tugboat_secure else '0.0.0.0:8080' }}"
+
+# URL workers use to reach the API server.
+# Maps to install-worker.sh: --apiserver-url.
+tugboat_apiserver_advertise_url: "{{ 'https' if tugboat_secure else 'http' }}://{{ hostvars[groups['tugboat_control_plane'][0]].ansible_host | default(groups['tugboat_control_plane'][0]) }}:{{ '8443' if tugboat_secure else '8080' }}"
+
+# Enable TLS and ServiceAccount authentication.
+# Maps to install-control-plane.sh/install-worker.sh: --secure or --insecure.
+tugboat_secure: true
+
+# PKI paths and API server certificate SANs.
+# Maps to install-control-plane.sh: --pki-dir, --apiserver-host, --apiserver-ip,
+# and --force-pki.
+tugboat_pki_dir: /etc/tugboat/pki
+tugboat_force_pki: false
+tugboat_apiserver_cert_hosts:
+  - localhost
+tugboat_apiserver_cert_ips:
+  - 127.0.0.1
+tugboat_ca_cert: "{{ tugboat_pki_dir }}/ca.crt"
+
+# ServiceAccount token paths used by control-plane components and worker hosts.
+# The agent token maps to install-worker.sh: --service-account-token.
+tugboat_service_account_token_root: /var/run/secrets/tugboat.cloud/serviceaccount
+tugboat_scheduler_service_account_token: "{{ tugboat_service_account_token_root }}/scheduler/token"
+tugboat_controller_manager_service_account_token: "{{ tugboat_service_account_token_root }}/controller-manager/token"
+tugboat_agent_service_account_token: "{{ tugboat_service_account_token_root }}/agent/token"
+tugboat_service_account_token: "{{ tugboat_agent_service_account_token }}"
+
+# etcd client and peer configuration for control-plane hosts.
+# Maps to install-control-plane.sh: --etcd-listen, --etcd-peer-listen,
+# --etcd-node-name, --etcd-advertise-client-url,
+# --etcd-initial-advertise-peer-url, --etcd-initial-cluster,
+# --etcd-initial-cluster-state, --etcd-endpoint, and --data-dir.
+tugboat_etcd_listen: 127.0.0.1:2379
+tugboat_etcd_peer_listen: 127.0.0.1:2380
+tugboat_etcd_node_name: default
+tugboat_etcd_advertise_client_url: "https://{{ tugboat_etcd_listen }}"
+tugboat_etcd_initial_advertise_peer_url: "https://{{ tugboat_etcd_peer_listen }}"
+tugboat_etcd_initial_cluster: "{{ tugboat_etcd_node_name }}={{ tugboat_etcd_initial_advertise_peer_url }}"
+tugboat_etcd_initial_cluster_state: new
+tugboat_etcd_endpoints:
+  - "{{ tugboat_etcd_advertise_client_url }}"
+tugboat_etcd_data_dir: /var/lib/tugboat-etcd
+tugboat_etcd_pki_dir: "{{ tugboat_pki_dir }}/etcd"
+
+# etcd certificate SANs.
+# Maps to setup-etcd-pki.sh: --server-host, --server-ip, --peer-host,
+# --peer-ip, --pki-dir, and --force.
+tugboat_etcd_server_cert_hosts:
+  - localhost
+tugboat_etcd_server_cert_ips:
+  - 127.0.0.1
+tugboat_etcd_peer_cert_hosts:
+  - localhost
+tugboat_etcd_peer_cert_ips:
+  - 127.0.0.1
+
+# Flannel/CNI settings for worker hosts.
+# Maps to install-worker.sh: --flannel-mode, --cni-subnet,
+# --flannel-etcd-endpoints, --flannel-etcd-ca, --flannel-etcd-cert,
+# and --flannel-etcd-key.
+tugboat_flannel_mode: static
+tugboat_cni_subnet: 10.244.0.0/16
+tugboat_flannel_etcd_endpoints: "{{ tugboat_etcd_endpoints | join(',') }}"
+tugboat_flannel_etcd_prefix: /coreos.com/network
+tugboat_flannel_etcd_ca: "{{ tugboat_etcd_pki_dir }}/ca.crt"
+tugboat_flannel_etcd_cert: "{{ tugboat_etcd_pki_dir }}/client.crt"
+tugboat_flannel_etcd_key: "{{ tugboat_etcd_pki_dir }}/client.key"
+
+# Worker runtime settings.
+# Maps to install-worker.sh: --runtime and --node-name.
+tugboat_worker_runtime: qemu
+tugboat_node_name: "{{ inventory_hostname_short }}"
+
+# CSI hostpath settings.
+# Maps to install-csi-hostpath.sh: --build, --binary, --version, --node-id,
+# and --data-dir.
+tugboat_csi_hostpath_enabled: true
+tugboat_csi_hostpath_install_mode: build
+tugboat_csi_hostpath_binary: ""
+tugboat_csi_hostpath_version: v1.17.0
+tugboat_csi_hostpath_node_id: "{{ tugboat_node_name | default(inventory_hostname_short) }}"
+tugboat_csi_hostpath_data_dir: /var/lib/tugboat-csi-hostpath
+
+# Uninstall behavior.
+# Maps to uninstall.sh: --control-plane, --worker, --csi-hostpath, and --purge.
+tugboat_uninstall_control_plane: "{{ inventory_hostname in groups.get('tugboat_control_plane', []) }}"
+tugboat_uninstall_worker: "{{ inventory_hostname in groups.get('tugboat_workers', []) }}"
+tugboat_uninstall_csi_hostpath: "{{ inventory_hostname in groups.get('tugboat_csi_hostpath', []) }}"
+tugboat_uninstall_purge: false

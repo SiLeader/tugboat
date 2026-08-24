@@ -1,0 +1,7 @@
+---
+# Remote path used for the shell-backed first-pass CSI hostpath installer.
+tugboat_csi_hostpath_remote_installer_dir: /var/lib/tugboat/ansible/systemd-installer
+
+# Remote state used to decide whether the wrapped installer needs to run again.
+tugboat_csi_hostpath_state_dir: /var/lib/tugboat/ansible
+tugboat_csi_hostpath_marker_file: "{{ tugboat_csi_hostpath_state_dir }}/csi-hostpath.install.sha256"

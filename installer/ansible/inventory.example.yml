@@ -1,0 +1,39 @@
+---
+all:
+  vars:
+    ansible_user: ubuntu
+  children:
+    tugboat_control_plane:
+      hosts:
+        control-plane-1:
+          ansible_host: 192.0.2.10
+          tugboat_etcd_node_name: control-plane-1
+          tugboat_etcd_listen: 0.0.0.0:2379
+          tugboat_etcd_peer_listen: 0.0.0.0:2380
+          tugboat_etcd_advertise_client_url: https://192.0.2.10:2379
+          tugboat_etcd_initial_advertise_peer_url: https://192.0.2.10:2380
+    tugboat_workers:
+      hosts:
+        worker-1:
+          ansible_host: 192.0.2.20
+          tugboat_node_name: worker-1
+    tugboat_csi_hostpath:
+      hosts:
+        worker-1:
+
+# For a local single-node test, replace the host groups above with:
+#
+# all:
+#   children:
+#     tugboat_control_plane:
+#       hosts:
+#         localhost:
+#           ansible_connection: local
+#     tugboat_workers:
+#       hosts:
+#         localhost:
+#           ansible_connection: local
+#     tugboat_csi_hostpath:
+#       hosts:
+#         localhost:
+#           ansible_connection: local

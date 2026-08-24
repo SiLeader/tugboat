@@ -7,6 +7,7 @@ source "${SCRIPT_DIR}/lib.sh"
 
 CONTROL_PLANE=0
 WORKER=0
+CSI_HOSTPATH=0
 PURGE=0
 
 CONTROL_PLANE_UNITS=(
@@ -29,6 +30,10 @@ WORKER_BINARIES=(
     tugboat-agent
     tugboat-qemu-runtime
     tugboat-cloud-hypervisor-runtime
+)
+
+CSI_HOSTPATH_BINARIES=(
+    hostpathplugin
 )
 
 CNI_PLUGIN_BINARIES=(
@@ -56,11 +61,12 @@ CNI_PLUGIN_BINARIES=(
 
 usage() {
     cat <<'USAGE'
-Usage: uninstall.sh (--control-plane | --worker | --control-plane --worker) [--purge]
+Usage: uninstall.sh (--control-plane | --worker | --csi-hostpath) [...] [--purge]
 
 Options:
   --control-plane  Remove control-plane systemd units, binaries, and configs.
   --worker         Remove worker systemd unit, binaries, CNI tmpfiles config, and configs.
+  --csi-hostpath   Remove CSI hostpath systemd unit and binary.
   --purge          Also remove Tugboat data directories and installed CNI plugin binaries.
 USAGE
 }
@@ -81,6 +87,10 @@ parse_args() {
                 WORKER=1
                 shift
                 ;;
+            --csi-hostpath)
+                CSI_HOSTPATH=1
+                shift
+                ;;
             --purge)
                 PURGE=1
                 shift
@@ -97,8 +107,8 @@ parse_args() {
         esac
     done
 
-    if [[ "${CONTROL_PLANE}" -ne 1 && "${WORKER}" -ne 1 ]]; then
-        log_error "At least one of --control-plane or --worker is required."
+    if [[ "${CONTROL_PLANE}" -ne 1 && "${WORKER}" -ne 1 && "${CSI_HOSTPATH}" -ne 1 ]]; then
+        log_error "At least one of --control-plane, --worker, or --csi-hostpath is required."
         usage >&2
         return 2
     fi
@@ -185,6 +195,22 @@ remove_worker() {
     fi
 }
 
+remove_csi_hostpath() {
+    log_info "Removing CSI hostpath services."
+    disable_unit hostpath-provisioner.service
+
+    rm -f -- "${SYSTEMD_UNIT_DIR}/hostpath-provisioner.service"
+    systemctl daemon-reload
+
+    remove_binaries "${CSI_HOSTPATH_BINARIES[@]}"
+
+    if [[ "${PURGE}" -eq 1 ]]; then
+        rm -rf -- \
+            /var/lib/tugboat-csi-hostpath \
+            /var/run/csi
+    fi
+}
+
 main() {
     parse_args "$@"
     require_root
@@ -195,6 +221,10 @@ main() {
 
     if [[ "${WORKER}" -eq 1 ]]; then
         remove_worker
+    fi
+
+    if [[ "${CSI_HOSTPATH}" -eq 1 ]]; then
+        remove_csi_hostpath
     fi
 
     log_info "Uninstall complete."

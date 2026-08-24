@@ -5,4 +5,6 @@
 .codex
 todo/
 /installer/systemd/test/artifacts
+/installer/ansible/test/artifacts
 /logs
+/.antigravitycli

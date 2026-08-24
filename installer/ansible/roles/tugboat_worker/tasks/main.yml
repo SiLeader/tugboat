@@ -1,0 +1,330 @@
+---
+- name: Validate Tugboat worker settings
+  ansible.builtin.assert:
+    that:
+      - tugboat_build_mode in ['build', 'prebuilt']
+      - tugboat_worker_runtime in ['qemu', 'cloud-hypervisor']
+      - tugboat_flannel_mode in ['static', 'vxlan', 'host-gw']
+      - tugboat_apiserver_advertise_url | length > 0
+      - tugboat_node_name | length > 0
+      - not (tugboat_build_mode == 'prebuilt' and (tugboat_prebuilt_bin_dir | length == 0))
+      - tugboat_flannel_mode == 'static' or (tugboat_flannel_etcd_endpoints | length > 0)
+      - >
+        tugboat_flannel_mode == 'static'
+        or
+        (
+          (
+            (tugboat_flannel_etcd_ca | length == 0)
+            and (tugboat_flannel_etcd_cert | length == 0)
+            and (tugboat_flannel_etcd_key | length == 0)
+          )
+          or
+          (
+            (tugboat_flannel_etcd_ca | length > 0)
+            and (tugboat_flannel_etcd_cert | length > 0)
+            and (tugboat_flannel_etcd_key | length > 0)
+          )
+        )
+    fail_msg: "Tugboat worker variables are incomplete or invalid."
+
+- name: Build Tugboat worker runtime facts
+  ansible.builtin.set_fact:
+    tugboat_worker_runtime_binary: "{{ 'tugboat-qemu-runtime' if tugboat_worker_runtime == 'qemu' else 'tugboat-cloud-hypervisor-runtime' }}"
+    tugboat_worker_apiserver_uses_tls: "{{ tugboat_apiserver_advertise_url is match('^https://') }}"
+    tugboat_worker_uses_dynamic_flannel: "{{ tugboat_flannel_mode in ['vxlan', 'host-gw'] }}"
+
+- name: Validate Tugboat secure worker material paths
+  ansible.builtin.assert:
+    that:
+      - (not tugboat_worker_apiserver_uses_tls | bool) or (tugboat_worker_ca_dest_path | length > 0)
+      - (not tugboat_secure | bool) or (tugboat_worker_service_account_token_dest_path | length > 0)
+    fail_msg: "Secure worker joins require CA and ServiceAccount token paths."
+
+- name: Build worker secure material file list
+  ansible.builtin.set_fact:
+    tugboat_worker_secure_material_files: >-
+      {{
+        (
+          [
+            {
+              'src': tugboat_worker_ca_source_path,
+              'dest': tugboat_worker_ca_dest_path,
+              'mode': '0644',
+              'dir_mode': '0755',
+              'secret': false
+            }
+          ]
+          if tugboat_worker_apiserver_uses_tls | bool
+          else []
+        )
+        + (
+          [
+            {
+              'src': tugboat_worker_service_account_token_source_path,
+              'dest': tugboat_worker_service_account_token_dest_path,
+              'mode': '0600',
+              'dir_mode': '0750',
+              'secret': true
+            }
+          ]
+          if tugboat_secure | bool
+          else []
+        )
+        + (
+          [
+            {
+              'src': tugboat_flannel_etcd_ca,
+              'dest': tugboat_flannel_etcd_ca,
+              'mode': '0644',
+              'dir_mode': '0755',
+              'secret': false
+            },
+            {
+              'src': tugboat_flannel_etcd_cert,
+              'dest': tugboat_flannel_etcd_cert,
+              'mode': '0644',
+              'dir_mode': '0755',
+              'secret': false
+            },
+            {
+              'src': tugboat_flannel_etcd_key,
+              'dest': tugboat_flannel_etcd_key,
+              'mode': '0600',
+              'dir_mode': '0755',
+              'secret': true
+            }
+          ]
+          if (tugboat_worker_uses_dynamic_flannel | bool) and (tugboat_flannel_etcd_ca | length > 0)
+          else []
+        )
+      }}
+
+- name: Ensure Tugboat worker secure material directories exist
+  ansible.builtin.file:
+    path: "{{ item.dest | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.dir_mode }}"
+  loop: "{{ tugboat_worker_secure_material_files }}"
+  when: tugboat_worker_distribute_secure_material | bool
+
+- name: Read Tugboat worker secure material from source host
+  ansible.builtin.slurp:
+    path: "{{ item.src }}"
+  loop: "{{ tugboat_worker_secure_material_files }}"
+  register: tugboat_worker_secure_material_slurp
+  delegate_to: "{{ tugboat_worker_secure_material_source_host }}"
+  no_log: true
+  when: tugboat_worker_distribute_secure_material | bool
+
+- name: Distribute Tugboat worker secure material
+  ansible.builtin.copy:
+    dest: "{{ item.item.dest }}"
+    content: "{{ item.content | b64decode }}"
+    owner: root
+    group: root
+    mode: "{{ item.item.mode }}"
+  loop: "{{ tugboat_worker_secure_material_slurp.results | default([]) }}"
+  register: tugboat_worker_secure_material_copy
+  no_log: true
+  when: tugboat_worker_distribute_secure_material | bool
+
+- name: Build worker installer argument list
+  ansible.builtin.set_fact:
+    tugboat_worker_install_argv: >-
+      {{
+        [tugboat_worker_remote_installer_dir ~ '/install-worker.sh']
+        + (['--build'] if tugboat_build_mode == 'build' else ['--use-prebuilt', '--bin-dir', tugboat_prebuilt_bin_dir])
+        + ['--apiserver-url', tugboat_apiserver_advertise_url]
+        + (['--ca-cert', tugboat_worker_ca_dest_path] if tugboat_worker_apiserver_uses_tls | bool else [])
+        + ([('--secure' if tugboat_secure | bool else '--insecure')])
+        + (['--service-account-token', tugboat_worker_service_account_token_dest_path] if tugboat_secure | bool else [])
+        + ['--node-name', tugboat_node_name]
+        + ['--runtime', tugboat_worker_runtime]
+        + ['--cni-subnet', tugboat_cni_subnet]
+        + ['--flannel-mode', tugboat_flannel_mode]
+        + (['--flannel-etcd-endpoints', tugboat_flannel_etcd_endpoints] if tugboat_worker_uses_dynamic_flannel | bool else [])
+        + (['--flannel-etcd-ca', tugboat_flannel_etcd_ca, '--flannel-etcd-cert', tugboat_flannel_etcd_cert, '--flannel-etcd-key', tugboat_flannel_etcd_key] if (tugboat_worker_uses_dynamic_flannel | bool) and (tugboat_flannel_etcd_ca | length > 0) else [])
+      }}
+
+- name: Build worker installer checksum
+  ansible.builtin.set_fact:
+    tugboat_worker_install_checksum: "{{ tugboat_worker_install_argv | to_json | hash('sha256') }}"
+
+- name: Ensure Tugboat Ansible state directory exists
+  ansible.builtin.file:
+    path: "{{ tugboat_worker_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Stage systemd installer scripts on worker
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../systemd/"
+    dest: "{{ tugboat_worker_remote_installer_dir }}/"
+    owner: root
+    group: root
+    mode: preserve
+  register: tugboat_worker_installer_copy
+
+- name: Check existing worker install marker
+  ansible.builtin.stat:
+    path: "{{ tugboat_worker_marker_file }}"
+  register: tugboat_worker_marker_stat
+
+- name: Read existing worker install marker
+  ansible.builtin.slurp:
+    path: "{{ tugboat_worker_marker_file }}"
+  register: tugboat_worker_marker_slurp
+  when: tugboat_worker_marker_stat.stat.exists
+
+- name: Remember existing worker install checksum
+  ansible.builtin.set_fact:
+    tugboat_worker_installed_checksum: >-
+      {{
+        (tugboat_worker_marker_slurp.content | b64decode | trim)
+        if tugboat_worker_marker_stat.stat.exists
+        else ''
+      }}
+
+- name: Check worker binary installation state
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/local/bin/tugboat-agent
+    - "/usr/local/bin/{{ tugboat_worker_runtime_binary }}"
+    - /opt/cni/bin/flannel
+  register: tugboat_worker_binary_stats
+
+- name: Check static flannel subnet file
+  ansible.builtin.stat:
+    path: /run/flannel/subnet.env
+  register: tugboat_worker_static_flannel_subnet
+  when: not tugboat_worker_uses_dynamic_flannel | bool
+
+- name: Check Tugboat agent service state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - tugboat-agent.service
+  register: tugboat_worker_agent_active
+  changed_when: false
+  failed_when: false
+
+- name: Check flanneld service state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - flanneld.service
+  register: tugboat_worker_flanneld_active
+  changed_when: false
+  failed_when: false
+  when: tugboat_worker_uses_dynamic_flannel | bool
+
+- name: Decide whether worker installer must run
+  ansible.builtin.set_fact:
+    tugboat_worker_install_required: >-
+      {{
+        tugboat_worker_installer_copy.changed
+        or (tugboat_worker_secure_material_copy.changed | default(false))
+        or tugboat_worker_installed_checksum != tugboat_worker_install_checksum
+        or (tugboat_worker_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0)
+        or ((tugboat_worker_agent_active.rc | default(1)) != 0)
+        or ((tugboat_worker_uses_dynamic_flannel | bool) and ((tugboat_worker_flanneld_active.rc | default(1)) != 0))
+        or ((not tugboat_worker_uses_dynamic_flannel | bool) and (not tugboat_worker_static_flannel_subnet.stat.exists | default(false)))
+      }}
+
+- name: Install Tugboat worker through systemd installer
+  when: tugboat_worker_install_required | bool
+  block:
+    - name: Run worker installer
+      ansible.builtin.command:
+        argv: "{{ tugboat_worker_install_argv }}"
+      environment:
+        CARGO_MANIFEST_DIR: "{{ tugboat_cargo_manifest_dir }}"
+      register: tugboat_worker_install_result
+
+    - name: Write successful worker install marker
+      ansible.builtin.copy:
+        dest: "{{ tugboat_worker_marker_file }}"
+        content: "{{ tugboat_worker_install_checksum }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+  rescue:
+    - name: Collect worker service journal after failed install
+      ansible.builtin.command:
+        argv:
+          - journalctl
+          - --no-pager
+          - -u
+          - tugboat-agent.service
+          - -u
+          - flanneld.service
+      register: tugboat_worker_failed_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Report failed worker installer invocation
+      ansible.builtin.fail:
+        msg: |
+          Tugboat worker installer failed.
+          argv={{ tugboat_worker_install_argv | to_json }}
+          stdout={{ tugboat_worker_install_result.stdout | default('') }}
+          stderr={{ tugboat_worker_install_result.stderr | default('') }}
+          journal={{ tugboat_worker_failed_journal.stdout | default('') }}
+
+- name: Wait for flanneld service
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - flanneld.service
+  register: tugboat_worker_flanneld_wait
+  retries: 30
+  delay: 2
+  until: tugboat_worker_flanneld_wait.rc == 0
+  changed_when: false
+  when: tugboat_worker_uses_dynamic_flannel | bool
+
+- name: Wait for Tugboat agent service
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - tugboat-agent.service
+  register: tugboat_worker_agent_wait
+  retries: 30
+  delay: 2
+  until: tugboat_worker_agent_wait.rc == 0
+  changed_when: false
+
+- name: Verify static flannel subnet file
+  ansible.builtin.command:
+    argv:
+      - test
+      - -s
+      - /run/flannel/subnet.env
+  changed_when: false
+  when: not tugboat_worker_uses_dynamic_flannel | bool
+
+- name: Build worker systemd verification command
+  ansible.builtin.set_fact:
+    tugboat_worker_systemd_verify_argv: >-
+      {{
+        ['systemd-analyze', 'verify', '/etc/systemd/system/tugboat-agent.service']
+        + (['/etc/systemd/system/flanneld.service'] if tugboat_worker_uses_dynamic_flannel | bool else [])
+      }}
+
+- name: Verify installed worker systemd units
+  ansible.builtin.command:
+    argv: "{{ tugboat_worker_systemd_verify_argv }}"
+  changed_when: false

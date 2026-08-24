@@ -1,0 +1,21 @@
+---
+# Remote path used for the shell-backed first-pass worker installer.
+tugboat_worker_remote_installer_dir: /var/lib/tugboat/ansible/systemd-installer
+
+# Remote state used to decide whether the wrapped installer needs to run again.
+tugboat_worker_state_dir: /var/lib/tugboat/ansible
+tugboat_worker_marker_file: "{{ tugboat_worker_state_dir }}/worker.install.sha256"
+
+# Build mode needs the repository on the target. The Docker test environment
+# mounts the repo at /workspace; other remote installs can override this path.
+tugboat_cargo_manifest_dir: "{{ playbook_dir }}/../.."
+
+# Secure worker join material is copied from the first control-plane host when
+# that host is present in inventory. Worker-only inventories can pre-place these
+# files or override the source host/path variables.
+tugboat_worker_distribute_secure_material: "{{ groups.get('tugboat_control_plane', []) | length > 0 }}"
+tugboat_worker_secure_material_source_host: "{{ groups.get('tugboat_control_plane', [inventory_hostname])[0] }}"
+tugboat_worker_ca_source_path: "{{ tugboat_ca_cert }}"
+tugboat_worker_ca_dest_path: "{{ tugboat_ca_cert }}"
+tugboat_worker_service_account_token_source_path: "{{ tugboat_agent_service_account_token }}"
+tugboat_worker_service_account_token_dest_path: "{{ tugboat_agent_service_account_token }}"

@@ -1,0 +1,20 @@
+---
+# Stage selector for callers that need PKI before the control plane exists and
+# API-backed bootstrap after it is healthy.
+tugboat_bootstrap_stage: all
+
+# Remote path used for the shell-backed first-pass bootstrap implementation.
+tugboat_bootstrap_remote_installer_dir: /var/lib/tugboat/ansible/systemd-installer
+
+# API bootstrap defaults.
+tugboat_bootstrap_flannel_enabled: true
+tugboat_cluster_network_class_name: cluster-network
+tugboat_bootstrap_flannel_etcd_enabled: "{{ tugboat_flannel_mode in ['vxlan', 'host-gw'] }}"
+tugboat_bootstrap_service_account_token_root: "{{ tugboat_service_account_token_root }}"
+tugboat_bootstrap_token_owner_group: tugboat
+
+# Paths exposed for components and workers.
+tugboat_service_account_token_root: /var/run/secrets/tugboat.cloud/serviceaccount
+tugboat_scheduler_service_account_token: "{{ tugboat_service_account_token_root }}/scheduler/token"
+tugboat_controller_manager_service_account_token: "{{ tugboat_service_account_token_root }}/controller-manager/token"
+tugboat_agent_service_account_token: "{{ tugboat_service_account_token_root }}/agent/token"

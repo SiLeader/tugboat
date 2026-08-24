@@ -1,0 +1,18 @@
+---
+- name: Validate Tugboat build mode
+  ansible.builtin.assert:
+    that:
+      - tugboat_build_mode in ['build', 'prebuilt']
+    fail_msg: "tugboat_build_mode must be either 'build' or 'prebuilt'."
+
+- name: Validate Tugboat worker runtime
+  ansible.builtin.assert:
+    that:
+      - tugboat_worker_runtime in ['qemu', 'cloud-hypervisor']
+    fail_msg: "tugboat_worker_runtime must be either 'qemu' or 'cloud-hypervisor'."
+
+- name: Validate Tugboat flannel mode
+  ansible.builtin.assert:
+    that:
+      - tugboat_flannel_mode in ['static', 'vxlan', 'host-gw']
+    fail_msg: "tugboat_flannel_mode must be static, vxlan, or host-gw."
