@@ -96,19 +96,72 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            target
-            .cargo
-          key: ${{ runner.os }}-cargo-license-${{ hashFiles('Cargo.lock') }}
+            ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-${{ vars.CARGO_DENY_VERSION }}
           restore-keys: |
-            ${{ runner.os }}-cargo-license-${{ hashFiles('Cargo.lock') }}
-            ${{ runner.os }}-cargo-license-
+            ${{ runner.os }}-cargo-deny-${{ vars.CARGO_DENY_VERSION }}
+            ${{ runner.os }}-cargo-deny-
 
       - name: Install cargo deny check
         shell: bash
         run: |
-          cargo install --locked cargo-deny
+          if ! command -v cargo-deny &> /dev/null; then
+            cargo install --locked cargo-deny
+          fi
+
+      - name: Cache backend build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-build-cargo-deny-check-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-build-cargo-deny-check
+
+      - name: Run cargo deny check
+        shell: bash
+        run: |
+          cargo deny check licenses
+
+  cargo-deny:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-${{ vars.CARGO_DENY_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-deny-${{ vars.CARGO_DENY_VERSION }}
+            ${{ runner.os }}-cargo-deny-
+
+      - name: Install cargo deny check
+        shell: bash
+        run: |
+          if ! command -v cargo-deny &> /dev/null; then
+            cargo install --locked cargo-deny
+          fi
+
+      - name: Cache backend build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-build-cargo-deny-check-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-build-cargo-deny-check
 
       - name: Run cargo deny check
         shell: bash
         run: |
           cargo deny check
+
