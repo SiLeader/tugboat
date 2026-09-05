@@ -46,6 +46,7 @@ anonymous_enabled = false
 issuer = "https://apiserver.tugboat.cloud"
 audiences = ["https://apiserver.tugboat.cloud"]
 signing_key_file = "/etc/tugboat/pki/tugboat-apiserver-sa-signing.key"
+# RS256 accepts PKCS#8/PKCS#1 PEM or DER with a 2048-4096-bit RSA key.
 signing_algorithm = "RS256"
 default_token_ttl_seconds = 3600
 max_token_ttl_seconds = 86400

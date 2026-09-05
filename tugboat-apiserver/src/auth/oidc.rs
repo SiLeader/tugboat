@@ -713,12 +713,12 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::SigningKey;
-    use rsa::RsaPrivateKey;
-    use rsa::pkcs1v15::SigningKey as RsaSigningKey;
-    use rsa::traits::PublicKeyParts;
+    use crate::auth::service_account_jwt::rsa_test_key_pair;
+    use ed25519_dalek::{Signer, SigningKey};
+    use ring::rand::SystemRandom;
+    use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
     use serde_json::json;
-    use signature::{SignatureEncoding, Signer};
+    use std::sync::Arc;
 
     fn make_provider(issuer: &str, client_id: &str) -> OidcProvider {
         OidcProvider::from_config(&OidcProviderConfig {
@@ -737,16 +737,15 @@ mod tests {
         .expect("provider")
     }
 
-    fn rsa_keypair_with_jwk(_kid: &str) -> (RsaPrivateKey, JwksEntry) {
-        let private = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).expect("rsa");
-        let public = private.to_public_key();
+    fn rsa_keypair_with_jwk(_kid: &str) -> (Arc<RsaKeyPair>, JwksEntry) {
+        let (private, modulus, exponent) = rsa_test_key_pair();
         (
             private,
             JwksEntry {
                 algorithm: SupportedAlgorithm::RS256,
                 key: JwksKey::Rsa {
-                    n: public.n().to_bytes_be(),
-                    e: public.e().to_bytes_be(),
+                    n: modulus,
+                    e: exponent,
                 },
             },
         )
@@ -764,13 +763,20 @@ mod tests {
         )
     }
 
-    fn encode_token(private: &RsaPrivateKey, kid: &str, claims: Value) -> String {
+    fn encode_token(private: &RsaKeyPair, kid: &str, claims: Value) -> String {
         let header = json!({"alg": "RS256", "kid": kid, "typ": "JWT"});
         let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
         let claims_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
         let signing_input = format!("{header_b64}.{claims_b64}");
-        let signer = RsaSigningKey::<rsa::sha2::Sha256>::new(private.clone());
-        let signature = signer.sign(signing_input.as_bytes()).to_bytes().to_vec();
+        let mut signature = vec![0; private.public().modulus_len()];
+        private
+            .sign(
+                &RSA_PKCS1_SHA256,
+                &SystemRandom::new(),
+                signing_input.as_bytes(),
+                &mut signature,
+            )
+            .expect("sign token");
         format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature))
     }
 
@@ -1048,10 +1054,9 @@ mod tests {
 
     #[test]
     fn parses_rsa_jwk_into_components() {
-        let rsa = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).expect("rsa");
-        let public = rsa.to_public_key();
-        let n = URL_SAFE_NO_PAD.encode(public.n().to_bytes_be());
-        let e = URL_SAFE_NO_PAD.encode(public.e().to_bytes_be());
+        let (_, modulus, exponent) = rsa_test_key_pair();
+        let n = URL_SAFE_NO_PAD.encode(modulus);
+        let e = URL_SAFE_NO_PAD.encode(exponent);
         let raw = json!({"kty": "RSA", "kid": "k1", "alg": "RS256", "use": "sig", "n": n, "e": e});
         assert!(matches!(parse_rsa_jwk(&raw), Ok(JwksKey::Rsa { .. })));
     }

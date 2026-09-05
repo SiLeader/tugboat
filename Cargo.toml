@@ -88,8 +88,6 @@ rustls = { version = "0.23.43", default-features = false, features = ["ring", "s
 rustls-pki-types = "1.15.1"
 ring = "0.17.14"
 x509-parser = "0.18.0"
-rsa = { version = "0.9.10", features = ["pem", "sha2"] }
-signature = "2.2.0"
 ed25519-dalek = { version = "2.2.0", features = ["pem"] }
 pkcs8 = { version = "0.10.2", features = ["pem"] }
 rcgen = "0.14.5"

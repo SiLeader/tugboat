@@ -7,13 +7,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
-use pkcs8::{EncodePrivateKey, LineEnding};
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     Issuer, KeyPair, KeyUsagePurpose,
 };
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use rsa::RsaPrivateKey;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 use tracing_subscriber::EnvFilter;
@@ -717,13 +715,10 @@ fn generate_tls_assets(tls_mode: TlsMode) -> Result<GeneratedTlsAssets, DynError
         server_key.serialize_pem().as_bytes(),
     )?;
     let ca_cert_path = write_temp_file("tugboat-it-ca-cert", &ca_cert_pem)?;
-    let service_account_signing_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048)?;
-    let service_account_signing_key_path = write_temp_file(
-        "tugboat-it-sa-signing-key",
-        service_account_signing_key
-            .to_pkcs8_pem(LineEnding::LF)?
-            .as_bytes(),
-    )?;
+    let service_account_signing_key = BASE64_STANDARD
+        .decode(include_str!("../../../testdata/rsa-private-key.pkcs8.b64").trim())?;
+    let service_account_signing_key_path =
+        write_temp_file("tugboat-it-sa-signing-key", &service_account_signing_key)?;
 
     let (masters_identity_pem, extra_paths) = if matches!(tls_mode, TlsMode::Mtls) {
         let client_key = KeyPair::generate()?;

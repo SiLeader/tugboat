@@ -33,8 +33,6 @@ rustls.workspace = true
 rustls-pki-types.workspace = true
 ring.workspace = true
 x509-parser.workspace = true
-rsa.workspace = true
-signature.workspace = true
 ed25519-dalek.workspace = true
 pkcs8.workspace = true
 

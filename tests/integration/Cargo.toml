@@ -14,9 +14,7 @@ tugboat-scheduler.workspace = true
 
 base64.workspace = true
 rcgen.workspace = true
-rsa.workspace = true
 ed25519-dalek.workspace = true
-pkcs8.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
