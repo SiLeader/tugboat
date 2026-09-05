@@ -106,6 +106,10 @@ sudo installer/systemd/install-control-plane.sh \
 
 ローカル開発やテスト専用です。API サーバーは `0.0.0.0:8080` で認証なしでリッスンします。
 
+Rust クライアントでは、認証なしの場合も Secret・ServiceAccount の全操作
+（一覧取得・Watch・トークン発行を含む）に HTTPS が必要です。
+Secret の読み取りやサービスアカウントトークンの発行を利用する場合は、セキュアモードを使用してください。
+
 ```bash
 sudo installer/systemd/install-control-plane.sh --build --insecure
 ```
