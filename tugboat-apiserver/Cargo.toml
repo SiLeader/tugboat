@@ -24,12 +24,19 @@ tugboat-resources = { workspace = true, features = ["schema"] }
 tugboat-scheduler.workspace = true
 tugboat-runtime-common.workspace = true
 
-actix-tls = "3.5.0"
-actix-web = { workspace = true, features = ["openssl"] }
+actix-tls = { version = "3.5.0", default-features = false, features = ["accept", "rustls-0_23"] }
+actix-web = { workspace = true, features = ["rustls-0_23"] }
 actix-web-lab.workspace = true
 utoipa = { workspace = true, features = ["actix_extras"] }
 utoipa-actix-web.workspace = true
-openssl.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+ring.workspace = true
+x509-parser.workspace = true
+rsa.workspace = true
+signature.workspace = true
+ed25519-dalek.workspace = true
+pkcs8.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -63,3 +70,4 @@ reqwest = { workspace = true, features = ["json"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+rcgen.workspace = true

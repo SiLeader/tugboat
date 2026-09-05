@@ -15,11 +15,17 @@
 use crate::config::{ServiceAccountSigningAlgorithm, ServiceAccountTokenConfig};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use openssl::hash::MessageDigest;
-use openssl::pkey::{Id, PKey, Private, Public};
-use openssl::sign::{Signer, Verifier};
+use ed25519_dalek::{Signature as Ed25519Signature, SigningKey, VerifyingKey};
+use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePublicKey, LineEnding};
+use rsa::pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey};
+use rsa::pkcs1v15::{
+    Signature as RsaSignature, SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey,
+};
+use rsa::traits::PublicKeyParts;
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use signature::{SignatureEncoding, Signer, Verifier};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tugboat_resources::ObjectMetaResource;
@@ -38,15 +44,27 @@ pub(crate) struct ServiceAccountTokenIssuer {
     leeway_seconds: u64,
     signing_key_id: String,
     signing_algorithm: JwtAlgorithm,
-    signing_key: PKey<Private>,
+    signing_key: SigningKeyMaterial,
     verification_keys: HashMap<String, VerificationKey>,
 }
 
 #[derive(Clone)]
 struct VerificationKey {
     algorithm: JwtAlgorithm,
-    key: PKey<Public>,
+    key: VerificationKeyMaterial,
     jwk: JsonWebKey,
+}
+
+#[derive(Clone)]
+enum SigningKeyMaterial {
+    Rsa(RsaPrivateKey),
+    Ed25519(SigningKey),
+}
+
+#[derive(Clone)]
+enum VerificationKeyMaterial {
+    Rsa(RsaPublicKey),
+    Ed25519(VerifyingKey),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,19 +195,17 @@ impl ServiceAccountTokenIssuer {
         };
         let signing_pem = std::fs::read(signing_key_file)
             .map_err(|err| format!("failed to read signing_key_file: {err}"))?;
-        let signing_key = PKey::private_key_from_pem(&signing_pem)
+        let signing_key = parse_signing_key(&signing_pem)
             .map_err(|err| format!("failed to parse signing_key_file: {err}"))?;
         ensure_key_matches_algorithm(&signing_key, signing_algorithm)?;
-        let public_pem = signing_key
-            .public_key_to_pem()
+        let public_key = verification_key_from_signing_key(&signing_key);
+        let public_pem = public_key_to_pem(&public_key)
             .map_err(|err| format!("failed to derive public key from signing_key_file: {err}"))?;
         let signing_key_id = config
             .signing_key_id
             .clone()
             .unwrap_or_else(|| derive_key_id(&public_pem));
 
-        let public_key = PKey::public_key_from_pem(&public_pem)
-            .map_err(|err| format!("failed to parse derived public key: {err}"))?;
         let mut verification_keys = HashMap::from([(
             signing_key_id.clone(),
             VerificationKey::new(signing_key_id.clone(), signing_algorithm, public_key)?,
@@ -199,7 +215,7 @@ impl ServiceAccountTokenIssuer {
             let pem = std::fs::read(path).map_err(|err| {
                 format!("failed to read additional_verification_keys.{kid}: {err}")
             })?;
-            let public_key = parse_public_key_pem(&pem).map_err(|err| {
+            let public_key = parse_public_key(&pem).map_err(|err| {
                 format!("failed to parse additional_verification_keys.{kid}: {err}")
             })?;
             let algorithm = detect_algorithm(&public_key)
@@ -397,7 +413,11 @@ impl ServiceAccountTokenIssuer {
 }
 
 impl VerificationKey {
-    fn new(kid: String, algorithm: JwtAlgorithm, key: PKey<Public>) -> Result<Self, String> {
+    fn new(
+        kid: String,
+        algorithm: JwtAlgorithm,
+        key: VerificationKeyMaterial,
+    ) -> Result<Self, String> {
         ensure_public_key_matches_algorithm(&key, algorithm)?;
         let jwk = jwk_from_public_key(&kid, algorithm, &key)?;
         Ok(Self {
@@ -446,77 +466,15 @@ fn decode_json<T: for<'de> Deserialize<'de>>(value: &str) -> Result<T, String> {
     serde_json::from_slice(&bytes).map_err(|err| format!("JWT JSON is invalid: {err}"))
 }
 
-fn sign(key: &PKey<Private>, algorithm: JwtAlgorithm, data: &[u8]) -> Result<Vec<u8>, String> {
-    match algorithm {
-        JwtAlgorithm::RS256 => {
-            let mut signer = Signer::new(MessageDigest::sha256(), key)
-                .map_err(|err| format!("failed to initialize RS256 signer: {err}"))?;
-            signer
-                .update(data)
-                .map_err(|err| format!("failed to feed RS256 signer: {err}"))?;
-            signer
-                .sign_to_vec()
-                .map_err(|err| format!("failed to sign JWT: {err}"))
+fn sign(key: &SigningKeyMaterial, algorithm: JwtAlgorithm, data: &[u8]) -> Result<Vec<u8>, String> {
+    match (algorithm, key) {
+        (JwtAlgorithm::RS256, SigningKeyMaterial::Rsa(key)) => {
+            let signer = RsaSigningKey::<rsa::sha2::Sha256>::new(key.clone());
+            Ok(signer.sign(data).to_vec())
         }
-        JwtAlgorithm::EdDSA => {
-            let mut signer = Signer::new_without_digest(key)
-                .map_err(|err| format!("failed to initialize EdDSA signer: {err}"))?;
-            signer
-                .sign_oneshot_to_vec(data)
-                .map_err(|err| format!("failed to sign JWT: {err}"))
+        (JwtAlgorithm::EdDSA, SigningKeyMaterial::Ed25519(key)) => {
+            Ok(key.sign(data).to_bytes().to_vec())
         }
-    }
-}
-
-fn verify_signature(
-    key: &PKey<Public>,
-    algorithm: JwtAlgorithm,
-    data: &[u8],
-    signature: &[u8],
-) -> Result<(), String> {
-    let verified = match algorithm {
-        JwtAlgorithm::RS256 => {
-            let mut verifier = Verifier::new(MessageDigest::sha256(), key)
-                .map_err(|err| format!("failed to initialize RS256 verifier: {err}"))?;
-            verifier
-                .update(data)
-                .map_err(|err| format!("failed to feed RS256 verifier: {err}"))?;
-            verifier
-                .verify(signature)
-                .map_err(|err| format!("failed to verify JWT: {err}"))?
-        }
-        JwtAlgorithm::EdDSA => {
-            let mut verifier = Verifier::new_without_digest(key)
-                .map_err(|err| format!("failed to initialize EdDSA verifier: {err}"))?;
-            verifier
-                .verify_oneshot(signature, data)
-                .map_err(|err| format!("failed to verify JWT: {err}"))?
-        }
-    };
-    if verified {
-        Ok(())
-    } else {
-        Err("JWT signature is invalid".to_string())
-    }
-}
-
-fn parse_public_key_pem(pem: &[u8]) -> Result<PKey<Public>, openssl::error::ErrorStack> {
-    if let Ok(key) = PKey::public_key_from_pem(pem) {
-        return Ok(key);
-    }
-    PKey::private_key_from_pem(pem).and_then(|key| {
-        let public_pem = key.public_key_to_pem()?;
-        PKey::public_key_from_pem(&public_pem)
-    })
-}
-
-fn ensure_key_matches_algorithm(
-    key: &PKey<Private>,
-    algorithm: JwtAlgorithm,
-) -> Result<(), String> {
-    let id = key.id();
-    match (algorithm, id) {
-        (JwtAlgorithm::RS256, Id::RSA) | (JwtAlgorithm::EdDSA, Id::ED25519) => Ok(()),
         (JwtAlgorithm::RS256, _) => Err("RS256 signing requires an RSA private key".to_string()),
         (JwtAlgorithm::EdDSA, _) => {
             Err("EdDSA signing requires an Ed25519 private key".to_string())
@@ -524,23 +482,132 @@ fn ensure_key_matches_algorithm(
     }
 }
 
-fn detect_algorithm(key: &PKey<Public>) -> Result<JwtAlgorithm, String> {
-    match key.id() {
-        Id::RSA => Ok(JwtAlgorithm::RS256),
-        Id::ED25519 => Ok(JwtAlgorithm::EdDSA),
-        other => Err(format!(
-            "unsupported public key type {other:?}; expected RSA or Ed25519"
-        )),
+fn verify_signature(
+    key: &VerificationKeyMaterial,
+    algorithm: JwtAlgorithm,
+    data: &[u8],
+    signature: &[u8],
+) -> Result<(), String> {
+    match (algorithm, key) {
+        (JwtAlgorithm::RS256, VerificationKeyMaterial::Rsa(key)) => {
+            let signature = RsaSignature::try_from(signature)
+                .map_err(|err| format!("JWT signature is invalid: {err}"))?;
+            RsaVerifyingKey::<rsa::sha2::Sha256>::new(key.clone())
+                .verify(data, &signature)
+                .map_err(|_| "JWT signature is invalid".to_string())
+        }
+        (JwtAlgorithm::EdDSA, VerificationKeyMaterial::Ed25519(key)) => {
+            let signature = Ed25519Signature::from_slice(signature)
+                .map_err(|err| format!("JWT signature is invalid: {err}"))?;
+            key.verify(data, &signature)
+                .map_err(|_| "JWT signature is invalid".to_string())
+        }
+        (JwtAlgorithm::RS256, _) => {
+            Err("RS256 verification requires an RSA public key".to_string())
+        }
+        (JwtAlgorithm::EdDSA, _) => {
+            Err("EdDSA verification requires an Ed25519 public key".to_string())
+        }
+    }
+}
+
+fn parse_signing_key(bytes: &[u8]) -> Result<SigningKeyMaterial, String> {
+    if let Ok(pem) = std::str::from_utf8(bytes) {
+        if let Ok(key) = RsaPrivateKey::from_pkcs8_pem(pem) {
+            return Ok(SigningKeyMaterial::Rsa(key));
+        }
+        if let Ok(key) = RsaPrivateKey::from_pkcs1_pem(pem) {
+            return Ok(SigningKeyMaterial::Rsa(key));
+        }
+        if let Ok(key) = SigningKey::from_pkcs8_pem(pem) {
+            return Ok(SigningKeyMaterial::Ed25519(key));
+        }
+    }
+    if let Ok(key) = RsaPrivateKey::from_pkcs8_der(bytes) {
+        return Ok(SigningKeyMaterial::Rsa(key));
+    }
+    if let Ok(key) = RsaPrivateKey::from_pkcs1_der(bytes) {
+        return Ok(SigningKeyMaterial::Rsa(key));
+    }
+    if let Ok(key) = SigningKey::from_pkcs8_der(bytes) {
+        return Ok(SigningKeyMaterial::Ed25519(key));
+    }
+    Err("unsupported private key PEM/DER; expected RSA PKCS#8/PKCS#1 or Ed25519 PKCS#8".to_string())
+}
+
+fn parse_public_key(bytes: &[u8]) -> Result<VerificationKeyMaterial, String> {
+    if let Ok(pem) = std::str::from_utf8(bytes) {
+        if let Ok(key) = RsaPublicKey::from_public_key_pem(pem) {
+            return Ok(VerificationKeyMaterial::Rsa(key));
+        }
+        if let Ok(key) = RsaPublicKey::from_pkcs1_pem(pem) {
+            return Ok(VerificationKeyMaterial::Rsa(key));
+        }
+        if let Ok(key) = VerifyingKey::from_public_key_pem(pem) {
+            return Ok(VerificationKeyMaterial::Ed25519(key));
+        }
+        if let Ok(key) = RsaPrivateKey::from_pkcs8_pem(pem) {
+            return Ok(VerificationKeyMaterial::Rsa(RsaPublicKey::from(&key)));
+        }
+        if let Ok(key) = RsaPrivateKey::from_pkcs1_pem(pem) {
+            return Ok(VerificationKeyMaterial::Rsa(RsaPublicKey::from(&key)));
+        }
+        if let Ok(key) = SigningKey::from_pkcs8_pem(pem) {
+            return Ok(VerificationKeyMaterial::Ed25519(key.verifying_key()));
+        }
+    }
+    if let Ok(key) = RsaPublicKey::from_public_key_der(bytes) {
+        return Ok(VerificationKeyMaterial::Rsa(key));
+    }
+    if let Ok(key) = RsaPublicKey::from_pkcs1_der(bytes) {
+        return Ok(VerificationKeyMaterial::Rsa(key));
+    }
+    if let Ok(key) = VerifyingKey::from_public_key_der(bytes) {
+        return Ok(VerificationKeyMaterial::Ed25519(key));
+    }
+    if let Ok(key) = RsaPrivateKey::from_pkcs8_der(bytes) {
+        return Ok(VerificationKeyMaterial::Rsa(RsaPublicKey::from(&key)));
+    }
+    if let Ok(key) = RsaPrivateKey::from_pkcs1_der(bytes) {
+        return Ok(VerificationKeyMaterial::Rsa(RsaPublicKey::from(&key)));
+    }
+    if let Ok(key) = SigningKey::from_pkcs8_der(bytes) {
+        return Ok(VerificationKeyMaterial::Ed25519(key.verifying_key()));
+    }
+    Err(
+        "unsupported public key PEM/DER; expected RSA SPKI/PKCS#1 or Ed25519 SPKI/private key"
+            .to_string(),
+    )
+}
+
+fn ensure_key_matches_algorithm(
+    key: &SigningKeyMaterial,
+    algorithm: JwtAlgorithm,
+) -> Result<(), String> {
+    match (algorithm, key) {
+        (JwtAlgorithm::RS256, SigningKeyMaterial::Rsa(_))
+        | (JwtAlgorithm::EdDSA, SigningKeyMaterial::Ed25519(_)) => Ok(()),
+        (JwtAlgorithm::RS256, _) => Err("RS256 signing requires an RSA private key".to_string()),
+        (JwtAlgorithm::EdDSA, _) => {
+            Err("EdDSA signing requires an Ed25519 private key".to_string())
+        }
+    }
+}
+
+fn verification_key_from_signing_key(key: &SigningKeyMaterial) -> VerificationKeyMaterial {
+    match key {
+        SigningKeyMaterial::Rsa(key) => VerificationKeyMaterial::Rsa(RsaPublicKey::from(key)),
+        SigningKeyMaterial::Ed25519(key) => VerificationKeyMaterial::Ed25519(key.verifying_key()),
     }
 }
 
 fn ensure_public_key_matches_algorithm(
-    key: &PKey<Public>,
+    key: &VerificationKeyMaterial,
     algorithm: JwtAlgorithm,
 ) -> Result<(), String> {
-    let id = key.id();
-    match (algorithm, id) {
-        (JwtAlgorithm::RS256, Id::RSA) | (JwtAlgorithm::EdDSA, Id::ED25519) => Ok(()),
+    match (algorithm, key) {
+        (JwtAlgorithm::RS256, VerificationKeyMaterial::Rsa(_))
+        | (JwtAlgorithm::EdDSA, VerificationKeyMaterial::Ed25519(_)) => Ok(()),
         (JwtAlgorithm::RS256, _) => {
             Err("RS256 verification requires an RSA public key".to_string())
         }
@@ -553,25 +620,20 @@ fn ensure_public_key_matches_algorithm(
 fn jwk_from_public_key(
     kid: &str,
     algorithm: JwtAlgorithm,
-    key: &PKey<Public>,
+    key: &VerificationKeyMaterial,
 ) -> Result<JsonWebKey, String> {
-    match algorithm {
-        JwtAlgorithm::RS256 => {
-            let rsa = key
-                .rsa()
-                .map_err(|err| format!("failed to extract RSA public key: {err}"))?;
-            Ok(JsonWebKey {
-                kty: "RSA".to_string(),
-                kid: kid.to_string(),
-                alg: algorithm.as_str().to_string(),
-                key_use: "sig".to_string(),
-                n: Some(URL_SAFE_NO_PAD.encode(rsa.n().to_vec())),
-                e: Some(URL_SAFE_NO_PAD.encode(rsa.e().to_vec())),
-                crv: None,
-                x: None,
-            })
-        }
-        JwtAlgorithm::EdDSA => Ok(JsonWebKey {
+    match (algorithm, key) {
+        (JwtAlgorithm::RS256, VerificationKeyMaterial::Rsa(rsa)) => Ok(JsonWebKey {
+            kty: "RSA".to_string(),
+            kid: kid.to_string(),
+            alg: algorithm.as_str().to_string(),
+            key_use: "sig".to_string(),
+            n: Some(URL_SAFE_NO_PAD.encode(rsa.n().to_bytes_be())),
+            e: Some(URL_SAFE_NO_PAD.encode(rsa.e().to_bytes_be())),
+            crv: None,
+            x: None,
+        }),
+        (JwtAlgorithm::EdDSA, VerificationKeyMaterial::Ed25519(key)) => Ok(JsonWebKey {
             kty: "OKP".to_string(),
             kid: kid.to_string(),
             alg: algorithm.as_str().to_string(),
@@ -579,13 +641,34 @@ fn jwk_from_public_key(
             n: None,
             e: None,
             crv: Some("Ed25519".to_string()),
-            x: Some(
-                URL_SAFE_NO_PAD.encode(
-                    key.raw_public_key()
-                        .map_err(|err| format!("failed to extract Ed25519 public key: {err}"))?,
-                ),
-            ),
+            x: Some(URL_SAFE_NO_PAD.encode(key.to_bytes())),
         }),
+        (JwtAlgorithm::RS256, _) => {
+            Err("RS256 verification requires an RSA public key".to_string())
+        }
+        (JwtAlgorithm::EdDSA, _) => {
+            Err("EdDSA verification requires an Ed25519 public key".to_string())
+        }
+    }
+}
+
+fn detect_algorithm(key: &VerificationKeyMaterial) -> Result<JwtAlgorithm, String> {
+    match key {
+        VerificationKeyMaterial::Rsa(_) => Ok(JwtAlgorithm::RS256),
+        VerificationKeyMaterial::Ed25519(_) => Ok(JwtAlgorithm::EdDSA),
+    }
+}
+
+fn public_key_to_pem(key: &VerificationKeyMaterial) -> Result<Vec<u8>, String> {
+    match key {
+        VerificationKeyMaterial::Rsa(key) => key
+            .to_public_key_pem(LineEnding::LF)
+            .map(|pem| pem.into_bytes())
+            .map_err(|err| format!("{err}")),
+        VerificationKeyMaterial::Ed25519(key) => key
+            .to_public_key_pem(LineEnding::LF)
+            .map(|pem| pem.into_bytes())
+            .map_err(|err| format!("{err}")),
     }
 }
 
@@ -604,16 +687,35 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openssl::rsa::Rsa;
+    use pkcs8::{EncodePrivateKey, EncodePublicKey};
+    use rsa::pkcs1::EncodeRsaPrivateKey;
     use std::fs;
     use tugboat_resources::manifests::meta::v1::ObjectMeta;
+
+    // Generated once with OpenSSL; this static public fixture keeps legacy
+    // PEM and automatically derived key-id compatibility independent of
+    // OpenSSL.
+    const OPENSSL_RSA_PUBLIC_KEY: &str = r#"-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvAGZg3HGRAVtj2LeKk7C
+cFXUfuM2M9XdGWYaPh/sKNaytYfxZvFOHOu2tYZ2DsLZ8CiiZWV6fc5dYbCXxbR2
+GvfCDc85jQitL1MnBU7I1MqOO79FfiY75VF8o5ObT7UPcYfvoJaIRmmSkUJcLSvY
+dmIRT6UZWjWEtR6CvcxAue2u+pD06TYS+KN3tBpRq8djv8txvsGJXhpOH/qJkS6D
+9vXu+rFb/No2Ld21YW7t0RMeuWVLsYRFHRfoNduw7KmDclHhZaCC2V2PYyuVn4NX
+rrETZfVxEVgOUs/R9ZPFzCTTLPTppj35DLNha3SImDX2G4C+pqlcLR8a/5zTSWtq
+VwIDAQAB
+-----END PUBLIC KEY-----
+"#;
 
     #[test]
     fn signs_and_verifies_rs256_service_account_token() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let key = PKey::from_rsa(Rsa::generate(2048).expect("rsa")).expect("pkey");
+        let key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).expect("rsa");
         let key_path = dir.path().join("sa.key");
-        fs::write(&key_path, key.private_key_to_pem_pkcs8().expect("pem")).expect("write key");
+        fs::write(
+            &key_path,
+            key.to_pkcs8_pem(LineEnding::LF).expect("pem").as_bytes(),
+        )
+        .expect("write key");
         let issuer = ServiceAccountTokenIssuer::from_config(&ServiceAccountTokenConfig {
             issuer: Some("https://issuer.example".to_string()),
             audiences: vec!["https://issuer.example".to_string()],
@@ -645,9 +747,13 @@ mod tests {
     #[test]
     fn signs_and_verifies_eddsa_service_account_token() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let key = PKey::generate_ed25519().expect("ed25519");
+        let key = SigningKey::from_bytes(&[7u8; 32]);
         let key_path = dir.path().join("sa.key");
-        fs::write(&key_path, key.private_key_to_pem_pkcs8().expect("pem")).expect("write key");
+        fs::write(
+            &key_path,
+            key.to_pkcs8_pem(LineEnding::LF).expect("pem").as_bytes(),
+        )
+        .expect("write key");
         let issuer = ServiceAccountTokenIssuer::from_config(&ServiceAccountTokenConfig {
             issuer: Some("https://issuer.example".to_string()),
             audiences: vec!["https://issuer.example".to_string()],
@@ -680,9 +786,13 @@ mod tests {
     #[test]
     fn rejects_wrong_audience() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let key = PKey::from_rsa(Rsa::generate(2048).expect("rsa")).expect("pkey");
+        let key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).expect("rsa");
         let key_path = dir.path().join("sa.key");
-        fs::write(&key_path, key.private_key_to_pem_pkcs8().expect("pem")).expect("write key");
+        fs::write(
+            &key_path,
+            key.to_pkcs8_pem(LineEnding::LF).expect("pem").as_bytes(),
+        )
+        .expect("write key");
         let issuer = ServiceAccountTokenIssuer::from_config(&ServiceAccountTokenConfig {
             issuer: Some("https://issuer.example".to_string()),
             audiences: vec!["https://issuer.example".to_string()],
@@ -714,21 +824,25 @@ mod tests {
     fn additional_verification_key_uses_its_own_algorithm() {
         let dir = tempfile::tempdir().expect("temp dir");
         // Primary signing key is RS256.
-        let signing_key = PKey::from_rsa(Rsa::generate(2048).expect("rsa")).expect("pkey");
+        let signing_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).expect("rsa");
         let signing_path = dir.path().join("sa.key");
         fs::write(
             &signing_path,
-            signing_key.private_key_to_pem_pkcs8().expect("pem"),
+            signing_key
+                .to_pkcs8_pem(LineEnding::LF)
+                .expect("pem")
+                .as_bytes(),
         )
         .expect("write signing key");
         // Rotation candidate is Ed25519 — must be tagged EdDSA, not the
         // primary algorithm.
-        let rotation_key = PKey::generate_ed25519().expect("ed25519");
+        let rotation_key = SigningKey::from_bytes(&[8u8; 32]);
         let rotation_path = dir.path().join("rotation.key");
         fs::write(
             &rotation_path,
             rotation_key
-                .public_key_to_pem()
+                .verifying_key()
+                .to_public_key_pem(LineEnding::LF)
                 .expect("rotation public pem"),
         )
         .expect("write rotation key");
@@ -761,6 +875,55 @@ mod tests {
         // The rotation key is Ed25519 — it must be tagged EdDSA, not the
         // primary signing algorithm.
         assert_eq!(rotation_alg, JwtAlgorithm::EdDSA);
+    }
+
+    #[test]
+    fn parses_der_key_material() {
+        let rsa = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).expect("rsa");
+        let rsa_pkcs8 = rsa.to_pkcs8_der().expect("RSA PKCS#8 DER");
+        let rsa_pkcs1 = rsa.to_pkcs1_der().expect("RSA PKCS#1 DER");
+        let rsa_public = rsa
+            .to_public_key()
+            .to_public_key_der()
+            .expect("RSA SPKI DER");
+
+        assert!(matches!(
+            parse_signing_key(rsa_pkcs8.as_bytes()),
+            Ok(SigningKeyMaterial::Rsa(_))
+        ));
+        assert!(matches!(
+            parse_signing_key(rsa_pkcs1.as_bytes()),
+            Ok(SigningKeyMaterial::Rsa(_))
+        ));
+        assert!(matches!(
+            parse_public_key(rsa_public.as_bytes()),
+            Ok(VerificationKeyMaterial::Rsa(_))
+        ));
+
+        let ed25519 = SigningKey::from_bytes(&[6u8; 32]);
+        let ed25519_pkcs8 = ed25519.to_pkcs8_der().expect("Ed25519 PKCS#8 DER");
+        let ed25519_public = ed25519
+            .verifying_key()
+            .to_public_key_der()
+            .expect("Ed25519 SPKI DER");
+
+        assert!(matches!(
+            parse_signing_key(ed25519_pkcs8.as_bytes()),
+            Ok(SigningKeyMaterial::Ed25519(_))
+        ));
+        assert!(matches!(
+            parse_public_key(ed25519_public.as_bytes()),
+            Ok(VerificationKeyMaterial::Ed25519(_))
+        ));
+    }
+
+    #[test]
+    fn preserves_kid_for_openssl_public_key_fixture() {
+        let public_key = parse_public_key(OPENSSL_RSA_PUBLIC_KEY.as_bytes()).expect("RSA key");
+        let public_pem = public_key_to_pem(&public_key).expect("public key PEM");
+
+        assert_eq!(public_pem, OPENSSL_RSA_PUBLIC_KEY.as_bytes());
+        assert_eq!(derive_key_id(&public_pem), "5k50kWfIY7KdmWrD");
     }
 
     fn service_account(namespace: &str, name: &str, uid: &str) -> ServiceAccount {
