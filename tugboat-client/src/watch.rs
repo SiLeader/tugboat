@@ -53,7 +53,7 @@ pub enum WatchEvent<T> {
 }
 
 impl TugboatClient {
-    pub(crate) async fn watch_impl<T: DeserializeOwned>(
+    pub(crate) async fn watch_impl<T: tugboat_resources::StaticResource + DeserializeOwned>(
         &self,
         path: String,
         params: WatchParams,
@@ -73,7 +73,7 @@ impl TugboatClient {
             }
         }
 
-        let res = self.client.get(url).send().await?;
+        let res = self.resource_client::<T>()?.get(url).send().await?;
         let stream = res.bytes_stream().map_err(std::io::Error::other);
         let reader = StreamReader::new(stream);
         let mut lines = FramedRead::new(reader, LinesCodec::new());

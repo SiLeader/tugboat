@@ -91,6 +91,8 @@ pub struct TugboatClient {
 }
 
 impl TugboatClient {
+    /// Creates an anonymous client. Secret and ServiceAccount operations require
+    /// HTTPS even when other resources are accessed over HTTP.
     pub fn new(base_url: impl Into<String>) -> Self {
         Self::try_new(base_url, ClientAuth::None, ClientTlsConfig::default())
             .expect("default tugboat client configuration should be valid")
@@ -161,6 +163,17 @@ fn bearer_headers(token: String) -> Result<HeaderMap, Error> {
 }
 
 impl TugboatClient {
+    // Anonymous HTTP remains available for local installation, but authentication
+    // settings do not determine whether a resource contains confidential data.
+    fn resource_client<T: StaticResource>(&self) -> Result<&reqwest::Client, Error> {
+        if matches!(T::plural(), "secrets" | "serviceaccounts") && self.base_url.scheme() != "https"
+        {
+            return Err(Error::InsecureUrl(self.base_url.to_string()));
+        }
+        // HTTPS base URLs always use an https_only client, including redirects.
+        Ok(&self.client)
+    }
+
     fn api_path<T: StaticResource>() -> String {
         let group = T::group();
         if group == "core" || group.is_empty() {
@@ -182,7 +195,7 @@ impl TugboatClient {
         body: T,
     ) -> Result<T, Error> {
         let res = self
-            .client
+            .resource_client::<T>()?
             .post(self.build_url(path))
             .json(&body)
             .send()
@@ -194,7 +207,11 @@ impl TugboatClient {
         &self,
         path: &str,
     ) -> Result<Option<T>, Error> {
-        let res = self.client.get(self.build_url(path)).send().await?;
+        let res = self
+            .resource_client::<T>()?
+            .get(self.build_url(path))
+            .send()
+            .await?;
         Self::parse_response_opt(res).await
     }
 
@@ -202,7 +219,11 @@ impl TugboatClient {
         &self,
         path: &str,
     ) -> Result<Vec<T>, Error> {
-        let res = self.client.get(self.build_url(path)).send().await?;
+        let res = self
+            .resource_client::<T>()?
+            .get(self.build_url(path))
+            .send()
+            .await?;
         Self::parse_response_list(res).await
     }
 
@@ -221,7 +242,7 @@ impl TugboatClient {
                 pairs.append_pair("fieldSelector", f);
             }
         }
-        let res = self.client.get(url).send().await?;
+        let res = self.resource_client::<T>()?.get(url).send().await?;
         Self::parse_response_list(res).await
     }
 
@@ -240,7 +261,7 @@ impl TugboatClient {
                 pairs.append_pair("fieldSelector", f);
             }
         }
-        let res = self.client.get(url).send().await?;
+        let res = self.resource_client::<T>()?.get(url).send().await?;
         Self::parse_response_list_full(res).await
     }
 
@@ -250,7 +271,7 @@ impl TugboatClient {
         body: impl Serialize,
     ) -> Result<T, Error> {
         let res = self
-            .client
+            .resource_client::<T>()?
             .patch(self.build_url(path))
             .json(&body)
             .send()
@@ -264,7 +285,7 @@ impl TugboatClient {
         body: T,
     ) -> Result<T, Error> {
         let res = self
-            .client
+            .resource_client::<T>()?
             .put(self.build_url(path))
             .json(&body)
             .send()
@@ -276,7 +297,11 @@ impl TugboatClient {
         &self,
         path: &str,
     ) -> Result<Option<T>, Error> {
-        let res = self.client.delete(self.build_url(path)).send().await?;
+        let res = self
+            .resource_client::<T>()?
+            .delete(self.build_url(path))
+            .send()
+            .await?;
         Self::parse_response_opt(res).await
     }
 
@@ -288,7 +313,7 @@ impl TugboatClient {
     ) -> Result<ServiceAccountTokenResponse, Error> {
         let path = format!("/api/v1/namespaces/{namespace}/serviceaccounts/{name}/token");
         let res = self
-            .client
+            .resource_client::<tugboat_resources::manifests::core::v1::ServiceAccount>()?
             .post(self.build_url(&path))
             .json(&request)
             .send()
@@ -528,6 +553,78 @@ impl TugboatClient {
 #[cfg(test)]
 mod tests {
     use super::{ClientAuth, ClientTlsConfig, TugboatClient};
+
+    fn assert_insecure<T>(result: Result<T, super::Error>) {
+        assert!(matches!(result, Err(super::Error::InsecureUrl(_))));
+    }
+
+    async fn assert_sensitive_api_rejects_http<T>()
+    where
+        T: tugboat_resources::NamespacedResource
+            + serde::Serialize
+            + serde::de::DeserializeOwned
+            + Default,
+    {
+        let client = TugboatClient::new("http://127.0.0.1:1");
+        // Cover both namespaced and all-namespace access, including reflector lists.
+        for api in [
+            super::Api::<T>::namespaced(client.clone(), "default"),
+            super::Api::<T>::all(client.clone()),
+        ] {
+            let params = super::WatchParams::default().labels("app=test");
+            assert_insecure(api.create(T::default()).await);
+            assert_insecure(api.get("test").await);
+            assert_insecure(api.list().await);
+            assert_insecure(api.list_with_params(&params).await);
+            assert_insecure(api.list_with_params_full(&params).await);
+            assert_insecure(api.patch("test", serde_json::json!({})).await);
+            assert_insecure(api.patch_status("test", serde_json::json!({})).await);
+            assert_insecure(api.replace("test", T::default()).await);
+            assert_insecure(api.replace_status("test", T::default()).await);
+            assert_insecure(api.delete("test").await);
+            assert_insecure(api.watch_raw(params).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn sensitive_operations_reject_anonymous_http() {
+        use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
+
+        assert_sensitive_api_rejects_http::<Secret>().await;
+        assert_sensitive_api_rejects_http::<ServiceAccount>().await;
+        assert_insecure(
+            TugboatClient::new("http://127.0.0.1:1")
+                .create_service_account_token("default", "test", Default::default())
+                .await,
+        );
+    }
+
+    #[tokio::test]
+    async fn sensitive_https_client_rejects_cleartext_requests() {
+        use tugboat_resources::manifests::core::v1::{Secret, ServiceAccount};
+
+        let client = TugboatClient::new("https://127.0.0.1:1");
+        assert!(client.resource_client::<ServiceAccount>().is_ok());
+        let error = client
+            .resource_client::<Secret>()
+            .unwrap()
+            .get("http://127.0.0.1:1")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            error.is_builder(),
+            "HTTP must be rejected before connecting"
+        );
+    }
+
+    #[test]
+    fn ordinary_resources_still_allow_anonymous_http() {
+        use tugboat_resources::manifests::core::v1::Ship;
+
+        let client = TugboatClient::new("http://127.0.0.1:1");
+        assert!(client.resource_client::<Ship>().is_ok());
+    }
 
     #[test]
     fn anonymous_http_url_is_allowed() {

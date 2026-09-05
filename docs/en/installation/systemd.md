@@ -111,6 +111,10 @@ What the script does:
 Use this only for local development or testing. The API server listens on `0.0.0.0:8080` with
 no authentication.
 
+The Rust client requires HTTPS for all Secret and ServiceAccount operations,
+including list/watch and token issuance, even without authentication. Features
+that read Secrets or request service account tokens require secure mode.
+
 ```bash
 sudo installer/systemd/install-control-plane.sh --build --insecure
 ```
