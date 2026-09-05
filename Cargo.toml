@@ -83,8 +83,14 @@ futures = "0.3.32"
 async-stream = "0.3.6"
 tokio-util = "0.7.18"
 
-# tls
-openssl = "0.10.80"
+# tls and cryptography
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1.15.1"
+ring = "0.17.14"
+x509-parser = "0.18.0"
+ed25519-dalek = { version = "2.2.0", features = ["pem"] }
+pkcs8 = { version = "0.10.2", features = ["pem"] }
+rcgen = "0.14.5"
 
 # rand
 rand = "0.10.1"
@@ -108,7 +114,7 @@ reqwest = "0.13.4"
 etcd-client = { version = "0.18.0", features = ["tls"] }
 
 # OCI
-oci-distribution = "0.11.0"
+oci-distribution = { version = "0.11.0", default-features = false, features = ["rustls-tls-native-roots"] }
 sha2 = "0.11.0"
 flate2 = "1.1.9"
 

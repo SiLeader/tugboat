@@ -23,8 +23,11 @@ use actix_web::error::InternalError;
 use actix_web::middleware::Logger;
 use actix_web::web::{Data, JsonConfig};
 use actix_web::{App, HttpResponse, HttpServer, dev::Extensions, get};
-use openssl::ssl::{SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod, SslVerifyMode};
-use openssl::x509::X509;
+use rustls::RootCertStore;
+use rustls::server::WebPkiClientVerifier;
+use rustls::{ServerConfig, crypto};
+use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::any::Any;
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -120,8 +123,8 @@ impl ApiServer {
         })
         .on_connect(store_client_certificate_info);
         if let Some(tls) = self.tls {
-            let builder = build_tls_acceptor(tls).map_err(std::io::Error::other)?;
-            server.bind_openssl(self.listen, builder)?.run().await
+            let config = build_tls_server_config(tls).map_err(std::io::Error::other)?;
+            server.bind_rustls_0_23(self.listen, config)?.run().await
         } else if self.allow_insecure_http {
             warn!(
                 "API server is running without TLS. This is insecure and not recommended for production use."
@@ -231,14 +234,14 @@ async fn run_with_bound_listener(
     })
     .on_connect(store_client_certificate_info);
     let server = if let Some(tls) = tls {
-        let builder = match build_tls_acceptor(tls) {
+        let config = match build_tls_server_config(tls) {
             Ok(b) => b,
             Err(err) => {
                 tracing::error!("Failed to configure TLS: {err}");
                 return;
             }
         };
-        match server.listen_openssl(listener, builder) {
+        match server.listen_rustls_0_23(listener, config) {
             Ok(server) => server,
             Err(err) => {
                 tracing::error!("Failed to listen on provided socket with TLS: {err}");
@@ -283,120 +286,120 @@ async fn health_check() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-fn build_tls_acceptor(tls: TlsConfig) -> Result<SslAcceptorBuilder, std::io::Error> {
-    let mut builder = SslAcceptor::mozilla_modern_v5(SslMethod::tls_server())
-        .map_err(|e| std::io::Error::other(format!("Failed to create TLS acceptor: {e}")))?;
-    builder
-        .set_private_key_file(tls.key_file, SslFiletype::PEM)
-        .map_err(|e| std::io::Error::other(format!("Failed to set TLS private key: {e}")))?;
-    builder
-        .set_certificate_chain_file(tls.cert_file)
-        .map_err(|e| std::io::Error::other(format!("Failed to set TLS certificate chain: {e}")))?;
-    if let Some(client_ca_file) = tls.client_cert_file {
-        configure_client_certificate_auth(&mut builder, &client_ca_file)?;
+fn build_tls_server_config(tls: TlsConfig) -> Result<ServerConfig, std::io::Error> {
+    let cert_file = std::fs::read(&tls.cert_file)
+        .map_err(|e| std::io::Error::other(format!("Failed to read TLS certificate chain: {e}")))?;
+    let certs = CertificateDer::pem_slice_iter(&cert_file)
+        .collect::<Result<Vec<CertificateDer<'static>>, _>>()
+        .map_err(|e| {
+            std::io::Error::other(format!("Failed to parse TLS certificate chain: {e}"))
+        })?;
+    if certs.is_empty() {
+        return Err(std::io::Error::other(
+            "Failed to parse TLS certificate chain: no certificates found",
+        ));
     }
-    Ok(builder)
-}
 
-fn configure_client_certificate_auth(
-    builder: &mut SslAcceptorBuilder,
-    client_ca_file: &str,
-) -> Result<(), std::io::Error> {
-    let file = std::fs::read(client_ca_file)
-        .map_err(|e| std::io::Error::other(format!("Failed to read client CA file: {e}")))?;
-    let certs = X509::stack_from_pem(file.as_slice())
-        .map_err(|e| std::io::Error::other(format!("Failed to parse client CA file: {e}")))?;
-    // set_ca_file sets the trust store used to verify the client certificate chain.
-    builder
-        .set_ca_file(client_ca_file)
-        .map_err(|e| std::io::Error::other(format!("Failed to set client CA file: {e}")))?;
-    // add_client_ca populates the list of acceptable CAs sent to the client
-    // in the TLS CertificateRequest message, allowing it to select the right
-    // certificate to present. Both calls are needed for full mTLS support.
-    for cert in certs {
+    let key_file = std::fs::read(&tls.key_file)
+        .map_err(|e| std::io::Error::other(format!("Failed to read TLS private key: {e}")))?;
+    let keys = PrivateKeyDer::pem_slice_iter(&key_file)
+        .collect::<Result<Vec<PrivateKeyDer<'static>>, _>>()
+        .map_err(|e| std::io::Error::other(format!("Failed to parse TLS private key: {e}")))?;
+    let [key] = keys.as_slice() else {
+        return Err(std::io::Error::other(format!(
+            "Failed to parse TLS private key: expected exactly one private key, found {}",
+            keys.len()
+        )));
+    };
+    let key = key.clone_key();
+
+    let provider = Arc::new(crypto::ring::default_provider());
+    let builder = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| std::io::Error::other(format!("Failed to create TLS configuration: {e}")))?;
+    let mut config = if let Some(client_ca_file) = tls.client_cert_file {
+        let ca_file = std::fs::read(&client_ca_file)
+            .map_err(|e| std::io::Error::other(format!("Failed to read client CA file: {e}")))?;
+        let ca_certs = CertificateDer::pem_slice_iter(&ca_file)
+            .collect::<Result<Vec<CertificateDer<'static>>, _>>()
+            .map_err(|e| std::io::Error::other(format!("Failed to parse client CA file: {e}")))?;
+        if ca_certs.is_empty() {
+            return Err(std::io::Error::other(
+                "Failed to parse client CA file: no certificates found",
+            ));
+        }
+        let mut roots = RootCertStore::empty();
+        for cert in ca_certs {
+            roots.add(cert).map_err(|e| {
+                std::io::Error::other(format!("Failed to add client CA certificate: {e}"))
+            })?;
+        }
+        let verifier = WebPkiClientVerifier::builder_with_provider(
+            Arc::new(roots),
+            Arc::new(crypto::ring::default_provider()),
+        )
+        .build()
+        .map_err(|e| std::io::Error::other(format!("Failed to configure client CA: {e}")))?;
         builder
-            .add_client_ca(cert.as_ref())
-            .map_err(|e| std::io::Error::other(format!("Failed to add client CA: {e}")))?;
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(certs, key)
+    } else {
+        builder.with_no_client_auth().with_single_cert(certs, key)
     }
-    // Require a client certificate; connections without one are rejected at the
-    // TLS handshake level. This makes bearer-token auth incompatible with mTLS
-    // mode — choose one or the other in [http.tls].
-    builder.set_verify(SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT);
-    Ok(())
+    .map_err(|e| std::io::Error::other(format!("Failed to configure TLS: {e}")))?;
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(config)
 }
 
 fn store_client_certificate_info(connection: &dyn Any, data: &mut Extensions) {
     let Some(stream) = connection
-        .downcast_ref::<actix_tls::accept::openssl::TlsStream<actix_web::rt::net::TcpStream>>()
+        .downcast_ref::<actix_tls::accept::rustls_0_23::TlsStream<actix_web::rt::net::TcpStream>>()
     else {
         return;
     };
-    if let Some(cert) = stream.ssl().peer_certificate() {
-        data.insert(ClientCertificateInfo::from_x509(&cert));
+    if let Some(cert) = stream
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|certs| certs.first())
+    {
+        match ClientCertificateInfo::from_der(cert.as_ref()) {
+            Ok(info) => {
+                data.insert(info);
+            }
+            Err(err) => {
+                tracing::warn!("Failed to parse verified client certificate subject: {err}");
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::configure_client_certificate_auth;
-    use openssl::asn1::Asn1Time;
-    use openssl::hash::MessageDigest;
-    use openssl::pkey::PKey;
-    use openssl::rsa::Rsa;
-    use openssl::ssl::{SslAcceptor, SslMethod, SslVerifyMode};
-    use openssl::x509::{X509, X509NameBuilder};
+    use super::build_tls_server_config;
+    use crate::config::TlsConfig;
+    use rcgen::generate_simple_self_signed;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn client_ca_configuration_enables_peer_verification() {
-        let mut builder = SslAcceptor::mozilla_modern_v5(SslMethod::tls_server())
-            .expect("acceptor should be created");
-        let path = write_temp_cert_file(generate_test_cert_pem());
+    fn tls_configuration_accepts_pem_certificate_and_key() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let certified = generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("certificate should be generated");
+        let cert_path = dir.path().join("cert.pem");
+        let key_path = dir.path().join("key.pem");
+        fs::write(&cert_path, certified.cert.pem()).expect("certificate should be written");
+        fs::write(&key_path, certified.signing_key.serialize_pem()).expect("key should be written");
 
-        configure_client_certificate_auth(&mut builder, path.to_str().expect("utf-8 path"))
-            .expect("configure_client_certificate_auth should succeed");
-
-        let verify_mode = builder.build().context().verify_mode();
-        assert!(verify_mode.contains(SslVerifyMode::PEER));
-        assert!(verify_mode.contains(SslVerifyMode::FAIL_IF_NO_PEER_CERT));
-
-        let _ = fs::remove_file(path);
-    }
-
-    fn generate_test_cert_pem() -> Vec<u8> {
-        let rsa = Rsa::generate(2048).expect("rsa should be generated");
-        let pkey = PKey::from_rsa(rsa).expect("pkey should be generated");
-        let mut name = X509NameBuilder::new().expect("name builder should be created");
-        name.append_entry_by_text("CN", "tugboat-test-ca")
-            .expect("common name should be set");
-        let name = name.build();
-
-        let mut cert = X509::builder().expect("cert builder should be created");
-        cert.set_version(2).expect("version should be set");
-        cert.set_subject_name(&name)
-            .expect("subject name should be set");
-        cert.set_issuer_name(&name)
-            .expect("issuer name should be set");
-        cert.set_pubkey(&pkey).expect("public key should be set");
-        let not_before = Asn1Time::days_from_now(0).expect("not_before should be created");
-        let not_after = Asn1Time::days_from_now(1).expect("not_after should be created");
-        cert.set_not_before(&not_before)
-            .expect("not_before should be set");
-        cert.set_not_after(&not_after)
-            .expect("not_after should be set");
-        cert.sign(&pkey, MessageDigest::sha256())
-            .expect("certificate should be signed");
-        cert.build().to_pem().expect("certificate should serialize")
-    }
-
-    fn write_temp_cert_file(contents: Vec<u8>) -> std::path::PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be monotonic")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("tugboat-test-ca-{unique}.pem"));
-        fs::write(&path, contents).expect("temp cert file should be written");
-        path
+        let config = build_tls_server_config(TlsConfig {
+            cert_file: cert_path.to_string_lossy().into_owned(),
+            key_file: key_path.to_string_lossy().into_owned(),
+            client_cert_file: None,
+        })
+        .expect("TLS configuration should be valid");
+        assert_eq!(
+            config.alpn_protocols,
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+        );
     }
 }

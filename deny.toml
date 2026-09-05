@@ -96,7 +96,6 @@ allow = [
     "ISC",
     "Unicode-DFS-2016",
     "BSD-3-Clause",
-    "OpenSSL",
     "Zlib",
     #"Apache-2.0 WITH LLVM-exception",
 ]
@@ -178,6 +177,12 @@ deny = [
     # Wrapper crates can optionally be specified to allow the crate when it
     # is a direct dependency of the otherwise banned crate
     #{ crate = "ansi_term@0.11.0", wrappers = ["this-crate-directly-depends-on-ansi_term"] },
+    { crate = "openssl", reason = "Rust code must not depend on OpenSSL" },
+    { crate = "openssl-sys", reason = "Rust code must not link libssl/libcrypto" },
+    { crate = "tokio-openssl", reason = "Use Actix Rustls transport instead" },
+    { crate = "native-tls", reason = "Use rustls as the TLS backend" },
+    { crate = "tokio-native-tls", reason = "Use rustls as the TLS backend" },
+    { crate = "hyper-tls", reason = "Use hyper-rustls as the TLS backend" },
 ]
 
 # List of features to allow/deny

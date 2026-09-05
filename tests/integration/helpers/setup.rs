@@ -7,14 +7,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
-use openssl::asn1::Asn1Time;
-use openssl::hash::MessageDigest;
-use openssl::pkey::{PKey, Private};
-use openssl::rsa::Rsa;
-use openssl::x509::extension::{
-    BasicConstraints, ExtendedKeyUsage, KeyUsage, SubjectAlternativeName,
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    Issuer, KeyPair, KeyUsagePurpose,
 };
-use openssl::x509::{X509, X509NameBuilder};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use tokio::process::Command;
 use tokio::task::JoinHandle;
@@ -694,30 +690,49 @@ fn write_apiserver_config(
 }
 
 fn generate_tls_assets(tls_mode: TlsMode) -> Result<GeneratedTlsAssets, DynError> {
-    let ca_key = generate_private_key()?;
-    let ca_cert = build_ca_certificate(&ca_key)?;
-    let ca_cert_pem = ca_cert.to_pem()?;
-    let server_key = generate_private_key()?;
-    let server_cert = build_signed_certificate(&ca_cert, &ca_key, &server_key, "127.0.0.1", false)?;
+    let ca_key = KeyPair::generate()?;
+    let mut ca_params = CertificateParams::default();
+    ca_params.distinguished_name = distinguished_name("tugboat-it-ca", None);
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    let ca_cert = ca_params.self_signed(&ca_key)?;
+    let issuer = Issuer::from_params(&ca_params, &ca_key);
+    let ca_cert_pem = ca_cert.pem().into_bytes();
 
-    let server_cert_path = write_temp_file("tugboat-it-server-cert", &server_cert.to_pem()?)?;
+    let server_key = KeyPair::generate()?;
+    let mut server_params = CertificateParams::new(vec!["127.0.0.1".to_string()])?;
+    server_params.distinguished_name = distinguished_name("127.0.0.1", None);
+    server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    server_params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
+    let server_cert = server_params.signed_by(&server_key, &issuer)?;
+
+    let server_cert_path = write_temp_file("tugboat-it-server-cert", server_cert.pem().as_bytes())?;
     let server_key_path = write_temp_file(
         "tugboat-it-server-key",
-        &server_key.private_key_to_pem_pkcs8()?,
+        server_key.serialize_pem().as_bytes(),
     )?;
     let ca_cert_path = write_temp_file("tugboat-it-ca-cert", &ca_cert_pem)?;
-    let service_account_signing_key = generate_private_key()?;
-    let service_account_signing_key_path = write_temp_file(
-        "tugboat-it-sa-signing-key",
-        &service_account_signing_key.private_key_to_pem_pkcs8()?,
-    )?;
+    let service_account_signing_key = BASE64_STANDARD
+        .decode(include_str!("../../../testdata/rsa-private-key.pkcs8.b64").trim())?;
+    let service_account_signing_key_path =
+        write_temp_file("tugboat-it-sa-signing-key", &service_account_signing_key)?;
 
     let (masters_identity_pem, extra_paths) = if matches!(tls_mode, TlsMode::Mtls) {
-        let client_key = generate_private_key()?;
-        let client_cert =
-            build_signed_certificate(&ca_cert, &ca_key, &client_key, "masters-user", true)?;
-        let mut identity_pem = client_cert.to_pem()?;
-        identity_pem.extend(client_key.private_key_to_pem_pkcs8()?);
+        let client_key = KeyPair::generate()?;
+        let mut client_params = CertificateParams::default();
+        client_params.distinguished_name =
+            distinguished_name("masters-user", Some("system:masters"));
+        client_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        client_params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyEncipherment,
+        ];
+        let client_cert = client_params.signed_by(&client_key, &issuer)?;
+        let mut identity_pem = client_cert.pem().into_bytes();
+        identity_pem.extend_from_slice(client_key.serialize_pem().as_bytes());
         (Some(identity_pem), vec![])
     } else {
         (None, vec![])
@@ -742,74 +757,13 @@ fn generate_tls_assets(tls_mode: TlsMode) -> Result<GeneratedTlsAssets, DynError
     })
 }
 
-fn generate_private_key() -> Result<PKey<Private>, DynError> {
-    Ok(PKey::from_rsa(Rsa::generate(2048)?)?)
-}
-
-fn build_ca_certificate(key: &PKey<Private>) -> Result<X509, DynError> {
-    let mut name = X509NameBuilder::new()?;
-    name.append_entry_by_text("CN", "tugboat-it-ca")?;
-    let name = name.build();
-
-    let mut builder = X509::builder()?;
-    builder.set_version(2)?;
-    builder.set_subject_name(&name)?;
-    builder.set_issuer_name(&name)?;
-    builder.set_pubkey(key)?;
-    builder.set_not_before(Asn1Time::days_from_now(0)?.as_ref())?;
-    builder.set_not_after(Asn1Time::days_from_now(30)?.as_ref())?;
-    builder.append_extension(BasicConstraints::new().critical().ca().build()?)?;
-    builder.append_extension(
-        KeyUsage::new()
-            .critical()
-            .key_cert_sign()
-            .crl_sign()
-            .build()?,
-    )?;
-    builder.sign(key, MessageDigest::sha256())?;
-    Ok(builder.build())
-}
-
-fn build_signed_certificate(
-    ca_cert: &X509,
-    ca_key: &PKey<Private>,
-    key: &PKey<Private>,
-    common_name: &str,
-    client_auth: bool,
-) -> Result<X509, DynError> {
-    let mut name = X509NameBuilder::new()?;
-    name.append_entry_by_text("CN", common_name)?;
-    if client_auth {
-        name.append_entry_by_text("O", "system:masters")?;
+fn distinguished_name(common_name: &str, organization: Option<&str>) -> DistinguishedName {
+    let mut name = DistinguishedName::new();
+    name.push(DnType::CommonName, common_name);
+    if let Some(organization) = organization {
+        name.push(DnType::OrganizationName, organization);
     }
-    let name = name.build();
-
-    let mut builder = X509::builder()?;
-    builder.set_version(2)?;
-    builder.set_subject_name(&name)?;
-    builder.set_issuer_name(ca_cert.subject_name())?;
-    builder.set_pubkey(key)?;
-    builder.set_not_before(Asn1Time::days_from_now(0)?.as_ref())?;
-    builder.set_not_after(Asn1Time::days_from_now(30)?.as_ref())?;
-    builder.append_extension(BasicConstraints::new().build()?)?;
-    if client_auth {
-        builder.append_extension(ExtendedKeyUsage::new().client_auth().build()?)?;
-    } else {
-        builder.append_extension(ExtendedKeyUsage::new().server_auth().build()?)?;
-        // Add IP SAN so rustls can verify the server certificate against the IP address.
-        let san = SubjectAlternativeName::new()
-            .ip(common_name)
-            .build(&builder.x509v3_context(Some(ca_cert), None))?;
-        builder.append_extension(san)?;
-    }
-    builder.append_extension(
-        KeyUsage::new()
-            .digital_signature()
-            .key_encipherment()
-            .build()?,
-    )?;
-    builder.sign(ca_key, MessageDigest::sha256())?;
-    Ok(builder.build())
+    name
 }
 
 fn write_temp_file(prefix: &str, bytes: &[u8]) -> Result<PathBuf, DynError> {

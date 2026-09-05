@@ -24,11 +24,9 @@
 use crate::config::OidcProviderConfig;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use openssl::bn::BigNum;
-use openssl::hash::MessageDigest;
-use openssl::pkey::{Id, PKey, Public};
-use openssl::rsa::Rsa;
-use openssl::sign::Verifier;
+use ring::signature::{
+    ED25519, RSA_PKCS1_2048_8192_SHA256, RsaPublicKeyComponents, UnparsedPublicKey,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -119,9 +117,16 @@ struct JwksCacheState {
     last_refreshed: Option<Instant>,
 }
 
+#[derive(Debug)]
 struct JwksEntry {
     algorithm: SupportedAlgorithm,
-    key: PKey<Public>,
+    key: JwksKey,
+}
+
+#[derive(Clone, Debug)]
+enum JwksKey {
+    Rsa { n: Vec<u8>, e: Vec<u8> },
+    Ed25519([u8; 32]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -342,8 +347,6 @@ impl JwksEntry {
     fn clone_for_use(&self) -> Self {
         Self {
             algorithm: self.algorithm,
-            // PKey::clone only bumps OpenSSL's internal EVP_PKEY refcount, so
-            // this is cheap and does not duplicate the key material.
             key: self.key.clone(),
         }
     }
@@ -468,6 +471,15 @@ fn parse_jwks(document: JwksDocument) -> Result<HashMap<String, JwksEntry>, Oidc
             }
             Err(other) => return Err(other),
         };
+        let expected_kty = match algorithm {
+            SupportedAlgorithm::RS256 => "RSA",
+            SupportedAlgorithm::EdDSA => "OKP",
+        };
+        if raw.get("kty").and_then(|v| v.as_str()) != Some(expected_kty) {
+            return Err(OidcVerifyError::Claim(format!(
+                "OIDC JWK key type does not match algorithm {alg}"
+            )));
+        }
         let key = match algorithm {
             SupportedAlgorithm::RS256 => parse_rsa_jwk(&raw)?,
             SupportedAlgorithm::EdDSA => parse_eddsa_jwk(&raw)?,
@@ -477,7 +489,7 @@ fn parse_jwks(document: JwksDocument) -> Result<HashMap<String, JwksEntry>, Oidc
     Ok(keys)
 }
 
-fn parse_rsa_jwk(raw: &Value) -> Result<PKey<Public>, OidcVerifyError> {
+fn parse_rsa_jwk(raw: &Value) -> Result<JwksKey, OidcVerifyError> {
     let n = raw
         .get("n")
         .and_then(|v| v.as_str())
@@ -492,18 +504,63 @@ fn parse_rsa_jwk(raw: &Value) -> Result<PKey<Public>, OidcVerifyError> {
     let e_bytes = URL_SAFE_NO_PAD
         .decode(e)
         .map_err(|err| OidcVerifyError::Claim(format!("RSA JWK 'e' not base64url: {err}")))?;
-    let n_bn = BigNum::from_slice(&n_bytes)
-        .map_err(|err| OidcVerifyError::Claim(format!("RSA JWK 'n' is not a BIGNUM: {err}")))?;
-    let e_bn = BigNum::from_slice(&e_bytes)
-        .map_err(|err| OidcVerifyError::Claim(format!("RSA JWK 'e' is not a BIGNUM: {err}")))?;
-    let rsa = Rsa::from_public_components(n_bn, e_bn).map_err(|err| {
-        OidcVerifyError::Claim(format!("RSA public key reconstruction failed: {err}"))
-    })?;
-    PKey::from_rsa(rsa)
-        .map_err(|err| OidcVerifyError::Claim(format!("RSA PKey wrap failed: {err}")))
+    if n_bytes.is_empty() {
+        return Err(OidcVerifyError::Claim(
+            "RSA JWK 'n' must not be empty".to_string(),
+        ));
+    }
+    if n_bytes[0] == 0 {
+        return Err(OidcVerifyError::Claim(
+            "RSA JWK 'n' must not have a leading zero".to_string(),
+        ));
+    }
+    let modulus_bits = n_bytes.len() * 8 - n_bytes[0].leading_zeros() as usize;
+    if modulus_bits < 2048 {
+        return Err(OidcVerifyError::Claim(format!(
+            "RSA JWK modulus is too small: {modulus_bits} bits"
+        )));
+    }
+    if modulus_bits > 8192 {
+        return Err(OidcVerifyError::Claim(format!(
+            "RSA JWK modulus is too large: {modulus_bits} bits"
+        )));
+    }
+    if e_bytes.is_empty() {
+        return Err(OidcVerifyError::Claim(
+            "RSA JWK 'e' must not be empty".to_string(),
+        ));
+    }
+    if e_bytes[0] == 0 {
+        return Err(OidcVerifyError::Claim(
+            "RSA JWK 'e' must not have a leading zero".to_string(),
+        ));
+    }
+    if e_bytes.len() > 5 {
+        return Err(OidcVerifyError::Claim(
+            "RSA JWK exponent is out of range".to_string(),
+        ));
+    }
+    let mut exponent = 0u64;
+    for byte in &e_bytes {
+        exponent = (exponent << 8) | u64::from(*byte);
+    }
+    if !(3..=(1u64 << 33) - 1).contains(&exponent) {
+        return Err(OidcVerifyError::Claim(
+            "RSA JWK exponent is out of range".to_string(),
+        ));
+    }
+    if exponent.is_multiple_of(2) {
+        return Err(OidcVerifyError::Claim(
+            "RSA JWK exponent must be an odd integer greater than or equal to 3".to_string(),
+        ));
+    }
+    Ok(JwksKey::Rsa {
+        n: n_bytes,
+        e: e_bytes,
+    })
 }
 
-fn parse_eddsa_jwk(raw: &Value) -> Result<PKey<Public>, OidcVerifyError> {
+fn parse_eddsa_jwk(raw: &Value) -> Result<JwksKey, OidcVerifyError> {
     let crv = raw
         .get("crv")
         .and_then(|v| v.as_str())
@@ -520,8 +577,10 @@ fn parse_eddsa_jwk(raw: &Value) -> Result<PKey<Public>, OidcVerifyError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(x)
         .map_err(|err| OidcVerifyError::Claim(format!("OKP JWK 'x' not base64url: {err}")))?;
-    PKey::public_key_from_raw_bytes(&bytes, Id::ED25519)
-        .map_err(|err| OidcVerifyError::Claim(format!("Ed25519 PKey decode failed: {err}")))
+    let key = bytes.try_into().map_err(|_| {
+        OidcVerifyError::Claim("Ed25519 JWK 'x' must be exactly 32 bytes".to_string())
+    })?;
+    Ok(JwksKey::Ed25519(key))
 }
 
 fn verify_signature(
@@ -529,32 +588,16 @@ fn verify_signature(
     data: &[u8],
     signature: &[u8],
 ) -> Result<(), OidcVerifyError> {
-    let ok = match entry.algorithm {
-        SupportedAlgorithm::RS256 => {
-            let mut verifier =
-                Verifier::new(MessageDigest::sha256(), &entry.key).map_err(|err| {
-                    OidcVerifyError::Claim(format!("failed to initialize RS256 verifier: {err}"))
-                })?;
-            verifier
-                .update(data)
-                .map_err(|err| OidcVerifyError::Claim(format!("RS256 update failed: {err}")))?;
-            verifier
-                .verify(signature)
-                .map_err(|err| OidcVerifyError::Claim(format!("RS256 verify failed: {err}")))?
-        }
-        SupportedAlgorithm::EdDSA => {
-            let mut verifier = Verifier::new_without_digest(&entry.key).map_err(|err| {
-                OidcVerifyError::Claim(format!("failed to initialize EdDSA verifier: {err}"))
-            })?;
-            verifier
-                .verify_oneshot(signature, data)
-                .map_err(|err| OidcVerifyError::Claim(format!("EdDSA verify failed: {err}")))?
-        }
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(OidcVerifyError::InvalidSignature)
+    match (entry.algorithm, &entry.key) {
+        (SupportedAlgorithm::RS256, JwksKey::Rsa { n, e }) => RsaPublicKeyComponents { n, e }
+            .verify(&RSA_PKCS1_2048_8192_SHA256, data, signature)
+            .map_err(|_| OidcVerifyError::InvalidSignature),
+        (SupportedAlgorithm::EdDSA, JwksKey::Ed25519(key)) => UnparsedPublicKey::new(&ED25519, key)
+            .verify(data, signature)
+            .map_err(|_| OidcVerifyError::InvalidSignature),
+        _ => Err(OidcVerifyError::Claim(
+            "JWKS key type does not match its algorithm".to_string(),
+        )),
     }
 }
 
@@ -670,10 +713,12 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openssl::pkey::PKey;
-    use openssl::rsa::Rsa;
-    use openssl::sign::Signer;
+    use crate::auth::service_account_jwt::rsa_test_key_pair;
+    use ed25519_dalek::{Signer, SigningKey};
+    use ring::rand::SystemRandom;
+    use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
     use serde_json::json;
+    use std::sync::Arc;
 
     fn make_provider(issuer: &str, client_id: &str) -> OidcProvider {
         OidcProvider::from_config(&OidcProviderConfig {
@@ -692,58 +737,55 @@ mod tests {
         .expect("provider")
     }
 
-    fn rsa_keypair_with_jwk(kid: &str) -> (PKey<openssl::pkey::Private>, JwksEntry) {
-        let rsa = Rsa::generate(2048).expect("rsa");
-        let private = PKey::from_rsa(rsa.clone()).expect("private");
-        let public_pem = private.public_key_to_pem().expect("public pem");
-        let public = PKey::public_key_from_pem(&public_pem).expect("public");
-        let _ = kid;
+    fn rsa_keypair_with_jwk(_kid: &str) -> (Arc<RsaKeyPair>, JwksEntry) {
+        let (private, modulus, exponent) = rsa_test_key_pair();
         (
             private,
             JwksEntry {
                 algorithm: SupportedAlgorithm::RS256,
-                key: public,
+                key: JwksKey::Rsa {
+                    n: modulus,
+                    e: exponent,
+                },
             },
         )
     }
 
-    fn eddsa_keypair_with_jwk() -> (PKey<openssl::pkey::Private>, JwksEntry) {
-        let private = PKey::generate_ed25519().expect("ed25519");
-        let public_pem = private.public_key_to_pem().expect("public pem");
-        let public = PKey::public_key_from_pem(&public_pem).expect("public");
+    fn eddsa_keypair_with_jwk() -> (SigningKey, JwksEntry) {
+        let private = SigningKey::from_bytes(&[9u8; 32]);
+        let public = private.verifying_key().to_bytes();
         (
             private,
             JwksEntry {
                 algorithm: SupportedAlgorithm::EdDSA,
-                key: public,
+                key: JwksKey::Ed25519(public),
             },
         )
     }
 
-    fn encode_token(private: &PKey<openssl::pkey::Private>, kid: &str, claims: Value) -> String {
+    fn encode_token(private: &RsaKeyPair, kid: &str, claims: Value) -> String {
         let header = json!({"alg": "RS256", "kid": kid, "typ": "JWT"});
         let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
         let claims_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
         let signing_input = format!("{header_b64}.{claims_b64}");
-        let mut signer = Signer::new(MessageDigest::sha256(), private).expect("signer");
-        signer.update(signing_input.as_bytes()).expect("update");
-        let signature = signer.sign_to_vec().expect("sign");
+        let mut signature = vec![0; private.public().modulus_len()];
+        private
+            .sign(
+                &RSA_PKCS1_SHA256,
+                &SystemRandom::new(),
+                signing_input.as_bytes(),
+                &mut signature,
+            )
+            .expect("sign token");
         format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature))
     }
 
-    fn encode_eddsa_token(
-        private: &PKey<openssl::pkey::Private>,
-        kid: &str,
-        claims: Value,
-    ) -> String {
+    fn encode_eddsa_token(private: &SigningKey, kid: &str, claims: Value) -> String {
         let header = json!({"alg": "EdDSA", "kid": kid, "typ": "JWT"});
         let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
         let claims_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
         let signing_input = format!("{header_b64}.{claims_b64}");
-        let mut signer = Signer::new_without_digest(private).expect("signer");
-        let signature = signer
-            .sign_oneshot_to_vec(signing_input.as_bytes())
-            .expect("sign");
+        let signature = private.sign(signing_input.as_bytes()).to_bytes().to_vec();
         format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature))
     }
 
@@ -1011,12 +1053,66 @@ mod tests {
     }
 
     #[test]
-    fn parses_rsa_jwk_into_pkey() {
-        let rsa = Rsa::generate(2048).expect("rsa");
-        let n = URL_SAFE_NO_PAD.encode(rsa.n().to_vec());
-        let e = URL_SAFE_NO_PAD.encode(rsa.e().to_vec());
+    fn parses_rsa_jwk_into_components() {
+        let (_, modulus, exponent) = rsa_test_key_pair();
+        let n = URL_SAFE_NO_PAD.encode(modulus);
+        let e = URL_SAFE_NO_PAD.encode(exponent);
         let raw = json!({"kty": "RSA", "kid": "k1", "alg": "RS256", "use": "sig", "n": n, "e": e});
-        let pkey = parse_rsa_jwk(&raw).expect("pkey");
-        assert_eq!(pkey.id(), Id::RSA);
+        assert!(matches!(parse_rsa_jwk(&raw), Ok(JwksKey::Rsa { .. })));
+    }
+
+    #[test]
+    fn rejects_rsa_jwk_with_small_modulus() {
+        let raw = json!({
+            "kty": "RSA",
+            "kid": "k1",
+            "alg": "RS256",
+            "n": URL_SAFE_NO_PAD.encode([0x80; 128]),
+            "e": URL_SAFE_NO_PAD.encode([1, 0, 1]),
+        });
+        let err = parse_rsa_jwk(&raw).expect_err("small modulus should fail");
+        assert!(matches!(err, OidcVerifyError::Claim(message) if message.contains("too small")));
+    }
+
+    #[test]
+    fn rejects_rsa_jwk_with_exponent_outside_ring_range() {
+        let raw = json!({
+            "kty": "RSA",
+            "kid": "k1",
+            "alg": "RS256",
+            "n": URL_SAFE_NO_PAD.encode([0x80; 256]),
+            "e": URL_SAFE_NO_PAD.encode([2, 0, 0, 0, 1]),
+        });
+        let err = parse_rsa_jwk(&raw).expect_err("large exponent should fail");
+        assert!(matches!(err, OidcVerifyError::Claim(message) if message.contains("out of range")));
+    }
+
+    #[test]
+    fn rejects_invalid_eddsa_jwk_length() {
+        let raw = json!({
+            "kty": "OKP",
+            "kid": "k1",
+            "alg": "EdDSA",
+            "crv": "Ed25519",
+            "x": URL_SAFE_NO_PAD.encode([0u8; 31]),
+        });
+        let err = parse_eddsa_jwk(&raw).expect_err("invalid Ed25519 key length should fail");
+        assert!(matches!(err, OidcVerifyError::Claim(message) if message.contains("32 bytes")));
+    }
+
+    #[test]
+    fn rejects_jwk_key_type_mismatch() {
+        let raw = JwksDocument {
+            keys: vec![json!({
+                "kty": "OKP",
+                "kid": "k1",
+                "alg": "RS256",
+                "n": URL_SAFE_NO_PAD.encode([0x80; 256]),
+                "e": URL_SAFE_NO_PAD.encode([1, 0, 1]),
+            })],
+        };
+
+        let err = parse_jwks(raw).expect_err("mismatched key type should fail");
+        assert!(matches!(err, OidcVerifyError::Claim(message) if message.contains("key type")));
     }
 }

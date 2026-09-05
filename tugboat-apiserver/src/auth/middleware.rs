@@ -28,11 +28,11 @@ use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform, forwar
 use actix_web::http::Method;
 use actix_web::web::Data;
 use actix_web::{HttpMessage, HttpRequest, ResponseError};
-use openssl::nid::Nid;
-use openssl::x509::X509Ref;
 use std::future::{Future, Ready, ready};
 use std::pin::Pin;
 use std::rc::Rc;
+use x509_parser::asn1_rs::{Any, BmpString, Tag, UniversalString};
+use x509_parser::parse_x509_certificate;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ClientCertificateInfo {
@@ -41,26 +41,52 @@ pub(crate) struct ClientCertificateInfo {
 }
 
 impl ClientCertificateInfo {
-    pub(crate) fn from_x509(cert: &X509Ref) -> Self {
-        Self {
-            common_name: first_entry_by_nid(cert, Nid::COMMONNAME),
-            organizations: entries_by_nid(cert, Nid::ORGANIZATIONNAME),
+    pub(crate) fn from_der(der: &[u8]) -> Result<Self, String> {
+        let (remaining, cert) = parse_x509_certificate(der)
+            .map_err(|err| format!("invalid X.509 certificate: {err}"))?;
+        if !remaining.is_empty() {
+            return Err("invalid X.509 certificate: trailing data".to_string());
         }
+        let common_name = cert
+            .subject()
+            .iter_common_name()
+            .next()
+            .map(|entry| subject_value_to_string(entry.attr_value(), "Common Name"))
+            .transpose()?;
+        let organizations = cert
+            .subject()
+            .iter_organization()
+            .map(|entry| subject_value_to_string(entry.attr_value(), "Organization"))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            common_name,
+            organizations,
+        })
     }
 }
 
-fn first_entry_by_nid(cert: &X509Ref, nid: Nid) -> Option<String> {
-    cert.subject_name()
-        .entries_by_nid(nid)
-        .next()
-        .and_then(|entry| entry.data().as_utf8().ok().map(|value| value.to_string()))
-}
-
-fn entries_by_nid(cert: &X509Ref, nid: Nid) -> Vec<String> {
-    cert.subject_name()
-        .entries_by_nid(nid)
-        .filter_map(|entry| entry.data().as_utf8().ok().map(|value| value.to_string()))
-        .collect()
+fn subject_value_to_string(value: &Any<'_>, name: &str) -> Result<String, String> {
+    match value.tag() {
+        Tag::BmpString => BmpString::try_from(value)
+            .map(|value| value.string())
+            .map_err(|err| format!("invalid X.509 {name} BMPString: {err}")),
+        Tag::UniversalString => UniversalString::try_from(value)
+            .map(|value| value.string())
+            .map_err(|err| format!("invalid X.509 {name} UniversalString: {err}")),
+        Tag::NumericString
+        | Tag::PrintableString
+        | Tag::TeletexString
+        | Tag::VisibleString
+        | Tag::GeneralString
+        | Tag::ObjectDescriptor
+        | Tag::GraphicString
+        | Tag::VideotexString
+        | Tag::Utf8String
+        | Tag::Ia5String => std::str::from_utf8(value.as_bytes())
+            .map(str::to_owned)
+            .map_err(|err| format!("invalid X.509 {name} string: {err}")),
+        tag => Err(format!("unsupported X.509 {name} string type: {tag:?}")),
+    }
 }
 
 #[derive(Clone)]
@@ -423,23 +449,24 @@ fn query_requests_watch(query: &str) -> bool {
 mod tests {
     use super::{
         ClientCertificateInfo, build_authorization_request, parse_resource_path,
-        query_requests_watch,
+        query_requests_watch, subject_value_to_string,
     };
     use crate::auth::user_info::UserInfo;
     use crate::crd_registry::{CrdEntry, CrdRegistry, CrdScope, CrdVersionInfo};
     use crate::endpoints::resource_registry;
     use actix_web::test::TestRequest;
-    use openssl::asn1::Asn1Time;
-    use openssl::hash::MessageDigest;
-    use openssl::pkey::PKey;
-    use openssl::rsa::Rsa;
-    use openssl::x509::{X509, X509NameBuilder};
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair};
+    use x509_parser::asn1_rs::{Any, Tag};
 
     #[test]
     fn extracts_identity_from_certificate_subject() {
-        let cert = test_cert(&[("CN", "client-user"), ("O", "ops"), ("O", "sre")]);
+        let cert = STANDARD
+            .decode(MULTIPLE_ORGANIZATIONS_CERT_DER_BASE64)
+            .expect("certificate fixture should decode");
 
-        let info = ClientCertificateInfo::from_x509(cert.as_ref());
+        let info = ClientCertificateInfo::from_der(&cert).expect("certificate should parse");
 
         assert_eq!(info.common_name.as_deref(), Some("client-user"));
         assert_eq!(
@@ -452,10 +479,39 @@ mod tests {
     fn missing_subject_entries_are_empty() {
         let cert = test_cert(&[("O", "ops")]);
 
-        let info = ClientCertificateInfo::from_x509(cert.as_ref());
+        let info = ClientCertificateInfo::from_der(&cert).expect("certificate should parse");
 
         assert_eq!(info.common_name, None);
         assert_eq!(info.organizations, vec!["ops".to_string()]);
+    }
+
+    #[test]
+    fn rejects_malformed_certificate_der() {
+        assert!(ClientCertificateInfo::from_der(&[0, 1, 2]).is_err());
+    }
+
+    #[test]
+    fn decodes_non_utf8_directory_string_encodings() {
+        let bmp = Any::from_tag_and_data(Tag::BmpString, &[0, b'u', 0, b's', 0, b'e', 0, b'r']);
+        let universal = Any::from_tag_and_data(
+            Tag::UniversalString,
+            &[0, 0, 0, b'u', 0, 0, 0, b's', 0, 0, 0, b'e', 0, 0, 0, b'r'],
+        );
+        let teletex = Any::from_tag_and_data(Tag::TeletexString, b"user");
+
+        assert_eq!(
+            subject_value_to_string(&bmp, "Common Name").expect("BMPString should parse"),
+            "user"
+        );
+        assert_eq!(
+            subject_value_to_string(&universal, "Common Name")
+                .expect("UniversalString should parse"),
+            "user"
+        );
+        assert_eq!(
+            subject_value_to_string(&teletex, "Common Name").expect("TeletexString should parse"),
+            "user"
+        );
     }
 
     #[test]
@@ -663,31 +719,32 @@ mod tests {
         registry
     }
 
-    fn test_cert(subject_entries: &[(&str, &str)]) -> X509 {
-        let rsa = Rsa::generate(2048).expect("rsa should be generated");
-        let pkey = PKey::from_rsa(rsa).expect("pkey should be generated");
-        let mut name = X509NameBuilder::new().expect("name builder should be created");
+    fn test_cert(subject_entries: &[(&str, &str)]) -> Vec<u8> {
+        let mut name = DistinguishedName::new();
         for (key, value) in subject_entries {
-            name.append_entry_by_text(key, value)
-                .expect("subject field should be set");
+            let kind = match *key {
+                "CN" => DnType::CommonName,
+                "O" => DnType::OrganizationName,
+                other => panic!("unsupported subject field {other}"),
+            };
+            name.push(kind, *value);
         }
-        let name = name.build();
-
-        let mut cert = X509::builder().expect("cert builder should be created");
-        cert.set_version(2).expect("version should be set");
-        cert.set_subject_name(&name)
-            .expect("subject name should be set");
-        cert.set_issuer_name(&name)
-            .expect("issuer name should be set");
-        cert.set_pubkey(&pkey).expect("public key should be set");
-        let not_before = Asn1Time::days_from_now(0).expect("not_before should be created");
-        let not_after = Asn1Time::days_from_now(1).expect("not_after should be created");
-        cert.set_not_before(&not_before)
-            .expect("not_before should be set");
-        cert.set_not_after(&not_after)
-            .expect("not_after should be set");
-        cert.sign(&pkey, MessageDigest::sha256())
-            .expect("certificate should be signed");
-        cert.build()
+        let mut params = CertificateParams::default();
+        params.distinguished_name = name;
+        let key_pair = KeyPair::generate().expect("key pair should be generated");
+        params
+            .self_signed(&key_pair)
+            .expect("certificate should be generated")
+            .der()
+            .to_vec()
     }
+
+    const MULTIPLE_ORGANIZATIONS_CERT_DER_BASE64: &str = "\
+        MIIBVDCB+gIJAMqcBymGI/jZMAoGCCqGSM49BAMCMDIxFDASBgNVBAMMC2NsaWVudC11c2Vy\
+        MQwwCgYDVQQKDANvcHMxDDAKBgNVBAoMA3NyZTAeFw0yNjA5MDUwNjU1MzNaFw0yNjA5MDYw\
+        NjU1MzNaMDIxFDASBgNVBAMMC2NsaWVudC11c2VyMQwwCgYDVQQKDANvcHMxDDAKBgNVBAoM\
+        A3NyZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABOX0uBtIQbQzOCM3SptKAB+bKaCBP1J5\
+        fTQ6o/tWwoSDif2aQzHY2kfKLZ9ry/wveHKmss3vFOjJKa5Y/TZWeAIwCgYIKoZIzj0EAwID\
+        SQAwRgIhAO+raB9GJUimWbHgXwQDSCLck10AH654yYw2+I1ptOLOAiEAkeTisFEAV0ZcTpaT\
+        LLfBrAaFMWLZRxK3DyL/igLysKM=";
 }

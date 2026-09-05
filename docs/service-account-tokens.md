@@ -53,3 +53,7 @@ signing_algorithm = "RS256"
 default_token_ttl_seconds = 3600
 max_token_ttl_seconds = 86400
 ```
+
+RS256 signing keys may use PKCS#8 or PKCS#1 PEM/DER encoding. They must have a
+2048-4096-bit modulus and a public exponent of at least 65537. Additional RSA
+verification keys may have a 2048-8192-bit modulus.
