@@ -1,0 +1,374 @@
+---
+- name: Build Tugboat artifacts once on the control plane
+  hosts: tugboat_control_plane
+  become: true
+  gather_facts: true
+  vars:
+    tugboat_multipass_remote_root: /opt/tugboat
+    tugboat_multipass_remote_source: /opt/tugboat/source
+    tugboat_multipass_remote_archive: /var/lib/tugboat/multipass/source.tar
+    tugboat_multipass_remote_bin_dir: /opt/tugboat/bin
+    tugboat_multipass_source_marker: /opt/tugboat/.source-digest
+  tasks:
+    - name: Validate the generated artifact inputs
+      ansible.builtin.assert:
+        that:
+          - tugboat_multipass_artifact_digest | length > 0
+          - tugboat_multipass_source_enabled | bool or tugboat_multipass_external_prebuilt_bin_dir | length > 0
+          - >-
+            (not (tugboat_multipass_source_enabled | bool))
+            or (tugboat_multipass_source_archive | length > 0)
+        fail_msg: "The Multipass controller did not provide a complete artifact manifest."
+
+    - name: Install the Rust build toolchain and native build prerequisites
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - libssl-dev
+          - pkg-config
+          - rustup
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Check for an installed stable Rust toolchain
+      ansible.builtin.command:
+        argv:
+          - rustup
+          - toolchain
+          - list
+      register: tugboat_multipass_rustup_toolchains
+      changed_when: false
+      failed_when: false
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Install the stable Rust toolchain in the build VM
+      ansible.builtin.command:
+        argv:
+          - rustup
+          - toolchain
+          - install
+          - stable
+          - --profile
+          - minimal
+          - --no-self-update
+      when:
+        - tugboat_multipass_source_enabled | bool
+        - >-
+          not (
+            tugboat_multipass_rustup_toolchains.stdout_lines | default([])
+            | select('match', '^stable(?:-|\\s|$)') | list | length > 0
+          )
+
+    - name: Create remote artifact directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: "{{ tugboat_multipass_remote_root }}", mode: "0755"}
+        - {path: "{{ tugboat_multipass_remote_bin_dir }}", mode: "0755"}
+        - {path: "{{ tugboat_multipass_remote_archive | dirname }}", mode: "0700"}
+
+    - name: Read the installed artifact manifest
+      ansible.builtin.slurp:
+        path: "{{ tugboat_multipass_remote_root }}/artifact-manifest.json"
+      register: tugboat_multipass_installed_artifact_manifest_file
+      failed_when: false
+      changed_when: false
+
+    - name: Initialize the installed artifact manifest
+      ansible.builtin.set_fact:
+        tugboat_multipass_installed_artifact_manifest: {}
+
+    - name: Parse the installed artifact manifest
+      ansible.builtin.set_fact:
+        tugboat_multipass_installed_artifact_manifest: >-
+          {{ tugboat_multipass_installed_artifact_manifest_file.content | b64decode | from_json }}
+      when: tugboat_multipass_installed_artifact_manifest_file.content is defined
+
+    - name: Read the installed source digest
+      ansible.builtin.slurp:
+        path: "{{ tugboat_multipass_source_marker }}"
+      register: tugboat_multipass_installed_source_marker
+      failed_when: false
+      changed_when: false
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Decide whether the source tree must be replaced
+      ansible.builtin.set_fact:
+        tugboat_multipass_source_changed: >-
+          {{
+            (not (tugboat_multipass_installed_source_marker is defined
+            and tugboat_multipass_installed_source_marker.source is defined))
+            or
+            (
+              (tugboat_multipass_installed_source_marker.content | default('') | b64decode | trim)
+              != tugboat_multipass_source_digest
+            )
+          }}
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Copy the deterministic source archive to the control plane
+      ansible.builtin.copy:
+        src: "{{ tugboat_multipass_source_archive }}"
+        dest: "{{ tugboat_multipass_remote_archive }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Verify the source archive digest before extraction
+      ansible.builtin.command:
+        argv:
+          - sha256sum
+          - "{{ tugboat_multipass_remote_archive }}"
+      register: tugboat_multipass_source_checksum
+      changed_when: false
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Refuse an altered source archive
+      ansible.builtin.assert:
+        that:
+          - tugboat_multipass_source_checksum.stdout.split()[0] == tugboat_multipass_source_digest
+        fail_msg: "The source archive digest does not match the controller state."
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Remove the previous extracted source tree when its digest changed
+      ansible.builtin.file:
+        path: "{{ tugboat_multipass_remote_source }}"
+        state: absent
+      when:
+        - tugboat_multipass_source_enabled | bool
+        - tugboat_multipass_source_changed | bool
+
+    - name: Create the extracted source directory
+      ansible.builtin.file:
+        path: "{{ tugboat_multipass_remote_source }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Extract the source archive
+      ansible.builtin.unarchive:
+        src: "{{ tugboat_multipass_remote_archive }}"
+        dest: "{{ tugboat_multipass_remote_source }}"
+        remote_src: true
+        owner: root
+        group: root
+      when:
+        - tugboat_multipass_source_enabled | bool
+        - tugboat_multipass_source_changed | bool
+
+    - name: Record the extracted source digest
+      ansible.builtin.copy:
+        dest: "{{ tugboat_multipass_source_marker }}"
+        content: "{{ tugboat_multipass_source_digest }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Check the expected prebuilt binaries
+      ansible.builtin.stat:
+        path: "{{ tugboat_multipass_remote_bin_dir }}/{{ item }}"
+      loop: "{{ tugboat_multipass_required_binaries }}"
+      register: tugboat_multipass_remote_binary_stats
+
+    - name: Check existing prebuilt binary digests
+      ansible.builtin.command:
+        argv:
+          - sha256sum
+          - "{{ tugboat_multipass_remote_bin_dir }}/{{ item }}"
+      loop: "{{ tugboat_multipass_required_binaries }}"
+      register: tugboat_multipass_existing_binary_checksums
+      changed_when: false
+      failed_when: false
+
+    - name: Decide whether the control-plane build must run
+      ansible.builtin.set_fact:
+        tugboat_multipass_build_required: >-
+          {{
+            (tugboat_multipass_source_enabled | bool and tugboat_multipass_source_changed | bool)
+            or
+            (tugboat_multipass_remote_binary_stats.results
+             | selectattr('stat.exists', 'equalto', false) | list | length > 0)
+            or
+            (tugboat_multipass_installed_artifact_manifest.artifactDigest | default('')
+             != tugboat_multipass_artifact_digest)
+            or
+            (tugboat_multipass_existing_binary_checksums.results
+             | selectattr('rc', 'ne', 0) | list | length > 0)
+            or
+            (
+              (tugboat_multipass_installed_artifact_manifest.checksums | default([]) | list)
+              != (tugboat_multipass_existing_binary_checksums.results
+                  | map(attribute='stdout') | list)
+            )
+            or
+            (tugboat_multipass_source_enabled | bool and
+             tugboat_multipass_installed_source_marker.content | default('') | b64decode | trim
+             != tugboat_multipass_source_digest)
+          }}
+
+    - name: Build Tugboat release binaries on the control plane
+      ansible.builtin.command:
+        argv:
+          - rustup
+          - run
+          - stable
+          - cargo
+          - build
+          - --locked
+          - --release
+          - --jobs
+          - "{{ tugboat_build_jobs | string }}"
+        chdir: "{{ tugboat_multipass_remote_source }}"
+      environment:
+        CARGO_NET_OFFLINE: "{{ 'true' if tugboat_multipass_cargo_offline | default(false) | bool else 'false' }}"
+      when:
+        - tugboat_multipass_source_enabled | bool
+        - tugboat_multipass_build_required | bool
+
+    - name: Copy built binaries into the stable prebuilt directory
+      ansible.builtin.copy:
+        src: "{{ tugboat_multipass_remote_source }}/target/release/{{ item }}"
+        dest: "{{ tugboat_multipass_remote_bin_dir }}/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ tugboat_multipass_required_binaries }}"
+      when:
+        - tugboat_multipass_source_enabled | bool
+        - tugboat_multipass_build_required | bool
+
+    - name: Copy externally supplied binaries into the stable prebuilt directory
+      ansible.builtin.copy:
+        src: "{{ tugboat_multipass_external_prebuilt_bin_dir }}/{{ item }}"
+        dest: "{{ tugboat_multipass_remote_bin_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ tugboat_multipass_required_binaries }}"
+      when:
+        - not tugboat_multipass_source_enabled | bool
+        - tugboat_multipass_external_prebuilt_bin_dir | length > 0
+        - tugboat_multipass_build_required | bool
+
+    - name: Read the toolchain versions used for the artifact
+      ansible.builtin.command:
+        argv:
+          - rustup
+          - run
+          - stable
+          - "{{ item }}"
+          - --version
+      loop:
+        - rustc
+        - cargo
+      register: tugboat_multipass_toolchain
+      changed_when: false
+      when: tugboat_multipass_source_enabled | bool
+
+    - name: Check every installed binary digest
+      ansible.builtin.command:
+        argv:
+          - sha256sum
+          - "{{ tugboat_multipass_remote_bin_dir }}/{{ item }}"
+      loop: "{{ tugboat_multipass_required_binaries }}"
+      register: tugboat_multipass_binary_checksums
+      changed_when: false
+
+    - name: Fetch the verified artifacts to the host cache
+      ansible.builtin.fetch:
+        src: "{{ tugboat_multipass_remote_bin_dir }}/{{ item }}"
+        dest: "{{ tugboat_multipass_local_artifacts_dir }}/{{ item }}"
+        flat: true
+      loop: "{{ tugboat_multipass_required_binaries }}"
+
+    - name: Write the remote artifact manifest
+      ansible.builtin.copy:
+        dest: "{{ tugboat_multipass_remote_root }}/artifact-manifest.json"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          {
+            "cluster": {{ tugboat_multipass_cluster | to_json }},
+            "sourceDigest": {{ tugboat_multipass_source_digest | to_json }},
+            "sourceRef": {{ tugboat_multipass_source_ref | to_json }},
+            "artifactDigest": {{ tugboat_multipass_artifact_digest | to_json }},
+            "sourceMode": {{ tugboat_multipass_source_mode | to_json }},
+            "toolchain": {{ (tugboat_multipass_toolchain.results | default([]) | map(attribute='stdout') | list) | to_json }},
+            "checksums": {{ (tugboat_multipass_binary_checksums.results | map(attribute='stdout') | list) | to_json }}
+          }
+
+    - name: Fetch the artifact manifest to the controller
+      ansible.builtin.fetch:
+        src: "{{ tugboat_multipass_remote_root }}/artifact-manifest.json"
+        dest: "{{ tugboat_multipass_local_manifest_path }}"
+        flat: true
+
+- name: Prepare worker networking for nested QEMU and VXLAN
+  hosts: tugboat_workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Ensure the worker artifact directory exists
+      ansible.builtin.file:
+        path: /opt/tugboat/bin
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Distribute the verified artifacts to the worker
+      ansible.builtin.copy:
+        src: "{{ tugboat_multipass_local_artifacts_dir }}/{{ item }}"
+        dest: "/opt/tugboat/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ tugboat_multipass_required_binaries }}"
+
+    - name: Load the kernel modules used by bridge and VXLAN networking
+      ansible.builtin.command:
+        argv:
+          - modprobe
+          - "{{ item }}"
+      loop:
+        - br_netfilter
+        - vxlan
+      changed_when: false
+
+    - name: Load bridge and VXLAN modules after a worker reboot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/tugboat-multipass.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          br_netfilter
+          vxlan
+
+    - name: Enable IPv4 forwarding for the guest network
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-tugboat-multipass.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: "net.ipv4.ip_forward = 1\n"
+
+    - name: Apply IPv4 forwarding immediately
+      ansible.builtin.command:
+        argv:
+          - sysctl
+          - -w
+          - net.ipv4.ip_forward=1
+      changed_when: false

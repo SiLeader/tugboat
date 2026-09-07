@@ -1,0 +1,777 @@
+---
+- name: Create and verify the isolated Tugboat demo
+  hosts: tugboat_control_plane
+  become: true
+  gather_facts: true
+  vars:
+    tugboat_demo_root: /var/lib/tugboat/demo
+    tugboat_demo_api_headers:
+      Authorization: "Bearer {{ tugboat_demo_controller_token.content | b64decode | trim }}"
+    tugboat_demo_image_reference: >-
+      {{ tugboat_demo_image }}{{ ('@' ~ tugboat_demo_image_digest)
+      if tugboat_demo_image_digest | length > 0 else '' }}
+    tugboat_demo_reader_role: "tugboat-demo-reader-{{ tugboat_multipass_cluster }}"
+    tugboat_demo_reader_binding: "tugboat-demo-reader-{{ tugboat_multipass_cluster }}"
+    tugboat_demo_service_account: "demo-reader"
+    tugboat_demo_ship_class: "tugboat-demo-small-{{ tugboat_multipass_cluster }}"
+    tugboat_demo_owner_label: "tugboat.multipass/cluster"
+    tugboat_demo_managed_by_label: "tugboat-multipass-demo"
+    tugboat_demo_ship_names:
+      - demo-a
+      - demo-b
+    tugboat_demo_worker_a: "{{ groups['tugboat_workers'] | first }}"
+    tugboat_demo_worker_b: "{{ groups['tugboat_workers'][1:] | first | default('') }}"
+    tugboat_demo_guest_identity_path: /root/.ssh/tugboat-demo-guest-ed25519
+    tugboat_demo_guest_known_hosts_path: /root/.ssh/tugboat-demo-guest-known-hosts
+    tugboat_demo_guest_host_alias: tugboat-demo-a
+  tasks:
+    - name: Require two workers for the placement demonstration
+      ansible.builtin.assert:
+        that:
+          - groups['tugboat_workers'] | length >= 2
+        fail_msg: "The demo requires at least two worker nodes."
+      when: tugboat_demo_apply | default(false) | bool
+
+    - name: Create the demo directory
+      ansible.builtin.file:
+        path: "{{ tugboat_demo_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Read the controller-manager token inside the guest
+      ansible.builtin.slurp:
+        path: /var/run/secrets/tugboat.cloud/serviceaccount/controller-manager/token
+      register: tugboat_demo_controller_token
+      no_log: true
+
+    - name: Read the cluster CA certificate inside the guest
+      ansible.builtin.slurp:
+        path: /etc/tugboat/pki/ca.crt
+      register: tugboat_demo_ca
+      no_log: true
+      when: tugboat_secure | bool
+
+    - name: Read the demo namespace ownership marker
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}"
+        method: GET
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_namespace_owned
+      changed_when: false
+      no_log: true
+
+    - name: Refuse an unrelated demo namespace
+      ansible.builtin.assert:
+        that:
+          - tugboat_demo_namespace_owned.status == 200
+          - >-
+            (tugboat_demo_namespace_owned.json.metadata.labels | default({}))[tugboat_demo_owner_label]
+            | default('') == tugboat_multipass_cluster
+          - >-
+            (tugboat_demo_namespace_owned.json.metadata.labels | default({}))['app.kubernetes.io/managed-by']
+            | default('') == tugboat_demo_managed_by_label
+        fail_msg: >-
+          The configured demo namespace already exists without this cluster's ownership label;
+          choose an empty namespace dedicated to the demo.
+      when: tugboat_demo_namespace_owned.status == 200
+      no_log: true
+
+    - name: Read the demo ShipClass ownership marker
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/shipclasses/{{ tugboat_demo_ship_class }}"
+        method: GET
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_ship_class_owned
+      changed_when: false
+      no_log: true
+
+    - name: Refuse an unrelated demo ShipClass
+      ansible.builtin.assert:
+        that:
+          - tugboat_demo_ship_class_owned.status == 200
+          - >-
+            (tugboat_demo_ship_class_owned.json.metadata.labels | default({}))[tugboat_demo_owner_label]
+            | default('') == tugboat_multipass_cluster
+          - >-
+            (tugboat_demo_ship_class_owned.json.metadata.labels | default({}))['app.kubernetes.io/managed-by']
+            | default('') == tugboat_demo_managed_by_label
+        fail_msg: >-
+          The demo ShipClass name is already used without this cluster's ownership label;
+          remove it or choose a different cluster name.
+      when: tugboat_demo_ship_class_owned.status == 200
+      no_log: true
+
+    - name: Read existing demo Ship ownership markers
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/ships/{{ item }}"
+        method: GET
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      loop: "{{ tugboat_demo_ship_names }}"
+      register: tugboat_demo_ship_ownership
+      changed_when: false
+      no_log: true
+
+    - name: Refuse an unrelated demo Ship
+      ansible.builtin.assert:
+        that:
+          - >-
+            (item.json.metadata.labels | default({}))[tugboat_demo_owner_label]
+            | default('') == tugboat_multipass_cluster
+          - >-
+            (item.json.metadata.labels | default({}))['app.kubernetes.io/managed-by']
+            | default('') == tugboat_demo_managed_by_label
+        fail_msg: >-
+          A demo Ship name already exists without this cluster's ownership label;
+          remove it or choose a different namespace.
+      loop: "{{ tugboat_demo_ship_ownership.results }}"
+      when: item.status == 200
+      no_log: true
+
+    - name: Read the demo ServiceAccount ownership marker
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/serviceaccounts/{{ tugboat_demo_service_account }}"
+        method: GET
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_service_account_owned
+      changed_when: false
+      no_log: true
+
+    - name: Refuse an unrelated demo ServiceAccount
+      ansible.builtin.assert:
+        that:
+          - >-
+            (tugboat_demo_service_account_owned.json.metadata.labels | default({}))[tugboat_demo_owner_label]
+            | default('') == tugboat_multipass_cluster
+          - >-
+            (tugboat_demo_service_account_owned.json.metadata.labels | default({}))['app.kubernetes.io/managed-by']
+            | default('') == tugboat_demo_managed_by_label
+        fail_msg: >-
+          The demo ServiceAccount already exists without this cluster's ownership label;
+          remove it or choose a different namespace.
+      when: tugboat_demo_service_account_owned.status == 200
+      no_log: true
+
+    - name: Read existing demo ClusterRole ownership marker
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/apis/authorization/v1/clusterroles/{{ tugboat_demo_reader_role }}"
+        method: GET
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_reader_role_owned
+      changed_when: false
+      no_log: true
+
+    - name: Refuse an unrelated demo ClusterRole
+      ansible.builtin.assert:
+        that:
+          - >-
+            (tugboat_demo_reader_role_owned.json.metadata.labels | default({}))[tugboat_demo_owner_label]
+            | default('') == tugboat_multipass_cluster
+          - >-
+            (tugboat_demo_reader_role_owned.json.metadata.labels | default({}))['app.kubernetes.io/managed-by']
+            | default('') == tugboat_demo_managed_by_label
+        fail_msg: >-
+          The demo ClusterRole name is already used without this cluster's ownership label;
+          remove it or choose a different cluster name.
+      when: tugboat_demo_reader_role_owned.status == 200
+      no_log: true
+
+    - name: Read existing demo ClusterRoleBinding ownership marker
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/apis/authorization/v1/clusterrolebindings/{{ tugboat_demo_reader_binding }}"
+        method: GET
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_reader_binding_owned
+      changed_when: false
+      no_log: true
+
+    - name: Refuse an unrelated demo ClusterRoleBinding
+      ansible.builtin.assert:
+        that:
+          - >-
+            (tugboat_demo_reader_binding_owned.json.metadata.labels | default({}))[tugboat_demo_owner_label]
+            | default('') == tugboat_multipass_cluster
+          - >-
+            (tugboat_demo_reader_binding_owned.json.metadata.labels | default({}))['app.kubernetes.io/managed-by']
+            | default('') == tugboat_demo_managed_by_label
+        fail_msg: >-
+          The demo ClusterRoleBinding name is already used without this cluster's ownership label;
+          remove it or choose a different cluster name.
+      when: tugboat_demo_reader_binding_owned.status == 200
+      no_log: true
+
+    - name: Delete demo Ship A during explicit cleanup
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/ships/demo-a"
+        method: DELETE
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 202, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_cleanup_ship_a
+      changed_when: tugboat_demo_cleanup_ship_a.status != 404
+      no_log: true
+      when: tugboat_demo_cleanup | default(false) | bool
+
+    - name: Delete demo Ship B during explicit cleanup
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/ships/demo-b"
+        method: DELETE
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 202, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_cleanup_ship_b
+      changed_when: tugboat_demo_cleanup_ship_b.status != 404
+      no_log: true
+      when: tugboat_demo_cleanup | default(false) | bool
+
+    - name: Delete the demo namespace during explicit cleanup
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}"
+        method: DELETE
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 202, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_cleanup_namespace
+      changed_when: tugboat_demo_cleanup_namespace.status != 404
+      no_log: true
+      when: tugboat_demo_cleanup | default(false) | bool
+
+    - name: Delete the demo ShipClass during explicit cleanup
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/shipclasses/{{ tugboat_demo_ship_class }}"
+        method: DELETE
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 202, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_cleanup_ship_class
+      changed_when: tugboat_demo_cleanup_ship_class.status != 404
+      no_log: true
+      when: tugboat_demo_cleanup | default(false) | bool
+
+    - name: Delete the demo ClusterRoleBinding during explicit cleanup
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/apis/authorization/v1/clusterrolebindings/{{ tugboat_demo_reader_binding }}"
+        method: DELETE
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 202, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_cleanup_binding
+      changed_when: tugboat_demo_cleanup_binding.status != 404
+      no_log: true
+      when: tugboat_demo_cleanup | default(false) | bool
+
+    - name: Delete the demo ClusterRole during explicit cleanup
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/apis/authorization/v1/clusterroles/{{ tugboat_demo_reader_role }}"
+        method: DELETE
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 202, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_cleanup_role
+      changed_when: tugboat_demo_cleanup_role.status != 404
+      no_log: true
+      when: tugboat_demo_cleanup | default(false) | bool
+
+    - name: Stop after explicit demo cleanup
+      ansible.builtin.meta: end_play
+      when: tugboat_demo_cleanup | default(false) | bool
+
+    - name: Create the demo namespace
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces"
+        method: POST
+        headers: "{{ tugboat_demo_api_headers }}"
+        body_format: json
+        body:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ tugboat_demo_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: "{{ tugboat_demo_managed_by_label }}"
+              "{{ tugboat_demo_owner_label }}": "{{ tugboat_multipass_cluster }}"
+        status_code: [200, 201, 409]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_namespace_result
+      changed_when: tugboat_demo_namespace_result.status in [200, 201]
+      no_log: true
+
+    - name: Create the demo ShipClass
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/shipclasses"
+        method: POST
+        headers: "{{ tugboat_demo_api_headers }}"
+        body_format: json
+        body:
+          apiVersion: v1
+          kind: ShipClass
+          metadata:
+            name: "{{ tugboat_demo_ship_class }}"
+            labels:
+              app.kubernetes.io/managed-by: "{{ tugboat_demo_managed_by_label }}"
+              "{{ tugboat_demo_owner_label }}": "{{ tugboat_multipass_cluster }}"
+          spec:
+            cpu:
+              architecture: x64
+              cores: 1
+            memory:
+              size: 1Gi
+        status_code: [200, 201, 409]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_ship_class_result
+      changed_when: tugboat_demo_ship_class_result.status in [200, 201]
+      no_log: true
+
+    - name: Create the dedicated demo ServiceAccount
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/serviceaccounts"
+        method: POST
+        headers: "{{ tugboat_demo_api_headers }}"
+        body_format: json
+        body:
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: "{{ tugboat_demo_service_account }}"
+            namespace: "{{ tugboat_demo_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: "{{ tugboat_demo_managed_by_label }}"
+              "{{ tugboat_demo_owner_label }}": "{{ tugboat_multipass_cluster }}"
+        status_code: [200, 201, 409]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_service_account_result
+      changed_when: tugboat_demo_service_account_result.status in [200, 201]
+      no_log: true
+
+    - name: Create the demo read-only ClusterRole
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/apis/authorization/v1/clusterroles"
+        method: POST
+        headers: "{{ tugboat_demo_api_headers }}"
+        body_format: json
+        body:
+          apiVersion: authorization/v1
+          kind: ClusterRole
+          metadata:
+            name: "{{ tugboat_demo_reader_role }}"
+            labels:
+              app.kubernetes.io/managed-by: "{{ tugboat_demo_managed_by_label }}"
+              "{{ tugboat_demo_owner_label }}": "{{ tugboat_multipass_cluster }}"
+          rules:
+            - apiGroups: [core]
+              resources: [nodes, ships, shipclasses, clusternetworkclasses, namespaces]
+              verbs: [get, list, watch]
+        status_code: [200, 201, 409]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_role_result
+      changed_when: tugboat_demo_role_result.status in [200, 201]
+      no_log: true
+
+    - name: Bind the dedicated demo ServiceAccount
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/apis/authorization/v1/clusterrolebindings"
+        method: POST
+        headers: "{{ tugboat_demo_api_headers }}"
+        body_format: json
+        body:
+          apiVersion: authorization/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: "{{ tugboat_demo_reader_binding }}"
+            labels:
+              app.kubernetes.io/managed-by: "{{ tugboat_demo_managed_by_label }}"
+              "{{ tugboat_demo_owner_label }}": "{{ tugboat_multipass_cluster }}"
+          roleRef:
+            apiGroup: authorization
+            kind: ClusterRole
+            name: "{{ tugboat_demo_reader_role }}"
+          subjects:
+            - apiGroup: authorization
+              kind: ServiceAccount
+              namespace: "{{ tugboat_demo_namespace }}"
+              name: "{{ tugboat_demo_service_account }}"
+        status_code: [200, 201, 409]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_binding_result
+      changed_when: tugboat_demo_binding_result.status in [200, 201]
+      no_log: true
+
+    - name: Issue a short-lived token for the dedicated demo identity
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/serviceaccounts/{{ tugboat_demo_service_account }}/token"
+        method: POST
+        headers: "{{ tugboat_demo_api_headers }}"
+        body_format: json
+        body:
+          audiences:
+            - "{{ tugboat_demo_token_audience }}"
+          expirationSeconds: 3600
+        status_code: 200
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_user_token
+      no_log: true
+      when: tugboat_demo_issue_token | default(false) | bool
+
+    - name: Create the first Ship on worker A
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/ships"
+        method: POST
+        headers: "{{ tugboat_demo_api_headers }}"
+        body_format: json
+        body:
+          apiVersion: v1
+          kind: Ship
+          metadata:
+            name: demo-a
+            namespace: "{{ tugboat_demo_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: "{{ tugboat_demo_managed_by_label }}"
+              "{{ tugboat_demo_owner_label }}": "{{ tugboat_multipass_cluster }}"
+          spec:
+            image: "{{ tugboat_demo_image_reference }}"
+            shipClass: "{{ tugboat_demo_ship_class }}"
+            networkClassRef:
+              - apiGroup: core
+                kind: ClusterNetworkClass
+                name: cluster-network
+            affinity:
+              nodeAffinity:
+                requiredDuringScheduling:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: topology.tugboat.cloud/host
+                          operator: In
+                          values: ["{{ tugboat_demo_worker_a }}"]
+        status_code: [200, 201, 409]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_ship_a_create
+      changed_when: tugboat_demo_ship_a_create.status in [200, 201]
+      no_log: true
+      when: tugboat_demo_apply | default(false) | bool
+
+    - name: Create the second Ship on worker B
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/ships"
+        method: POST
+        headers: "{{ tugboat_demo_api_headers }}"
+        body_format: json
+        body:
+          apiVersion: v1
+          kind: Ship
+          metadata:
+            name: demo-b
+            namespace: "{{ tugboat_demo_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: "{{ tugboat_demo_managed_by_label }}"
+              "{{ tugboat_demo_owner_label }}": "{{ tugboat_multipass_cluster }}"
+          spec:
+            image: "{{ tugboat_demo_image_reference }}"
+            shipClass: "{{ tugboat_demo_ship_class }}"
+            networkClassRef:
+              - apiGroup: core
+                kind: ClusterNetworkClass
+                name: cluster-network
+            affinity:
+              nodeAffinity:
+                requiredDuringScheduling:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: topology.tugboat.cloud/host
+                          operator: In
+                          values: ["{{ tugboat_demo_worker_b }}"]
+        status_code: [200, 201, 409]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_ship_b_create
+      changed_when: tugboat_demo_ship_b_create.status in [200, 201]
+      no_log: true
+      when: tugboat_demo_apply | default(false) | bool
+
+    - name: Wait for Ship A placement and guest runtime
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/ships/demo-a"
+        method: GET
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_ship_a
+      until:
+        - tugboat_demo_ship_a.status | default(0) == 200
+        - tugboat_demo_ship_a.json.spec.nodeName | default('') == tugboat_demo_worker_a
+        - >-
+          (
+            tugboat_demo_ship_a.json.status.conditions | default([])
+            | selectattr('status', 'equalto', 'Running') | list | length
+          ) > 0
+      retries: 60
+      delay: 5
+      changed_when: false
+      no_log: true
+      when: tugboat_demo_apply | default(false) | bool
+
+    - name: Wait for Ship B placement and guest runtime
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/ships/demo-b"
+        method: GET
+        headers: "{{ tugboat_demo_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_demo_ship_b
+      until:
+        - tugboat_demo_ship_b.status | default(0) == 200
+        - tugboat_demo_ship_b.json.spec.nodeName | default('') == tugboat_demo_worker_b
+        - >-
+          (
+            tugboat_demo_ship_b.json.status.conditions | default([])
+            | selectattr('status', 'equalto', 'Running') | list | length
+          ) > 0
+      retries: 60
+      delay: 5
+      changed_when: false
+      no_log: true
+      when: tugboat_demo_apply | default(false) | bool
+
+    - name: Extract guest addresses when the API reports them
+      ansible.builtin.set_fact:
+        tugboat_demo_ship_a_ip: >-
+          {{
+            tugboat_demo_ship_a.json.status.ips | default([])
+            | selectattr('ipv4', 'defined') | map(attribute='ipv4') | list | first | default('')
+          }}
+        tugboat_demo_ship_b_ip: >-
+          {{
+            tugboat_demo_ship_b.json.status.ips | default([])
+            | selectattr('ipv4', 'defined') | map(attribute='ipv4') | list | first | default('')
+          }}
+      when: tugboat_demo_apply | default(false) | bool
+
+    - name: Require guest addresses for an enabled network probe
+      ansible.builtin.assert:
+        that:
+          - tugboat_demo_ship_a_ip | default('') | length > 0
+          - tugboat_demo_ship_b_ip | default('') | length > 0
+        fail_msg: "The API did not report both Ship guest IPs required by the network probe."
+      when:
+        - tugboat_demo_apply | default(false) | bool
+        - tugboat_demo_guest_probe.enabled | default(false) | bool
+
+    - name: Resolve the configured guest probe peer address
+      ansible.builtin.set_fact:
+        tugboat_demo_probe_peer_address: >-
+          {{
+            tugboat_demo_ship_b_ip
+            if tugboat_demo_guest_probe.peer_address == '__PEER_IP__'
+            else tugboat_demo_guest_probe.peer_address
+          }}
+      when:
+        - tugboat_demo_apply | default(false) | bool
+        - tugboat_demo_guest_probe.enabled | default(false) | bool
+
+    - name: Render the configured guest probe command
+      ansible.builtin.set_fact:
+        tugboat_demo_probe_argv: >-
+          {{
+            tugboat_demo_guest_probe.source_command
+            | map('replace', '__PEER_IP__', tugboat_demo_probe_peer_address)
+            | map('replace', '__PEER_PORT__', tugboat_demo_guest_probe.port | string)
+            | list
+          }}
+      when:
+        - tugboat_demo_apply | default(false) | bool
+        - tugboat_demo_guest_probe.enabled | default(false) | bool
+
+    - name: Run the guest-to-guest service probe with temporary credentials
+      when:
+        - tugboat_demo_apply | default(false) | bool
+        - tugboat_demo_guest_probe.enabled | default(false) | bool
+      block:
+        - name: Create the guest probe SSH directory on worker A
+          ansible.builtin.file:
+            path: "{{ tugboat_demo_guest_identity_path | dirname }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+          delegate_to: "{{ tugboat_demo_worker_a }}"
+
+        - name: Stage the guest probe identity on worker A
+          ansible.builtin.copy:
+            src: "{{ tugboat_demo_guest_probe.ssh_identity_file }}"
+            dest: "{{ tugboat_demo_guest_identity_path }}"
+            owner: root
+            group: root
+            mode: "0600"
+          delegate_to: "{{ tugboat_demo_worker_a }}"
+          no_log: true
+
+        - name: Stage the expected demo-a SSH host key on worker A
+          ansible.builtin.copy:
+            dest: "{{ tugboat_demo_guest_known_hosts_path }}"
+            owner: root
+            group: root
+            mode: "0600"
+            content: >-
+              {{ tugboat_demo_guest_host_alias }}
+              {{ tugboat_demo_guest_probe.ssh_host_public_key }}
+          delegate_to: "{{ tugboat_demo_worker_a }}"
+
+        - name: Run the guest-to-guest service probe inside demo-a via SSH
+          ansible.builtin.command:
+            argv:
+              - ssh
+              - -F
+              - /dev/null
+              - -o
+              - BatchMode=yes
+              - -o
+              - IdentitiesOnly=yes
+              - -o
+              - StrictHostKeyChecking=yes
+              - -o
+              - "HostKeyAlias={{ tugboat_demo_guest_host_alias }}"
+              - -o
+              - "UserKnownHostsFile={{ tugboat_demo_guest_known_hosts_path }}"
+              - -o
+              - ConnectTimeout=10
+              - -i
+              - "{{ tugboat_demo_guest_identity_path }}"
+              - -l
+              - "{{ tugboat_demo_guest_probe.ssh_user }}"
+              - "{{ tugboat_demo_ship_a_ip }}"
+              - "{{ tugboat_demo_probe_argv | map('quote') | join(' ') }}"
+          delegate_to: "{{ tugboat_demo_worker_a }}"
+          register: tugboat_demo_probe_result
+          changed_when: false
+      always:
+        - name: Remove temporary guest probe credentials from worker A
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ tugboat_demo_guest_identity_path }}"
+            - "{{ tugboat_demo_guest_known_hosts_path }}"
+          delegate_to: "{{ tugboat_demo_worker_a }}"
+          no_log: true
+
+    - name: Build a safe demo report
+      ansible.builtin.set_fact:
+        tugboat_demo_ship_records: []
+        tugboat_demo_probe_status: >-
+          {{
+            'not-run'
+            if not (tugboat_demo_apply | default(false) | bool)
+            else (
+              'passed'
+              if tugboat_demo_guest_probe.enabled | default(false) | bool
+              else 'skipped'
+            )
+          }}
+
+    - name: Add placement and status to the demo report
+      ansible.builtin.set_fact:
+        tugboat_demo_ship_records:
+          - name: demo-a
+            node: "{{ tugboat_demo_ship_a.json.spec.nodeName }}"
+            ips: "{{ tugboat_demo_ship_a.json.status.ips | default([]) }}"
+          - name: demo-b
+            node: "{{ tugboat_demo_ship_b.json.spec.nodeName }}"
+            ips: "{{ tugboat_demo_ship_b.json.status.ips | default([]) }}"
+      when: tugboat_demo_apply | default(false) | bool
+
+    - name: Write the safe demo report inside the control plane
+      ansible.builtin.copy:
+        dest: "{{ tugboat_demo_root }}/report.json"
+        owner: root
+        group: root
+        mode: "0600"
+        content: >-
+          {{
+            {
+              'cluster': tugboat_multipass_cluster,
+              'namespace': tugboat_demo_namespace,
+              'ships': tugboat_demo_ship_records,
+              'guestProbe': tugboat_demo_probe_status,
+              'guestProbeEnabled': tugboat_demo_guest_probe.enabled | default(false) | bool
+            } | to_nice_json
+          }}
+
+    - name: Write the user kubeconfig with the dedicated token
+      ansible.builtin.copy:
+        dest: "{{ tugboat_demo_root }}/kubeconfig"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          apiVersion: v1
+          kind: Config
+          clusters:
+            - name: {{ tugboat_multipass_cluster }}
+              cluster:
+                server: {{ tugboat_multipass_api_url }}
+                certificate-authority-data: {{ tugboat_demo_ca.content }}
+          contexts:
+            - name: {{ tugboat_multipass_cluster }}
+              context:
+                cluster: {{ tugboat_multipass_cluster }}
+                namespace: {{ tugboat_demo_namespace }}
+                user: {{ tugboat_multipass_cluster }}-demo
+          current-context: {{ tugboat_multipass_cluster }}
+          users:
+            - name: {{ tugboat_multipass_cluster }}-demo
+              user:
+                token: {{ tugboat_demo_user_token.json.token }}
+      no_log: true
+      when:
+        - tugboat_demo_issue_token | default(false) | bool
+        - tugboat_secure | bool
+
+    - name: Fetch the dedicated user kubeconfig without fetching private keys
+      ansible.builtin.fetch:
+        src: "{{ tugboat_demo_root }}/kubeconfig"
+        dest: "{{ tugboat_multipass_local_kubeconfig_path }}"
+        flat: true
+      no_log: true
+      when:
+        - tugboat_demo_write_kubeconfig | default(false) | bool
+        - tugboat_demo_issue_token | default(false) | bool
+        - tugboat_secure | bool
+
+    - name: Fetch the safe demo report
+      ansible.builtin.fetch:
+        src: "{{ tugboat_demo_root }}/report.json"
+        dest: "{{ tugboat_multipass_local_demo_report_path }}"
+        flat: true

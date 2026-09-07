@@ -1,0 +1,54 @@
+{
+  "multipass": {
+    "image": "24.04",
+    "launch_timeout_seconds": 900,
+    "cloud_init_timeout_seconds": 300,
+    "ssh_timeout_seconds": 180,
+    "build_timeout_seconds": 3600,
+    "api_timeout_seconds": 900
+  },
+  "workers": 2,
+  "resources": {
+    "control_plane": {
+      "cpus": 4,
+      "memory": "6G",
+      "disk": "40G"
+    },
+    "worker": {
+      "cpus": 2,
+      "memory": "4G",
+      "disk": "30G"
+    }
+  },
+  "tugboat": {
+    "secure": true,
+    "runtime": "qemu",
+    "flannel_mode": "vxlan",
+    "cni_subnet": "10.244.0.0/16",
+    "build_jobs": 2,
+    "cargo_offline": false
+  },
+  "demo": {
+    "image": "ghcr.io/sileader/tugboat-vm-images/ubuntu:24.04",
+    "image_digest": "",
+    "namespace": "tugboat-demo",
+    "token_audience": "https://localhost:8443",
+    "guest_probe": {
+      "enabled": false,
+      "ssh_user": "ubuntu",
+      "ssh_identity_file": "",
+      "ssh_host_public_key": "",
+      "source_command": [
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "5",
+        "http://__PEER_IP__:__PEER_PORT__/healthz"
+      ],
+      "peer_address": "__PEER_IP__",
+      "port": 8080
+    }
+  }
+}

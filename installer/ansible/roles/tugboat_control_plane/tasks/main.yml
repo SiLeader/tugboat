@@ -37,7 +37,13 @@
 
 - name: Build control-plane installer checksum
   ansible.builtin.set_fact:
-    tugboat_control_plane_install_checksum: "{{ tugboat_control_plane_install_argv | to_json | hash('sha256') }}"
+    tugboat_control_plane_install_checksum: >-
+      {{
+        (
+          tugboat_control_plane_install_argv | to_json
+          ~ ':' ~ (tugboat_multipass_artifact_digest | default(''))
+        ) | hash('sha256')
+      }}
 
 - name: Ensure Tugboat Ansible state directory exists
   ansible.builtin.file:

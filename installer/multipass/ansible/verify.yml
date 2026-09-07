@@ -1,0 +1,233 @@
+---
+- name: Verify the control plane through the authenticated API
+  hosts: tugboat_control_plane
+  become: true
+  gather_facts: true
+  vars:
+    tugboat_multipass_worker_names: "{{ groups['tugboat_workers'] }}"
+    tugboat_multipass_api_headers:
+      Authorization: "Bearer {{ tugboat_multipass_controller_token.content | b64decode | trim }}"
+  tasks:
+    - name: Read the controller-manager token inside the guest
+      ansible.builtin.slurp:
+        path: /var/run/secrets/tugboat.cloud/serviceaccount/controller-manager/token
+      register: tugboat_multipass_controller_token
+      no_log: true
+
+    - name: Check the API health endpoint
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/healthz"
+        method: GET
+        status_code: 200
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      changed_when: false
+
+    - name: List nodes using the guest-only controller token
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/nodes"
+        method: GET
+        headers: "{{ tugboat_multipass_api_headers }}"
+        status_code: 200
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_multipass_nodes_response
+      changed_when: false
+      no_log: true
+
+    - name: Check the cluster flannel network
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/clusternetworkclasses/cluster-network"
+        method: GET
+        headers: "{{ tugboat_multipass_api_headers }}"
+        status_code: 200
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      register: tugboat_multipass_network_response
+      changed_when: false
+      no_log: true
+
+    - name: Assert the expected worker set and ready network allocation
+      ansible.builtin.assert:
+        that:
+          - tugboat_multipass_nodes_response.json['items'] | default([]) | length == tugboat_multipass_expected_workers | int
+          - >-
+            (
+              tugboat_multipass_nodes_response.json['items'] | default([])
+              | map(attribute='metadata.name') | list | sort
+            ) == (tugboat_multipass_worker_names | sort)
+          - tugboat_multipass_network_response.json.spec.cniPlugin == 'flannel'
+          - tugboat_multipass_network_response.json.spec.subnet == tugboat_cni_subnet
+          - >-
+            (
+              tugboat_multipass_network_response.json.status.readyNodes | default([])
+              | list | sort
+            ) == (tugboat_multipass_worker_names | sort)
+        fail_msg: "API, worker registration, or ClusterNetworkClass readiness is incomplete."
+      no_log: true
+
+    - name: Read every worker Node object
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/nodes/{{ item }}"
+        method: GET
+        headers: "{{ tugboat_multipass_api_headers }}"
+        status_code: 200
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      loop: "{{ tugboat_multipass_worker_names }}"
+      register: tugboat_multipass_worker_node_responses
+      changed_when: false
+      no_log: true
+
+    - name: Assert bridge, loopback, and ready flannel CNI on every worker
+      ansible.builtin.assert:
+        that:
+          - item.json.status.cniPlugins | default([]) | selectattr('name', 'equalto', 'bridge') | selectattr('ready', 'equalto', true) | list | length == 1
+          - item.json.status.cniPlugins | default([]) | selectattr('name', 'equalto', 'loopback') | selectattr('ready', 'equalto', true) | list | length == 1
+          - item.json.status.cniPlugins | default([]) | selectattr('name', 'equalto', 'flannel') | selectattr('ready', 'equalto', true) | list | length == 1
+        fail_msg: "A worker has a missing or unready CNI plugin."
+      loop: "{{ tugboat_multipass_worker_node_responses.results }}"
+      no_log: true
+
+    - name: Check control-plane API and etcd listeners
+      ansible.builtin.wait_for:
+        host: "{{ tugboat_multipass_expected_control_plane_ip }}"
+        port: "{{ item }}"
+        state: started
+        timeout: 10
+      loop:
+        - "{{ tugboat_multipass_api_port }}"
+        - 2379
+        - 2380
+
+- name: Read existing demo Ship status when requested
+  hosts: tugboat_control_plane
+  become: true
+  gather_facts: false
+  vars:
+    tugboat_multipass_api_headers:
+      Authorization: "Bearer {{ tugboat_multipass_controller_token.content | b64decode | trim }}"
+  tasks:
+    - name: Read the controller-manager token for the status query
+      ansible.builtin.slurp:
+        path: /var/run/secrets/tugboat.cloud/serviceaccount/controller-manager/token
+      register: tugboat_multipass_controller_token
+      no_log: true
+      when: tugboat_multipass_check_demo | default(false) | bool
+
+    - name: Read demo Ship objects
+      ansible.builtin.uri:
+        url: "{{ tugboat_multipass_api_url }}/api/v1/namespaces/{{ tugboat_demo_namespace }}/ships/{{ item }}"
+        method: GET
+        headers: "{{ tugboat_multipass_api_headers }}"
+        status_code: [200, 404]
+        ca_path: "{{ tugboat_multipass_api_ca_path }}"
+        validate_certs: "{{ tugboat_secure | bool }}"
+      loop:
+        - demo-a
+        - demo-b
+      register: tugboat_multipass_demo_ship_responses
+      changed_when: false
+      no_log: true
+      when: tugboat_multipass_check_demo | default(false) | bool
+
+    - name: Write demo status without credentials
+      ansible.builtin.copy:
+        dest: "{{ tugboat_multipass_local_status_report_path }}"
+        mode: "0600"
+        content: >-
+          {{
+            {
+              'ships': (
+                tugboat_multipass_demo_ship_responses.results
+                | selectattr('status', 'equalto', 200)
+                | map(attribute='json') | list
+              )
+            } | to_nice_json
+          }}
+      delegate_to: localhost
+      become: false
+      when: tugboat_multipass_check_demo | default(false) | bool
+
+- name: Verify worker QEMU and KVM prerequisites
+  hosts: tugboat_workers
+  become: true
+  gather_facts: true
+  vars:
+    tugboat_multipass_control_plane_ip: "{{ hostvars[groups['tugboat_control_plane'][0]].ansible_host }}"
+  tasks:
+    - name: Check API and etcd reachability from every worker
+      ansible.builtin.wait_for:
+        host: "{{ tugboat_multipass_control_plane_ip }}"
+        port: "{{ item }}"
+        state: started
+        timeout: 10
+      loop:
+        - "{{ tugboat_multipass_api_port }}"
+        - 2379
+
+    - name: Check IPv4 forwarding for VXLAN
+      ansible.builtin.command:
+        argv: ["sysctl", "-n", "net.ipv4.ip_forward"]
+      register: tugboat_multipass_ip_forwarding
+      changed_when: false
+
+    - name: Assert IPv4 forwarding is enabled
+      ansible.builtin.assert:
+        that:
+          - tugboat_multipass_ip_forwarding.stdout | trim == '1'
+        fail_msg: "IPv4 forwarding is disabled on a worker."
+
+    - name: Check KVM access for the worker runtime
+      ansible.builtin.command:
+        argv: ["test", "-r", "/dev/kvm"]
+      changed_when: false
+
+    - name: Start QEMU briefly with explicit KVM acceleration
+      ansible.builtin.command:
+        argv:
+          - timeout
+          - "4"
+          - qemu-system-x86_64
+          - -accel
+          - kvm
+          - -machine
+          - accel=kvm
+          - -nodefaults
+          - -display
+          - none
+          - -monitor
+          - none
+          - -serial
+          - none
+          - -no-reboot
+          - -S
+      register: tugboat_multipass_qemu_kvm_probe
+      changed_when: false
+      failed_when: tugboat_multipass_qemu_kvm_probe.rc not in [0, 124]
+
+    - name: Check worker QEMU and OVMF files
+      ansible.builtin.command:
+        argv:
+          - test
+          - -x
+          - /usr/bin/qemu-system-x86_64
+          - -a
+          - -r
+          - /usr/share/OVMF/OVMF_CODE_4M.fd
+          - -a
+          - -r
+          - /usr/share/OVMF/OVMF_VARS_4M.fd
+      changed_when: false
+
+    - name: Check the VXLAN listener
+      ansible.builtin.command:
+        argv: ["ss", "-lun"]
+      register: tugboat_multipass_worker_udp_sockets
+      changed_when: false
+
+    - name: Assert that a VXLAN UDP listener is present
+      ansible.builtin.assert:
+        that:
+          - tugboat_multipass_worker_udp_sockets.stdout is search('8472')
+        fail_msg: "flanneld did not open the expected VXLAN UDP port."

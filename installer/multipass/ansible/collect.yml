@@ -1,0 +1,86 @@
+---
+- name: Collect non-secret diagnostics from every demo guest
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    tugboat_multipass_collect_prefix: "/tmp/tugboat-{{ tugboat_multipass_cluster }}-{{ inventory_hostname }}"
+  tasks:
+    - name: Collect systemd service state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - --no-pager
+          - --plain
+          - status
+          - etcd.service
+          - tugboat-apiserver.service
+          - tugboat-scheduler.service
+          - tugboat-controller-manager.service
+          - tugboat-agent.service
+          - flanneld.service
+      register: tugboat_multipass_systemd_status
+      changed_when: false
+      failed_when: false
+
+    - name: Collect recent relevant journal entries
+      ansible.builtin.command:
+        argv:
+          - journalctl
+          - --no-pager
+          - --since
+          - "-30 min"
+          - -u
+          - etcd.service
+          - -u
+          - tugboat-apiserver.service
+          - -u
+          - tugboat-scheduler.service
+          - -u
+          - tugboat-controller-manager.service
+          - -u
+          - tugboat-agent.service
+          - -u
+          - flanneld.service
+      register: tugboat_multipass_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Collect network and kernel state
+      ansible.builtin.shell:
+        cmd: |
+          set +e
+          ip -brief address
+          ip -brief link
+          ss -lntup
+          printf '\n--- kvm ---\n'
+          stat -c '%A %U:%G %n' /dev/kvm
+      args:
+        executable: /bin/bash
+      register: tugboat_multipass_network_state
+      changed_when: false
+      failed_when: false
+
+    - name: Write systemd diagnostics on the controller
+      ansible.builtin.copy:
+        dest: "{{ tugboat_multipass_local_logs_dir }}/{{ inventory_hostname }}-systemd.txt"
+        mode: "0600"
+        content: "{{ tugboat_multipass_systemd_status.stdout }}\n"
+      delegate_to: localhost
+      become: false
+
+    - name: Write journal diagnostics on the controller
+      ansible.builtin.copy:
+        dest: "{{ tugboat_multipass_local_logs_dir }}/{{ inventory_hostname }}-journal.txt"
+        mode: "0600"
+        content: "{{ tugboat_multipass_journal.stdout }}\n"
+      delegate_to: localhost
+      become: false
+
+    - name: Write network diagnostics on the controller
+      ansible.builtin.copy:
+        dest: "{{ tugboat_multipass_local_logs_dir }}/{{ inventory_hostname }}-network.txt"
+        mode: "0600"
+        content: "{{ tugboat_multipass_network_state.stdout }}\n"
+      delegate_to: localhost
+      become: false

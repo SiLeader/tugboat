@@ -1,0 +1,35 @@
+#cloud-config
+ssh_pwauth: false
+disable_root: true
+package_update: false
+package_upgrade: false
+packages:
+  - python3
+  - python3-apt
+  - kmod
+  - iproute2
+  - curl
+
+users:
+  - default
+  - name: ubuntu
+    groups: [adm, sudo]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - {{ ssh_public_key }}
+
+write_files:
+  - path: /etc/tugboat-multipass-owner
+    owner: root:root
+    permissions: "0600"
+    content: {{ cluster_uuid }}
+  - path: /etc/tugboat-multipass-node.json
+    owner: root:root
+    permissions: "0600"
+    content: |
+      {"cluster_uuid": {{ cluster_uuid }}, "node_name": {{ node_name }}, "node_role": {{ node_role }}}
+
+runcmd:
+  - [bash, -c, "install -d -m 0755 /opt/tugboat /var/lib/tugboat"]

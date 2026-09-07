@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tugboat-demo
+  labels:
+    app.kubernetes.io/managed-by: tugboat-multipass-demo

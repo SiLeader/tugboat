@@ -701,6 +701,7 @@ Detailed guides:
 
 - [Ansible installer guide](./docs/en/installation/ansible.md)
 - [systemd installer guide](./docs/en/installation/systemd.md)
+- [Multipass + Ansible demo](./installer/multipass/README.md)
 
 ### Ansible
 
