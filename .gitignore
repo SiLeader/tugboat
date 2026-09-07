@@ -10,3 +10,5 @@ todo/
 __pycache__/
 *.py[cod]
 /.antigravitycli
+/plan
+
