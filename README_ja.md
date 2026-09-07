@@ -682,6 +682,13 @@ spec:
 Tugboat をインストール・設定するシェルスクリプトが含まれています。
 root 権限と `apt-get` が必要です。
 
+### Multipass + Ansible デモ
+
+Ubuntu 24.04 の Multipass VM 1台の control plane と2台の worker で
+Tugboat を検証する場合は、[Multipass + Ansible デモ](./installer/multipass/README.md)
+を参照してください。KVM の preflight、専用 SSH 鍵、VM 所有確認、生成物の
+control plane 一括 build、Ansible による cluster 検証、診断収集をまとめて実行できます。
+
 ### コントロールプレーン
 
 ```bash

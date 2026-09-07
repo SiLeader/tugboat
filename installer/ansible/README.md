@@ -10,6 +10,9 @@ The full user guide lives at
 file is a quick reference for contributors working directly in
 `installer/ansible`.
 
+For a self-contained Linux x86_64 lab with one control plane and two
+Multipass workers, see [`installer/multipass/README.md`](../multipass/README.md).
+
 ## Requirements
 
 - Ansible Core 2.16 or newer on the control machine.

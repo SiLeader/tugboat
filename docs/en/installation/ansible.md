@@ -6,6 +6,9 @@ the lower-level systemd installer scripts with inventory-driven configuration,
 PKI distribution, service health checks, idempotency markers, and uninstall
 support.
 
+For a self-contained Linux x86_64 lab using one control plane and two Ubuntu
+24.04 Multipass workers, see the [Multipass + Ansible demo](../../../installer/multipass/README.md).
+
 ## 1. Overview
 
 The Ansible installer provides three install plays:
@@ -384,4 +387,3 @@ The main variables map directly to the lower-level systemd installer options:
 | `tugboat_flannel_mode` | `install-worker.sh --flannel-mode` |
 | `tugboat_csi_hostpath_*` | matching `install-csi-hostpath.sh` options |
 | `tugboat_uninstall_*` | matching `uninstall.sh` component and purge options |
-

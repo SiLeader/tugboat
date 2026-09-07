@@ -150,7 +150,13 @@
 
 - name: Build worker installer checksum
   ansible.builtin.set_fact:
-    tugboat_worker_install_checksum: "{{ tugboat_worker_install_argv | to_json | hash('sha256') }}"
+    tugboat_worker_install_checksum: >-
+      {{
+        (
+          tugboat_worker_install_argv | to_json
+          ~ ':' ~ (tugboat_multipass_artifact_digest | default(''))
+        ) | hash('sha256')
+      }}
 
 - name: Ensure Tugboat Ansible state directory exists
   ansible.builtin.file:

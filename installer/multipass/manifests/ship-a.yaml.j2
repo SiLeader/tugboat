@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Ship
+metadata:
+  name: demo-a
+  namespace: {{ namespace }}
+spec:
+  image: {{ image }}
+  shipClass: tugboat-demo-small
+  networkClassRef:
+    - apiGroup: core
+      kind: ClusterNetworkClass
+      name: cluster-network
+  affinity:
+    nodeAffinity:
+      requiredDuringScheduling:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: topology.tugboat.cloud/host
+                operator: In
+                values:
+                  - {{ worker_a }}

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ShipClass
+metadata:
+  name: tugboat-demo-small
+spec:
+  cpu:
+    architecture: x64
+    cores: 1
+  memory:
+    size: 1Gi
