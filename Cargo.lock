@@ -3711,7 +3711,7 @@ name = "tugboat-agent"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "dashmap",
  "futures",
@@ -3745,7 +3745,7 @@ dependencies = [
  "actix-web-lab",
  "async-stream",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "chrono",
  "clap",
@@ -3849,7 +3849,7 @@ name = "tugboat-controller-manager"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "rand",
  "serde",
@@ -3887,7 +3887,7 @@ dependencies = [
 name = "tugboat-integration-tests"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "ed25519-dalek",
  "rcgen",
  "reqwest 0.13.4",
@@ -3989,7 +3989,7 @@ dependencies = [
 name = "tugboat-vm-image"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "flate2",
  "oci-distribution",
  "serde",
